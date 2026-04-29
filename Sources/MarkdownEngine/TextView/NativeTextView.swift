@@ -38,12 +38,6 @@ final class NativeTextView: NSTextView {
     var onPasteImage: ((NSPasteboard) -> String?)?
     weak var layoutBridge: LayoutBridge?
     var baseFont: NSFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-    var allowFrameShrink: Bool = false
-    var pendingContentShrink: Bool = false
-    /// Set on node switch — forces shrink on every recalc until the frame has
-    /// actually settled at the new content height. Cannot be stolen by frame
-    /// ping-pong like `allowFrameShrink` (which is one-shot).
-    var forceShrinkUntilSettled: Bool = false
     private var caretIndicatorObservation: NSKeyValueObservation?
     private weak var observedCaretIndicator: NSView?
     private var isApplyingCaretShift: Bool = false
@@ -98,6 +92,9 @@ final class NativeTextView: NSTextView {
         if let toggled = toggleTaskCheckboxIfHit(event: event), toggled {
             return
         }
+        if remapClickInParagraphSpacing(event: event) {
+            return
+        }
         dragStartMouseScreenLoc = NSEvent.mouseLocation
         let boostTimer = Timer(timeInterval: 1.0 / configuration.dragSelection.ticksPerSecond, repeats: true) { [weak self] _ in
             self?.performDragBoostTick()
@@ -111,6 +108,92 @@ final class NativeTextView: NSTextView {
         super.mouseDown(with: event)
     }
 
+    private func remapClickInParagraphSpacing(event: NSEvent) -> Bool {
+        guard event.clickCount == 1, !event.modifierFlags.contains(.shift) else {
+            return false
+        }
+        guard let tlm = textLayoutManager, let tcs = textContentStorage else {
+            return false
+        }
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        let containerPoint = CGPoint(
+            x: viewPoint.x - textContainerOrigin.x,
+            y: viewPoint.y - textContainerOrigin.y
+        )
+        guard let fragment = tlm.textLayoutFragment(for: containerPoint),
+              let lastLine = fragment.textLineFragments.last else {
+            return false
+        }
+        let fragFrame = fragment.layoutFragmentFrame
+        let lastLineMaxY = fragFrame.minY + lastLine.typographicBounds.maxY
+        guard containerPoint.y > lastLineMaxY,
+              containerPoint.y <= fragFrame.maxY else {
+            return false
+        }
+        let nextFragment = nextLayoutFragment(after: fragment, in: tlm)
+        let nextLineTopAbsY: CGFloat = {
+            if let next = nextFragment, let first = next.textLineFragments.first {
+                return next.layoutFragmentFrame.minY + first.typographicBounds.minY
+            }
+            return fragFrame.maxY
+        }()
+        let distUp = containerPoint.y - lastLineMaxY
+        let distDown = nextLineTopAbsY - containerPoint.y
+        let useLower = distDown < distUp
+            && (nextFragment?.textLineFragments.first != nil)
+        let chosenFragment = useLower ? nextFragment! : fragment
+        let chosenLine = useLower ? nextFragment!.textLineFragments.first! : lastLine
+        guard let docOffset = documentOffset(
+            forClickX: containerPoint.x,
+            in: chosenFragment,
+            line: chosenLine,
+            using: tcs
+        ) else { return false }
+        let docLength = (string as NSString).length
+        let clamped = min(max(docOffset, 0), docLength)
+        window?.makeFirstResponder(self)
+        setSelectedRange(NSRange(location: clamped, length: 0))
+        return true
+    }
+
+    private func documentOffset(
+        forClickX clickX: CGFloat,
+        in fragment: NSTextLayoutFragment,
+        line: NSTextLineFragment,
+        using tcs: NSTextContentStorage
+    ) -> Int? {
+        let fragFrame = fragment.layoutFragmentFrame
+        let lineTypo = line.typographicBounds
+        let lineLocalPoint = CGPoint(
+            x: clickX - fragFrame.minX - lineTypo.minX,
+            y: lineTypo.midY - lineTypo.minY
+        )
+        let charIndexInFragment = line.characterIndex(for: lineLocalPoint)
+        let lineStart = line.characterRange.location
+        let lineEnd = lineStart + line.characterRange.length
+        let clampedInFragment = max(lineStart, min(lineEnd, charIndexInFragment))
+        let fragStart = tcs.offset(
+            from: tcs.documentRange.location,
+            to: fragment.rangeInElement.location
+        )
+        guard fragStart != NSNotFound else { return nil }
+        return fragStart + clampedInFragment
+    }
+
+    private func nextLayoutFragment(
+        after fragment: NSTextLayoutFragment,
+        in tlm: NSTextLayoutManager
+    ) -> NSTextLayoutFragment? {
+        var next: NSTextLayoutFragment?
+        tlm.enumerateTextLayoutFragments(
+            from: fragment.rangeInElement.endLocation,
+            options: [.ensuresLayout]
+        ) { f in
+            next = f
+            return false
+        }
+        return next
+    }
 
     override func scrollRangeToVisible(_ range: NSRange) {
         if suppressAutoRevealOnce {
@@ -226,22 +309,14 @@ final class NativeTextView: NSTextView {
 
     func recalcOverscroll(
         for scrollView: NSScrollView,
-        fallbackBaseHeight: CGFloat? = nil,
         targetWidth: CGFloat? = nil,
-        forceLayout: Bool = false
+        debugTag: String = "?"
     ) {
+        _ = debugTag
         scrollView.contentInsets.bottom = 0
 
         let lineHeight = layoutBridgeDefaultLineHeight(for: self.baseFont, using: layoutBridge)
-        // Always force full document layout: TextKit 2's viewport-only layout
-        // makes usageBoundsForTextContainer oscillate between full-doc and
-        // viewport-only values, which causes frame ping-pong on every keystroke.
-        let proposedBaseHeight = measuredBaseContentHeight(
-            fallback: fallbackBaseHeight ?? max(frame.size.height - activeBottomOverscroll, 0),
-            minimumHeight: lineHeight,
-            forceLayout: true
-        )
-        let resolvedBaseHeight = resolvedBaseContentHeight(for: proposedBaseHeight)
+        let measured = measuredBaseContentHeight(minimumHeight: lineHeight)
         let visibleHeight = scrollView.contentView.bounds.height
         let policy = BottomOverscrollPolicy(
             overscrollPercent: overscrollPercent,
@@ -251,15 +326,15 @@ final class NativeTextView: NSTextView {
             activationRangeFraction: configuration.overscroll.activationRangeFraction
         )
         let resolvedOverscroll = policy.activeOverscroll(
-            baseContentHeight: resolvedBaseHeight,
+            baseContentHeight: measured,
             visibleHeight: visibleHeight,
             lineHeight: lineHeight
         )
 
-        let baseHeightChanged = abs(resolvedBaseHeight - baseContentHeight) > 0.5
+        let baseHeightChanged = abs(measured - baseContentHeight) > 0.5
         let overscrollChanged = abs(resolvedOverscroll - activeBottomOverscroll) > 0.5
         guard baseHeightChanged || overscrollChanged else { return }
-        baseContentHeight = resolvedBaseHeight
+        baseContentHeight = measured
         activeBottomOverscroll = resolvedOverscroll
         applyManagedFrameSize(width: targetWidth ?? frame.size.width)
     }
@@ -277,14 +352,6 @@ final class NativeTextView: NSTextView {
             return
         }
 
-        // After textDidChange, usageBoundsForTextContainer is stale so the
-        // explicit recalcOverscroll can't detect the shrink.
-        let hadPending = pendingContentShrink
-        if pendingContentShrink {
-            allowFrameShrink = true
-            pendingContentShrink = false
-        }
-
         let widthChanged = abs(newSize.width - frame.size.width) > 0.5
         if widthChanged {
             isApplyingManagedFrameSize = true
@@ -292,21 +359,7 @@ final class NativeTextView: NSTextView {
             isApplyingManagedFrameSize = false
         }
 
-        let oldBase = baseContentHeight
-        recalcOverscroll(
-            for: scrollView,
-            fallbackBaseHeight: newSize.height,
-            targetWidth: newSize.width,
-            forceLayout: widthChanged
-        )
-
-        if hadPending {
-            if oldBase == baseContentHeight {
-                // Data was stale — restore flag for async fallback
-                pendingContentShrink = true
-            }
-            allowFrameShrink = false
-        }
+        recalcOverscroll(for: scrollView, targetWidth: newSize.width, debugTag: "setFrameSize")
     }
     override func updateInsertionPointStateAndRestartTimer(_ restartFlag: Bool) {
         super.updateInsertionPointStateAndRestartTimer(restartFlag)
@@ -412,55 +465,39 @@ final class NativeTextView: NSTextView {
         }
     }
 
-    private func measuredBaseContentHeight(
-        fallback: CGFloat,
-        minimumHeight: CGFloat,
-        forceLayout: Bool
-    ) -> CGFloat {
+    private func measuredBaseContentHeight(minimumHeight: CGFloat) -> CGFloat {
         let minimumContentHeight = ceil(max(minimumHeight, 0) + (textContainerInset.height * 2))
-        let normalizedFallback = max(ceil(fallback), minimumContentHeight)
-        guard let textLayoutManager else { return normalizedFallback }
+        guard let textLayoutManager else { return minimumContentHeight }
 
-        if forceLayout {
-            textLayoutManager.enumerateTextLayoutFragments(
-                from: textLayoutManager.documentRange.endLocation,
-                options: [.reverse, .ensuresLayout]
-            ) { _ in
-                return false  // stop after the last fragment
-            }
+        let documentEnd = textLayoutManager.documentRange.endLocation
+
+        // Anchor: ensure the last fragment is laid out (also gives a max-Y fallback
+        // in case `enumerateTextSegments` misses the trailing extra-line fragment).
+        var fragmentMaxY: CGFloat = 0
+        textLayoutManager.enumerateTextLayoutFragments(
+            from: documentEnd,
+            options: [.reverse, .ensuresLayout, .ensuresExtraLineFragment]
+        ) { fragment in
+            fragmentMaxY = fragment.layoutFragmentFrame.maxY
+            return false
         }
 
-        let usageBounds = textLayoutManager.usageBoundsForTextContainer
-        let measuredHeight = ceil(max(usageBounds.height, usageBounds.maxY) + (textContainerInset.height * 2))
-        // Shrink failsafe: when AppKit hands us an authoritative `setFrameSize`
-        // height (via `fallback`) that is smaller than TextKit 2's still-stale
-        // `usageBoundsForTextContainer` cache, trust AppKit. Zero extra cost.
-        if allowFrameShrink, normalizedFallback < measuredHeight {
-            return max(normalizedFallback, minimumContentHeight)
+        // End-segment maxY = authoritative document height in TextKit 2.
+        let segmentRange = NSTextRange(location: documentEnd)
+        textLayoutManager.ensureLayout(for: segmentRange)
+        var segmentMaxY: CGFloat = 0
+        textLayoutManager.enumerateTextSegments(
+            in: segmentRange,
+            type: .standard,
+            options: .middleFragmentsExcluded
+        ) { _, rect, _, _ in
+            segmentMaxY = max(segmentMaxY, rect.maxY)
+            return true
         }
+
+        let rawHeight = max(segmentMaxY, fragmentMaxY)
+        let measuredHeight = ceil(rawHeight + (textContainerInset.height * 2))
         return max(measuredHeight, minimumContentHeight)
-    }
-
-    private func resolvedBaseContentHeight(for proposedHeight: CGFloat) -> CGFloat {
-        let normalizedHeight = max(ceil(proposedHeight), 0)
-        guard baseContentHeight > 0 else { return normalizedHeight }
-        guard normalizedHeight < baseContentHeight - 0.5 else {
-            // Grow / equal: keep the settle-shrink flag set so we still catch
-            return normalizedHeight
-        }
-        // forceShrinkUntilSettled overrides everything (file-switch / app-start).
-        if forceShrinkUntilSettled {
-            forceShrinkUntilSettled = false
-            return normalizedHeight
-        }
-        if let coord = delegate as? NativeTextViewCoordinator, coord.suppressFrameShrink {
-            return baseContentHeight
-        }
-        if allowFrameShrink {
-            allowFrameShrink = false
-            return normalizedHeight
-        }
-        return baseContentHeight
     }
 
     private func applyManagedFrameSize(width: CGFloat) {

@@ -91,7 +91,6 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     }
 
     var isImageEmbedActive: Bool = false
-    var suppressFrameShrink: Bool = false
 
     // Inline selection geometry, image-embed activation, and inline-token
     // detection live in `NativeTextViewCoordinator+InlineSelection.swift`.

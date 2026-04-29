@@ -163,9 +163,6 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         textView.layoutBridge = bridge
 
         scrollView.documentView = textView
-        // App-start settle: TextKit 2's `usageBoundsForTextContainer` reports
-        // overshoot heights during incremental layout
-        textView.forceShrinkUntilSettled = true
         // Force full-document layout at init so paragraph heights are known
         // upfront; otherwise TextKit 2 viewport layout causes scroll drift.
         textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
@@ -258,18 +255,12 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         }
         if fontChanged {
             context.coordinator.didInitialFormatting = false
-            (textView as? NativeTextView)?.allowFrameShrink = true
         }
         if isNodeSwitch {
             context.coordinator.documentId = documentId
             textView.undoManager?.removeAllActions()
             context.coordinator.didInitialFormatting = false
             context.coordinator.resetImageEmbedState()
-            // Persistent shrink: survives frame ping-pong from NSTextView's
-            // viewport-based intermediate setFrameSize calls. Cleared in
-            // resolvedBaseContentHeight once the frame has settled.
-            (textView as? NativeTextView)?.forceShrinkUntilSettled = true
-            (textView as? NativeTextView)?.allowFrameShrink = true
             // Reset scroll to top of content so the previous file's scrollY
             // doesn't leak into a (potentially shorter) new file.
             nsView.contentView.scroll(to: NSPoint(x: 0, y: -nsView.contentInsets.top))
@@ -288,10 +279,6 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         let displayState = WikiLinkService.makeDisplayState(from: text)
         let displayText = displayState.display
         context.coordinator.wikiLinkMetadata = displayState.metadata
-        // Suppress frame shrink during text replacement when images are present (but NOT on node switch).
-        if !isNodeSwitch {
-            context.coordinator.suppressFrameShrink = true
-        }
         if textView.string != displayText {
             textView.string = displayText
         }
@@ -356,11 +343,6 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         if let tv = nsView.documentView as? NativeTextView {
             tv.recalcOverscroll(for: nsView)
             (nsView as? ClampedScrollView)?.clampToInsets()
-        }
-        if !isNodeSwitch {
-            DispatchQueue.main.async {
-                context.coordinator.suppressFrameShrink = false
-            }
         }
         DispatchQueue.main.async {
             if let tv = nsView.documentView as? NativeTextView {

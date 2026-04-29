@@ -49,9 +49,6 @@ extension NativeTextViewCoordinator {
         }
         if wtActive && wtDetectedMode == .proofread { return }
 
-        if !wtActive {
-            (tv as? NativeTextView)?.allowFrameShrink = true
-        }
 
         let rawSelRange = tv.selectedRange()
         let fullLength = (tv.string as NSString).length
@@ -152,18 +149,8 @@ extension NativeTextViewCoordinator {
         }
         if let bottomTextView = tv as? NativeTextView,
            let scrollView = tv.enclosingScrollView {
-            bottomTextView.recalcOverscroll(for: scrollView)
+            bottomTextView.recalcOverscroll(for: scrollView, debugTag: "textDidChange")
             (scrollView as? ClampedScrollView)?.clampToInsets()
-            bottomTextView.allowFrameShrink = false
-            bottomTextView.pendingContentShrink = true
-            DispatchQueue.main.async { [weak bottomTextView, weak scrollView] in
-                guard let tv = bottomTextView, let sv = scrollView, tv.pendingContentShrink else { return }
-                tv.allowFrameShrink = true
-                tv.pendingContentShrink = false
-                tv.recalcOverscroll(for: sv)
-                (sv as? ClampedScrollView)?.clampToInsets()
-                tv.allowFrameShrink = false
-            }
         }
         previousActiveTokenIndices = activeTokenIndices
     }
@@ -440,4 +427,5 @@ extension NativeTextViewCoordinator {
         }
         return false
     }
+
 }
