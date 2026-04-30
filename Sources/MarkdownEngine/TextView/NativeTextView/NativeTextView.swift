@@ -21,9 +21,6 @@ final class NativeTextView: NSTextView {
     var baseContentHeight: CGFloat = 0
     var activeBottomOverscroll: CGFloat = 0
     var isApplyingManagedFrameSize = false
-    /// Last scrollY captured before a transient frame shrink, restored once a later recalc grows the frame back.
-    var pendingDesiredScrollY: CGFloat?
-    var isRestoringScroll: Bool = false
     var suppressAutoRevealOnce: Bool = false
 
     // MARK: Configuration

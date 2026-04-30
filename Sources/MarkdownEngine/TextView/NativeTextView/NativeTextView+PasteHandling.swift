@@ -41,7 +41,24 @@ extension NativeTextView {
             insertText(prefix + imageEmbed + suffix, replacementRange: sel)
             return
         }
+
+        if let pasted = pasteboard.string(forType: .string) {
+            let sanitized = sanitizePastedText(pasted)
+            if !sanitized.isEmpty {
+                insertText(sanitized, replacementRange: selectedRange())
+                return
+            }
+        }
         pasteAsPlainText(sender)
+    }
+
+    private func sanitizePastedText(_ s: String) -> String {
+        var out = s
+        if let regex = try? NSRegularExpression(pattern: "\\n{3,}") {
+            let nsRange = NSRange(location: 0, length: (out as NSString).length)
+            out = regex.stringByReplacingMatches(in: out, range: nsRange, withTemplate: "\n\n")
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {

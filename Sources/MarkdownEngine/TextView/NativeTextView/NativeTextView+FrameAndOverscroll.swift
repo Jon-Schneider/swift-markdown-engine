@@ -21,7 +21,6 @@ extension NativeTextView {
         debugTag: String = "?"
     ) {
         _ = debugTag
-        let preScrollY = scrollView.contentView.bounds.origin.y
         scrollView.contentInsets.bottom = 0
 
         let lineHeight = layoutBridgeDefaultLineHeight(for: self.baseFont, using: layoutBridge)
@@ -42,36 +41,10 @@ extension NativeTextView {
 
         let baseHeightChanged = abs(measured - baseContentHeight) > 0.5
         let overscrollChanged = abs(resolvedOverscroll - activeBottomOverscroll) > 0.5
-        guard baseHeightChanged || overscrollChanged else {
-            tryRestorePendingScrollY(scrollView: scrollView)
-            return
-        }
+        guard baseHeightChanged || overscrollChanged else { return }
         baseContentHeight = measured
         activeBottomOverscroll = resolvedOverscroll
         applyManagedFrameSize(width: targetWidth ?? frame.size.width)
-        let postScrollY = scrollView.contentView.bounds.origin.y
-        if postScrollY < preScrollY - 0.5 {
-            pendingDesiredScrollY = max(pendingDesiredScrollY ?? preScrollY, preScrollY)
-        }
-        tryRestorePendingScrollY(scrollView: scrollView)
-    }
-
-    /// Restore the user's intended scroll position after a transient frame shrink (e.g. Cmd+F dismiss).
-    func tryRestorePendingScrollY(scrollView: NSScrollView) {
-        guard let desired = pendingDesiredScrollY else { return }
-        let visible = scrollView.contentView.bounds.height
-        let maxValid = max(0, frame.size.height - visible)
-        let target = min(desired, maxValid)
-        let current = scrollView.contentView.bounds.origin.y
-        if target > current + 0.5 {
-            isRestoringScroll = true
-            scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: target))
-            scrollView.reflectScrolledClipView(scrollView.contentView)
-            isRestoringScroll = false
-        }
-        if abs(target - desired) < 0.5 {
-            pendingDesiredScrollY = nil
-        }
     }
 
     func measuredBaseContentHeight(minimumHeight: CGFloat) -> CGFloat {
