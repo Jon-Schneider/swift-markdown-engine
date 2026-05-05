@@ -2,6 +2,8 @@
 //  NativeTextView+PasteHandling.swift
 //  MarkdownEngine
 //
+//  Created by Luca Chen on 16.03.26.
+//
 //
 
 import AppKit

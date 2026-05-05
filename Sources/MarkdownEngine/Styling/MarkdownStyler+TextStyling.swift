@@ -2,6 +2,8 @@
 //  MarkdownStyler+TextStyling.swift
 //  MarkdownEngine
 //
+//  Created by Luca Chen on 16.03.26.
+//
 //  Heading and emphasis (bold / italic / bold+italic) attribute generation.
 //
 

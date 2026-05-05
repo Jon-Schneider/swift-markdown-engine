@@ -2,6 +2,8 @@
 //  NativeTextView+CaretWorkarounds.swift
 //  MarkdownEngine
 //
+//  Created by Luca Chen on 16.03.26.
+//
 //  Caret-indicator workarounds: snap the indicator to the layout-manager's
 //  caret rect after collapsed→visible transitions, hide/resize around block
 //  images, and fix the trailing-newline phantom-EOD position (FB22524198).

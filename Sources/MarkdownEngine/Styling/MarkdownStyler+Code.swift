@@ -2,6 +2,8 @@
 //  MarkdownStyler+Code.swift
 //  MarkdownEngine
 //
+//  Created by Luca Chen on 16.03.26.
+//
 //  Fenced code blocks and inline code spans.
 //
 

@@ -2,6 +2,8 @@
 //  NativeTextViewCoordinator+Restyling.swift
 //  MarkdownEngine
 //
+//  Created by Luca Chen on 16.03.26.
+//
 //  Re-tokenization, paragraph-scoped restyling, and the inline-replacement
 //  pipeline. The TextDelegate extension decides WHEN and on WHICH ranges to
 //  restyle; this extension owns the tokenize cache and the actual call into
