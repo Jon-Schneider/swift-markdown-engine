@@ -81,31 +81,24 @@ extension MarkdownStyler {
                     let tinyDollarWidth = HeadingHelpers.textWidth("$", font: ctx.latexMarkerFont)
                     let baseDollarWidth = HeadingHelpers.textWidth("$", font: ctx.baseFont)
 
-                    print("[LATEX-STYLE] inline token range=\(token.range) contentRange=\(token.contentRange) content=\"\(latexContent)\" imageSize=\(entry.size) baseline=\(entry.baselineOffset)")
-
                     if contentLength > 0 {
                         let firstCharRange = NSRange(location: token.contentRange.location, length: 1)
                         let firstChar = ctx.nsText.substring(with: firstCharRange)
-                        let firstKern = entry.size.width - HeadingHelpers.textWidth(firstChar, font: ctx.latexMarkerFont)
-                        print("[LATEX-STYLE]   first char=\"\(firstChar)\" range=\(firstCharRange) kern=\(firstKern)")
                         attrs.append((firstCharRange, [
                             .latexImage: entry.image,
                             .latexBounds: NSValue(rect: imageBounds),
                             .foregroundColor: NSColor.clear,
                             .font: ctx.latexMarkerFont,
-                            .kern: firstKern
+                            .kern: entry.size.width - HeadingHelpers.textWidth(firstChar, font: ctx.latexMarkerFont)
                         ]))
 
                         if contentLength > 1 {
                             let restRange = NSRange(location: token.contentRange.location + 1, length: contentLength - 1)
                             let restText = ctx.nsText.substring(with: restRange)
-                            let restWidth = HeadingHelpers.textWidth(restText, font: ctx.latexMarkerFont)
-                            let restKern = -restWidth
-                            print("[LATEX-STYLE]   rest=\"\(restText)\" range=\(restRange) measuredWidth=\(restWidth) kern=\(restKern) (perChar≈\(restRange.length > 0 ? restKern / CGFloat(restRange.length) : 0))")
                             attrs.append((restRange, [
                                 .foregroundColor: NSColor.clear,
                                 .font: ctx.latexMarkerFont,
-                                .kern: restKern
+                                .kern: -HeadingHelpers.textWidth(restText, font: ctx.latexMarkerFont)
                             ]))
                         }
                     }
