@@ -12,13 +12,18 @@
        width="100%">
 </video>
 
-> Originally extracted from and used in production by **[Nodes](https://nodes-web.com/#/)** — a minimal, beautiful, and fast writing app for macOS
-
 
 A native AppKit Markdown editor for macOS, built on TextKit 2 and bridged to
 SwiftUI. Live styling, wiki-link support, fenced code blocks with syntax
 highlighting, LaTeX rendering, embedded images, and GitHub-style task
 checkboxes — with **zero external dependencies**.
+
+## Motivation
+When we started building **[Nodes](https://nodes-web.com/#/)**, a minimal, beautiful, and fast writing app for macOS - we figured the editor part would be the easy bit. We were wrong. There just isn't a good native Markdown editor you can drop into a Mac app. WebView wrappers feel sluggish, renderer-only libraries that don't let you edit.
+
+We wanted something specific —  a native editor with live Markdown styling out of the box, and first-class support for wiki-links, LaTeX, and embedded images via clean service protocols, on Apple's modern text engine. Nothing like that existed, so we built it. It [wasn't easy](https://blog.krzyzanowskim.com/2025/08/14/textkit-2-the-promised-land/), but the result is solid.
+
+We're sharing it because we wished something like this existed when we started **[Nodes](https://nodes-web.com/#/)**. A Markdown Editor with Apples newest framework
 
 ## Features
 
