@@ -40,22 +40,6 @@ When we started building **[Nodes](https://nodes-web.com/#/)** a minimal, beauti
 - **Drag-select autoscroll boost** for long documents
 - **Spelling & grammar** with code/LaTeX/wiki-link suppression
 
-## Architecture
-
-The engine is built around four small service protocols you implement in
-your app:
-
-| Protocol | What you supply | Suggested library |
-|---|---|---|
-| `WikiLinkResolver` | Resolve a `[[Name]]` to a stable opaque id | (your data model) |
-| `EmbeddedImageProvider` | Look up an `NSImage` for `![[Name]]` | (your asset store) |
-| `SyntaxHighlighter` | Highlight code blocks for a given language | [HighlighterSwift](https://github.com/smittytone/HighlighterSwift) |
-| `LatexRenderer` | Render a LaTeX string to an `NSImage` | [SwiftMath](https://github.com/mgriebling/SwiftMath) |
-
-All four ship with no-op default implementations so the editor renders
-plain Markdown out of the box. Drop in real implementations as you need
-them — the engine itself stays free of any of those transitive dependencies.
-
 ## Installation
 
 ```swift
@@ -96,10 +80,8 @@ struct EditorScreen: View {
 }
 ```
 
-That's it. The default configuration ships with no-op services, so the
-editor renders Markdown and accepts edits immediately. See
-[Customization](#customization) below to wire up syntax highlighting,
-custom themes, wiki-link state, and more.
+That's it. See [Customization](#customization) below for syntax
+highlighting, themes, wiki-link state, and more.
 
 > **Displaying multiple editors?** Pass a stable, unique
 > `documentId: "your-doc-id"` so undo history and pending replacements
@@ -177,10 +159,17 @@ NativeTextViewWrapper(
 
 ### Custom Services
 
-When you need richer behavior than the bundled adapter — your own
-wiki-link resolver, image provider, or a different syntax highlighter —
-implement the relevant protocol and pass it in. Anything you omit keeps
-its no-op default:
+The engine talks to your app through four service protocols, each with
+a no-op default so you only implement what you actually need:
+
+| Protocol | What you supply | Suggested library |
+|---|---|---|
+| `WikiLinkResolver` | Resolve a `[[Name]]` to a stable opaque id | (your data model) |
+| `EmbeddedImageProvider` | Look up an `NSImage` for `![[Name]]` | (your asset store) |
+| `SyntaxHighlighter` | Highlight code blocks for a given language | [HighlighterSwift](https://github.com/smittytone/HighlighterSwift) — or use the bundled bridge above |
+| `LatexRenderer` | Render a LaTeX string to an `NSImage` | [SwiftMath](https://github.com/mgriebling/SwiftMath) |
+
+Implement what you need and pass it through `MarkdownEditorServices`:
 
 ```swift
 struct MyResolver: WikiLinkResolver {
@@ -195,9 +184,9 @@ configuration.services = MarkdownEditorServices(
 )
 ```
 
-The four protocols (`WikiLinkResolver`, `EmbeddedImageProvider`,
-`SyntaxHighlighter`, `LatexRenderer`) are documented in DocC alongside
-their no-op defaults (`NoOpWikiLinkResolver`, …, `PlainTextSyntaxHighlighter`).
+Each protocol and its no-op default (`NoOpWikiLinkResolver`,
+`NoOpEmbeddedImageProvider`, `PlainTextSyntaxHighlighter`,
+`NoOpLatexRenderer`) is documented in DocC.
 
 ## Demo
 
@@ -222,12 +211,10 @@ In Xcode: **Product → Build Documentation** (`⇧⌃⌘D`).
 Once the package is hosted on Swift Package Index, the docs will live at
 `https://swiftpackageindex.com/nodes-app/swift-markdown-engine/documentation`.
 
-## Requirements
+## Requirements & Status
 
 - macOS 14 or later (15.1+ for Apple Writing Tools integration)
 - Swift 5.9 / Xcode 15 or later
-
-## Status
 
 MarkdownEngine is currently **pre-1.0**. The public API may change between
 minor releases as it stabilizes. Production use is fine — pin a specific
