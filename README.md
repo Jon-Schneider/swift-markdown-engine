@@ -260,3 +260,6 @@ conventions, and PR process.
 
 MarkdownEngine is released under the MIT License. See [LICENSE](LICENSE)
 for the full text.
+
+---
+Built by small team from Germany. Day-to-day on [Instagram](https://www.instagram.com/nodes.app).
