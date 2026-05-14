@@ -299,8 +299,10 @@ extension NativeTextViewCoordinator {
         self.previousActiveTokenIndices = self.activeTokenIndices
         self.previousCaretLocation = caretLoc
 
-        // Track code blocks for button overlay (reuse tokens)
-        updateCodeBlockSelection(textView: tv, tokens: tokens)
+        // Skip during a pending edit — viewRect is stale until textDidChange's restyle runs; otherwise the overlay flashes to the old Y before settling.
+        if !shouldSkipSelectionRestyle {
+            updateCodeBlockSelection(textView: tv, tokens: tokens)
+        }
     }
 
     public func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
