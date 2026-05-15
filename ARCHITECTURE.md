@@ -1,14 +1,5 @@
 # Architecture
 
-MarkdownEngine is a TextKit 2 backed Markdown editor for macOS, exposed
-to SwiftUI through `NativeTextViewWrapper`. The engine has no internal
-AST — it tokenizes the text into `NSRange` spans, generates a flat list
-of `(range, attributes)` tuples via an ordered pipeline of styling
-passes, and applies them to an `NSTextView`. Everything app-specific
-(wiki-link IDs, syntax highlighting, embedded images, LaTeX) is provided
-by four service protocols you implement, or by the opt-in bridge
-products.
-
 ## Source layout
 
 ```bash
@@ -25,10 +16,10 @@ Sources/
 │   │   ├── NativeTextView/                  # AppKit subclass + UX extensions (paste, drag-select, …)
 │   │   └── Coordinator/                     # NSTextViewDelegate split by concern (restyling, find, …)
 │   └── MarkdownEngine.docc/                 # DocC catalog
-├── MarkdownEngineCodeBlocks/                # opt-in product
-│   └── HighlighterSwiftBridge.swift         # SyntaxHighlighter backed by HighlighterSwift
-└── MarkdownEngineLatex/                     # opt-in product
-    └── SwiftMathBridge.swift                # LatexRenderer backed by SwiftMath
+├── MarkdownEngineCodeBlocks/                # opt-in SPM product
+│   └── HighlighterSwiftBridge.swift         # SyntaxHighlighter conformance
+└── MarkdownEngineLatex/                     # opt-in SPM product
+    └── SwiftMathBridge.swift                # LatexRenderer conformance
 ```
 
 The rest of this file is a per-directory tour, in the order text flows
@@ -38,15 +29,18 @@ through the engine.
 
 ```mermaid
 flowchart LR
-    Input["Markdown string"] --> T["MarkdownTokenizer<br/>parseTokens"]
-    T --> Tokens["[MarkdownToken]"]
-    Caret["caret position"] -.-> Active["active token set"]
-    Tokens -.-> Active
-    Tokens --> Style["MarkdownStyler<br/>styleAttributes (ordered passes)"]
-    Active -.-> Style
-    Style --> Ranges["[StyledRange]"]
-    Ranges --> Apply["Coordinator<br/>rebuildTextStorageAndStyle"]
-    Apply --> View["NSTextView"]
+    A(["storage text<br/>[[Name|id]]"]) --> B[WikiLinkService<br/>makeDisplayState]
+    B --> C(["display text<br/>[[Name]]"])
+    C --> D[MarkdownTokenizer<br/>parseTokens]
+    D --> E(["[MarkdownToken]"])
+    F(["caret"]) -.-> G(["active token set"])
+    E -.-> G
+    E --> H[MarkdownStyler<br/>styleAttributes]
+    G -.-> H
+    I(["service protocols<br/>WikiLink · Image · Highlighter · Latex"]) -.-> H
+    H --> J(["[StyledRange]"])
+    J --> K[Coordinator<br/>rebuildTextStorageAndStyle]
+    K --> L(["NSTextView"])
 ```
 
 ## [`Parser/`](Sources/MarkdownEngine/Parser): what is a token?
@@ -66,17 +60,17 @@ to re-run on every keystroke. Tokens are not cached outside
 
 ## [`Services/`](Sources/MarkdownEngine/Services): how does the engine talk to your app?
 
-Four `Sendable` protocols with no-op defaults — embedders implement only
-the ones they actually use.
+`MarkdownEditorServices.swift` declares the four service protocols.
+Internally each is called synchronously from a specific styling pass:
+`WikiLinkResolver` from `styleWikiLinks`, `EmbeddedImageProvider` from
+`styleImageEmbeds`, `SyntaxHighlighter` from `styleCodeBlocks` /
+`styleInlineCode`, `LatexRenderer` from `styleBlockLatex` /
+`styleInlineLatex`.
 
-- `WikiLinkResolver` — `[[Name]]` → opaque ID
-- `EmbeddedImageProvider` — `![[Name]]` → `NSImage`
-- `SyntaxHighlighter` — code → coloured `NSAttributedString`
-- `LatexRenderer` — `$…$` / `$$…$$` → `NSImage`
-
-`WikiLinkService.swift` also lives here and handles the dual-form
-storage / display transform — storage is `[[Name|<id>]]`, display is
-`[[Name]]`. Reference implementations live in the opt-in bridge targets.
+`WikiLinkService.swift` handles the dual-form storage / display
+transform — storage is `[[Name|<id>]]`, display is `[[Name]]`. The
+coordinator runs it both ways every time `rebuildTextStorageAndStyle()`
+fires.
 
 **Invariant:** Service callbacks are synchronous. If an embedder's
 implementation is slow, it caches (both bundled bridges do); the engine
@@ -138,23 +132,8 @@ Application of `[StyledRange]` to text storage happens in
 
 `MarkdownEditorConfiguration` is a struct of structs — one nested group
 per concern (headings, codeBlock, blockLatex, overscroll, markers,
-lists, …) — read once during styling. `MarkdownEditorTheme` is the
-colour palette; defaults map to `NSColor` dynamic system colours so
-light / dark switching just works.
-
-## Bridge targets
-
-`MarkdownEngineCodeBlocks` and `MarkdownEngineLatex` are separate SPM
-products. Each contains a single thin adapter
-(`HighlighterSwiftBridge`, `SwiftMathBridge`) that conforms its
-underlying library to the engine's service protocol, plus the caching
-the engine doesn't do internally (appearance-aware theme switching,
-zero-size LaTeX guards, …). They're also useful as reference
-implementations if you write your own.
-
-**Invariant:** Never add HighlighterSwift or SwiftMath as a dependency
-of the core `MarkdownEngine` target. They live in the bridge products
-precisely so consumers can opt in.
+lists, …) — passed by reference into every styling pass via the
+`StylingContext`. `MarkdownEditorTheme` is its colour sub-field.
 
 ## Adding a new inline syntax
 
