@@ -34,11 +34,13 @@ struct MarkdownLists {
     static let numberRegex = try! NSRegularExpression(pattern: #"^\s*(\d+)\.$"#)
     static let leadingWhitespaceRegex = try! NSRegularExpression(pattern: #"^\s*"#)
 
-    /// Matches `<tabs>- `, `<tabs>* ` or `<tabs>+ ` at the start of a line —
-    /// the three CommonMark bullet markers. Used by `normalizeBulletMarkers`
-    /// to convert pasted/loaded bullets into the engine's canonical `\t• `.
+    /// Matches an optionally-indented `- `, `* ` or `+ ` at the start of a
+    /// line — the three CommonMark bullet markers, with leading spaces
+    /// and/or tabs (nested items). Used by `normalizeBulletMarkers` to
+    /// convert pasted/loaded bullets into the engine's canonical
+    /// `<depth tabs>• ` form.
     static let pasteableDashBulletRegex = try! NSRegularExpression(
-        pattern: #"^([\t]*)[-+*] "#,
+        pattern: #"^([ \t]*)[-+*] "#,
         options: [.anchorsMatchLines]
     )
 
@@ -77,11 +79,14 @@ struct MarkdownLists {
                MarkdownDetection.isInsideCodeBlock(location: lineStart, codeTokens: codeTokens) {
                 continue
             }
-            let wsLen = match.range(at: 1).length
-            // Replace the 2-char marker+space (`- `, `* ` or `+ `) after
-            // the leading tabs with the canonical bullet.
-            let dashRange = NSRange(location: lineStart + wsLen, length: 2)
-            mutable.replaceCharacters(in: dashRange, with: "\t• ")
+            // Map the source indent (spaces and/or tabs) to a nesting
+            // depth and rewrite the whole `<ws><marker> ` prefix to the
+            // canonical `<depth+1 tabs>• `. depth+1 keeps the existing
+            // "top level = one tab" convention paragraphAttributes expects.
+            let ws = nsText.substring(with: match.range(at: 1))
+            let depth = indentLevel(from: ws)
+            let canonical = String(repeating: "\t", count: depth + 1) + "• "
+            mutable.replaceCharacters(in: match.range, with: canonical)
         }
         return mutable as String
     }
