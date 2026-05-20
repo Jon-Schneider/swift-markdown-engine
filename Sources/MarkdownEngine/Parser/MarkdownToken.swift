@@ -26,10 +26,6 @@ enum MarkdownTokenKind {
     /// (hidden when inactive); `contentRange` is the quoted text. The
     /// nesting level is the count of `>` in the marker.
     case blockquote
-    /// A Setext heading: a text line underlined by `===` (level 1) or
-    /// `---` (level 2). `contentRange` is the text line; the single
-    /// `markerRanges` entry is the underline line.
-    case setextHeading
     case codeBlock
     case inlineCode
     case blockLatex

@@ -399,6 +399,10 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         for lineFragment in textLineFragments {
             let lr = lineFragment.characterRange
             let docStart = fragLocation + lr.location
+            // TextKit 2 appends a synthetic trailing empty line fragment whose
+            // characterRange lands at exactly `tsLen` — `attribute(at:)` needs
+            // a strictly in-bounds index, so skip the sentinel.
+            guard docStart < ts.length else { continue }
             let isHR = ts.attribute(.thematicBreak, at: docStart, effectiveRange: nil) as? Bool == true
             let tb = lineFragment.typographicBounds
             if isHR {
@@ -444,6 +448,10 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         for lineFragment in textLineFragments {
             let lr = lineFragment.characterRange
             let docStart = fragLocation + lr.location
+            // TextKit 2 appends a synthetic trailing empty line fragment whose
+            // characterRange lands at exactly `tsLen` — `attribute(at:)` needs
+            // a strictly in-bounds index, so skip the sentinel.
+            guard docStart < ts.length else { continue }
             let tb = lineFragment.typographicBounds
             if let level = ts.attribute(.blockquoteLevel, at: docStart, effectiveRange: nil) as? Int {
                 // tb.origin.y is already relative to this layout fragment.

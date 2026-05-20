@@ -227,9 +227,20 @@ extension NativeTextViewCoordinator {
         let currentTaskSyntax = MarkdownStyler.taskSyntaxRange(at: selLoc, in: tv.string)
         let taskSyntaxChanged = prevTaskSyntax?.location != currentTaskSyntax?.location
             || prevTaskSyntax?.length != currentTaskSyntax?.length
+        // Caret crossings in/out of a thematic-break (HR) line also need a
+        // restyle: HR rendering is a pure attribute (no MarkdownToken), so
+        // `tokensChanged` won't notice when the caret enters/leaves an
+        // `---` / `***` / `___` line. Without this, clicking on a rendered
+        // HR wouldn't reveal the source dashes for editing.
+        let prevHRLine = previousCaretLocation.flatMap {
+            MarkdownStyler.hrLineRange(at: $0, in: tv.string)
+        }
+        let currentHRLine = MarkdownStyler.hrLineRange(at: selLoc, in: tv.string)
+        let hrLineChanged = prevHRLine?.location != currentHRLine?.location
+            || prevHRLine?.length != currentHRLine?.length
         if shouldSkipSelectionRestyle {
             // textDidChange performs the pending restyle for this edit cycle.
-        } else if tokensChanged || taskSyntaxChanged {
+        } else if tokensChanged || taskSyntaxChanged || hrLineChanged {
             restyleTextView(tv, paragraphCandidates: paragraphCandidates, tokens: tokens)
         }
 

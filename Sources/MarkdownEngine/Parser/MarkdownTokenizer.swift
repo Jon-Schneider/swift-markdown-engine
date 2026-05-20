@@ -46,13 +46,6 @@ private extension MarkdownTokenizer {
         pattern: "^\\s*(#{1,6}) +(.*)$",
         options: [.anchorsMatchLines]
     )
-    // Setext heading: a non-blank text line immediately followed by an
-    // underline of only `=` (level 1) or `-` (level 2). The text line may
-    // not be an ATX heading / blockquote / a rule-only line.
-    static let setextHeadingRegex = try! NSRegularExpression(
-        pattern: #"^[ \t]{0,3}(?![#>])(?![-=*_+ \t]*$)(\S[^\r\n]*?)[ \t]*\r?\n[ \t]{0,3}(=+|-+)[ \t]*$"#,
-        options: [.anchorsMatchLines]
-    )
     // One blockquote line: optional ≤3-space indent, a run of `>` markers
     // (each optionally followed by one space), then the quoted content.
     static let blockquoteRegex = try! NSRegularExpression(
@@ -255,23 +248,6 @@ enum MarkdownTokenizer {
                                         markerRanges: [openingMarker, closingMarker]))
         }
         
-        // Setext headings. After fenced code so an `===`/`---` underline
-        // inside a code block is left literal.
-        for match in setextHeadingRegex.matches(in: text, options: [], range: fullRange) {
-            let full = match.range(at: 0)
-            let textLine = match.range(at: 1)
-            let underline = match.range(at: 2)
-            let inCode = tokens.contains {
-                ($0.kind == .codeBlock || $0.kind == .blockLatex)
-                && NSIntersectionRange($0.range, full).length > 0
-            }
-            if inCode { continue }
-            tokens.append(MarkdownToken(kind: .setextHeading,
-                                        range: full,
-                                        contentRange: textLine,
-                                        markerRanges: [underline]))
-        }
-
         // Blockquote lines. After fenced code so a `>` inside a code block
         // stays literal. One token per line; the styler stitches the bar.
         for match in blockquoteRegex.matches(in: text, options: [], range: fullRange) {

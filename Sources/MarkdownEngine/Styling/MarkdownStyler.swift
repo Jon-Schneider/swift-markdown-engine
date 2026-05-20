@@ -158,7 +158,6 @@ enum MarkdownStyler {
             configuration: configuration
         )
         result += styleHeadings(ctx)
-        result += styleSetextHeadings(ctx)
         result += styleBlockquotes(ctx)
         result += styleEmphasis(ctx)
         result += styleAutoLinks(ctx)
@@ -335,13 +334,18 @@ extension MarkdownStyler {
         let hrPattern = #"^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$"#
         if let hrRegex = try? NSRegularExpression(pattern: hrPattern, options: [.anchorsMatchLines]) {
             for hrMatch in hrRegex.matches(in: ctx.text, range: ctx.fullRange) {
-                // A `-----` line that underlines a paragraph is a Setext
-                // H2, not a thematic break — let the setext styler own it.
-                let isSetextUnderline = ctx.tokens.contains {
-                    $0.kind == .setextHeading
-                    && NSIntersectionRange($0.range, hrMatch.range).length > 0
-                }
-                if isSetextUnderline { continue }
+                // Don't render the rule while the caret is sitting on this
+                // line. Otherwise typing the third `-` would instantly hide
+                // the source under a full-width rule, leaving the cursor at
+                // a now-invisible source-text position and tripping the
+                // layout pass on the next Enter (the visible HR fragment's
+                // geometry suddenly has to absorb a newline at a slot the
+                // user can't see). Once the caret leaves the line — i.e. on
+                // Enter — the rule renders normally.
+                let caretIsOnHRLine =
+                    NSLocationInRange(ctx.caretLocation, hrMatch.range)
+                    || ctx.caretLocation == NSMaxRange(hrMatch.range)
+                if caretIsOnHRLine { continue }
                 // Hide the source chars and tag the range so the layout
                 // fragment can paint a full-width rule. The previous
                 // implementation used a thick strikethrough across the
@@ -359,6 +363,27 @@ extension MarkdownStyler {
             }
         }
         return attrs
+    }
+
+    /// Returns the line range if `location` sits on a thematic-break line
+    /// (a line of 3+ matching `-`, `*`, or `_` with optional surrounding
+    /// whitespace), else `nil`. The coordinator uses this to trigger a
+    /// restyle on caret crossings in/out of an HR line — HRs are styled
+    /// via a pure attribute (no `MarkdownToken`), so `tokensChanged`
+    /// alone doesn't catch these crossings.
+    static func hrLineRange(at location: Int, in text: String) -> NSRange? {
+        let nsText = text as NSString
+        let safeLoc = max(0, min(location, nsText.length))
+        let lineRange = nsText.lineRange(for: NSRange(location: safeLoc, length: 0))
+        let line = nsText.substring(with: lineRange)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard line.range(
+            of: #"^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$"#,
+            options: .regularExpression
+        ) != nil else {
+            return nil
+        }
+        return lineRange
     }
 
     // MARK: Incomplete Link Brackets
