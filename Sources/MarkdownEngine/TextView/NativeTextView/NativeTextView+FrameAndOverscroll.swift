@@ -119,6 +119,33 @@ extension NativeTextView {
         }
 
         recalcOverscroll(for: scrollView, targetWidth: newSize.width, debugTag: "setFrameSize")
+
+        // Width change → only wide-table paragraphs need restyling (their kern bakes in displayWidth).
+        if widthChanged {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.restyleWideTableParagraphsForWidthChange()
+                self.updateWideTableOverlays()
+            }
+        }
+    }
+
+    /// Restyle exactly the wide-table paragraphs using ranges stamped on their
+    /// anchors at original styling time — avoids re-tokenizing the whole doc.
+    private func restyleWideTableParagraphsForWidthChange() {
+        guard let storage = textStorage,
+              let coord = delegate as? NativeTextViewCoordinator else { return }
+        var ranges: [NSRange] = []
+        var seen: Set<String> = []
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.scrollableBlockFullRange, in: fullRange, options: []) { value, _, _ in
+            guard let v = value as? NSValue else { return }
+            let r = v.rangeValue
+            let key = "\(r.location):\(r.length)"
+            if seen.insert(key).inserted { ranges.append(r) }
+        }
+        guard !ranges.isEmpty else { return }
+        coord.restyleParagraphs(ranges, in: self)
     }
 
     override func scrollRangeToVisible(_ range: NSRange) {

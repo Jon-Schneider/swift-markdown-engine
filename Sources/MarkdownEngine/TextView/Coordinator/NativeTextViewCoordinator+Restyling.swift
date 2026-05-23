@@ -19,6 +19,7 @@ extension NativeTextViewCoordinator {
         from text: String,
         invalidateLayout: Bool = false
     ) {
+        // Storage is raw Markdown; only wiki links transform on display.
         let displayState = WikiLinkService.makeDisplayState(from: text)
         let displayText = displayState.display
         wikiLinkMetadata = displayState.metadata
@@ -86,6 +87,13 @@ extension NativeTextViewCoordinator {
             }
             tlm.ensureLayout(for: tlm.documentRange)
         }
+
+        // Reconcile wide-table overlays after layout settles.
+        if let nativeTextView = textView as? NativeTextView {
+            DispatchQueue.main.async { [weak nativeTextView] in
+                nativeTextView?.updateWideTableOverlays()
+            }
+        }
     }
 
     func restyleTextView(
@@ -114,6 +122,12 @@ extension NativeTextViewCoordinator {
             precomputedTokens: tokens,
             configuration: configuration
         )
+        // Reconcile wide-table overlays after layout settles.
+        if let nativeTextView = textView as? NativeTextView {
+            DispatchQueue.main.async { [weak nativeTextView] in
+                nativeTextView?.updateWideTableOverlays()
+            }
+        }
     }
 
     func parsedDocument(for text: String) -> ParsedDocument {

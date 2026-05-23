@@ -21,26 +21,31 @@ extension NativeTextView {
             x: localPoint.x - textContainerOrigin.x,
             y: localPoint.y - textContainerOrigin.y
         )
-        var fraction: CGFloat = 0
-        let index = bridge.characterIndex(
-            for: containerPoint,
-            in: textContainer,
-            fractionOfDistanceBetweenInsertionPoints: &fraction
-        )
-        guard index != NSNotFound, index < storage.length else { return nil }
 
-        var effectiveRange = NSRange(location: 0, length: 0)
-        guard let isChecked = storage.attribute(.taskCheckbox, at: index, effectiveRange: &effectiveRange) as? Bool,
-              effectiveRange.length > 0 else { return nil }
+        // Rect-based hit-test — characterIndex(for:) mis-maps clicks on lines
+        // whose `[ ]` chars are hidden under the bullet/checkbox overlay.
+        let fullRange = NSRange(location: 0, length: storage.length)
+        var hitRange: NSRange? = nil
+        var hitIsChecked = false
+        storage.enumerateAttribute(.taskCheckbox, in: fullRange, options: []) { value, attrRange, stop in
+            guard let isChecked = value as? Bool else { return }
+            let rect = bridge.boundingRect(forCharacterRange: attrRange, in: textContainer)
+            if rect.contains(containerPoint) {
+                hitRange = attrRange
+                hitIsChecked = isChecked
+                stop.pointee = true
+            }
+        }
+        guard let effectiveRange = hitRange else { return nil }
 
         let nsText = storage.string as NSString
         let checkboxText = nsText.substring(with: effectiveRange)
         guard checkboxText.range(of: #"\[[ xX]\]"#, options: .regularExpression) != nil else { return nil }
 
-        let replacement = isChecked ? "[ ]" : "[x]"
+        let replacement = hitIsChecked ? "[ ]" : "[x]"
         if shouldChangeText(in: effectiveRange, replacementString: replacement) {
             storage.replaceCharacters(in: effectiveRange, with: replacement)
-            storage.addAttribute(.taskCheckbox, value: !isChecked, range: effectiveRange)
+            storage.addAttribute(.taskCheckbox, value: !hitIsChecked, range: effectiveRange)
             storage.addAttribute(.foregroundColor, value: NSColor.clear, range: effectiveRange)
             didChangeText()
             bridge.invalidateDisplay(forCharacterRange: effectiveRange)

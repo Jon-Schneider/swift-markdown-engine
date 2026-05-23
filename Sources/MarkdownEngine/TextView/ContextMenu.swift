@@ -111,7 +111,8 @@ extension NativeTextViewWrapper.Coordinator {
     func isSelectionList(in nsText: NSString, range: NSRange) -> Bool {
         let lineRange = nsText.lineRange(for: range)
         let line = nsText.substring(with: lineRange)
-        return line.hasPrefix("\t• ") || line.hasPrefix("1. ")
+        return line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ")
+            || line.hasPrefix("\t• ") || line.hasPrefix("1. ")
     }
 
     private func applyHeading(level: Int) {
@@ -162,7 +163,7 @@ extension NativeTextViewWrapper.Coordinator {
     }
 
     @objc func didMarkdownUnorderedList(_ sender: Any?) {
-        applyList(prefix: "\t• ")
+        applyList(prefix: "- ")
     }
 
     @objc func didMarkdownOrderedList(_ sender: Any?) {

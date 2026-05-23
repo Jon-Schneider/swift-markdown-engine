@@ -38,6 +38,10 @@ struct TextStylingService {
         paragraph.paragraphSpacing = baseParagraphSpacing
         paragraph.paragraphSpacingBefore = 0
         paragraph.lineBreakMode = .byWordWrapping
+        // 24 explicit tab stops at indentPerLevel intervals, then natural wrap.
+        let perLevel = configuration.lists.indentPerLevel
+        paragraph.tabStops = (1...24).map { NSTextTab(textAlignment: .left, location: CGFloat($0) * perLevel) }
+        paragraph.defaultTabInterval = 0
         return (baseFont, paragraph)
     }
 
