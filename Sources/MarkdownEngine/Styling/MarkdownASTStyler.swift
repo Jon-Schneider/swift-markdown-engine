@@ -31,12 +31,17 @@ enum MarkdownASTStyler {
         configuration: MarkdownEditorConfiguration = .default
     ) -> [StyledRange] {
         let baseFont = NSFont(name: fontName, size: fontSize) ?? .systemFont(ofSize: fontSize)
+        let baseLineHeight = ceil(baseFont.ascender - baseFont.descender + baseFont.leading)
+        let baseParagraphSpacing = ceil(baseLineHeight * configuration.paragraph.spacingFactor)
         let codeFontSize = round(fontSize * configuration.codeBlock.fontSizeScale)
         let hiddenSize = configuration.markers.hiddenMarkerFontSize
+        let ns = text as NSString
         let ctx = Ctx(
-            ns: text as NSString,
+            ns: ns,
             fontName: fontName,
             baseFont: baseFont,
+            baseLineHeight: baseLineHeight,
+            baseParagraphSpacing: baseParagraphSpacing,
             codeFont: configuration.services.syntaxHighlighter.codeFont(size: codeFontSize),
             codeBackground: configuration.services.syntaxHighlighter.backgroundColor(),
             inlineMarkerFont: NSFont(name: fontName, size: hiddenSize) ?? .systemFont(ofSize: hiddenSize),
@@ -46,6 +51,14 @@ enum MarkdownASTStyler {
         )
         let blocks = DocumentAST.parse(text)
         var attrs: [StyledRange] = []
+        // List paragraph styling is text/regex-based and AST-agnostic — reuse it.
+        attrs += MarkdownLists.paragraphAttributes(
+            for: text, baseFont: baseFont, nsText: ns,
+            fullRange: NSRange(location: 0, length: ns.length),
+            listsEnabled: configuration.lists.helpersEnabled,
+            defaultLineHeight: baseLineHeight, defaultParagraphSpacing: baseParagraphSpacing,
+            configuration: configuration
+        )
         for block in blocks {
             styleBlock(block, font: baseFont, ctx: ctx, into: &attrs)
         }
@@ -58,6 +71,8 @@ enum MarkdownASTStyler {
         let ns: NSString
         let fontName: String
         let baseFont: NSFont
+        let baseLineHeight: CGFloat
+        let baseParagraphSpacing: CGFloat
         let codeFont: NSFont
         let codeBackground: NSColor
         let inlineMarkerFont: NSFont
@@ -81,6 +96,13 @@ enum MarkdownASTStyler {
             let headingBase = NSFont(name: ctx.fontName, size: ctx.baseFont.pointSize * multiplier)
                 ?? .systemFont(ofSize: ctx.baseFont.pointSize * multiplier)
             let headingFont = adding(.bold, to: headingBase)
+            let lineHeight = ceil(headingFont.ascender - headingFont.descender + headingFont.leading) + 1
+            let headingPara = NSMutableParagraphStyle()
+            headingPara.minimumLineHeight = lineHeight
+            headingPara.maximumLineHeight = lineHeight
+            headingPara.paragraphSpacingBefore = headingFont.pointSize * ctx.config.headings.topSpacingEm(for: level)
+            headingPara.paragraphSpacing = ctx.baseParagraphSpacing
+            attrs.append((ctx.ns.paragraphRange(for: range), [.paragraphStyle: headingPara]))
             attrs.append((range, [.font: headingFont]))
             for marker in markers {
                 attrs.append((marker, [.foregroundColor: ctx.theme.headingMarker]))
