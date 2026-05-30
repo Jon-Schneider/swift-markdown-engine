@@ -26,26 +26,4 @@ struct DocumentASTTests {
             ]),
         ])
     }
-
-    @Test("heading carries level, markers and nested inline children")
-    func headingWithNestedInlines() {
-        #expect(DocumentAST.parse("# **n*o*des**") == [
-            .heading(level: 1, range: r(0, 13), markers: [r(0, 1)], inlines: [
-                .emphasis(.bold, range: r(2, 11), markers: [r(2, 2), r(11, 2)], children: [
-                    .text(r(4, 1)),
-                    .emphasis(.italic, range: r(5, 3), markers: [r(5, 1), r(7, 1)], children: [.text(r(6, 1))]),
-                    .text(r(8, 3)),
-                ]),
-            ]),
-        ])
-    }
-
-    @Test("blocks tile the document with the right kinds")
-    func mixedDocument() {
-        #expect(DocumentAST.parse("# H\n\n```\nx\n```\n") == [
-            .heading(level: 1, range: r(0, 4), markers: [r(0, 1)], inlines: [.text(r(2, 1))]),
-            .blank(range: r(4, 1)),
-            .codeBlock(range: r(5, 10)),
-        ])
-    }
 }

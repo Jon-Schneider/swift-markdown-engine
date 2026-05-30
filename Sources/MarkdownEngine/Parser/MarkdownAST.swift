@@ -105,10 +105,13 @@ enum DocumentAST {
         let hashStart = i
         var level = 0
         while i < end, ns.character(at: i) == hash { level += 1; i += 1 }
-        let markers = [NSRange(location: hashStart, length: level)]
 
         var contentStart = i
         while contentStart < end, ns.character(at: contentStart) == space { contentStart += 1 }
+        // Markers span the `#`(s) AND the following space(s) so the whole syntax
+        // collapses on shrink — otherwise the space renders at heading size and
+        // leaves a small left gap before the text.
+        let markers = [NSRange(location: hashStart, length: contentStart - hashStart)]
         var contentEnd = end
         while contentEnd > contentStart, isLineBreak(ns.character(at: contentEnd - 1)) { contentEnd -= 1 }
         let contentRange = NSRange(location: contentStart, length: contentEnd - contentStart)

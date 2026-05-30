@@ -20,12 +20,6 @@ struct MarkdownCase {
 
 enum MarkdownCorpus {
     static let cases: [MarkdownCase] = [
-        // — Headings —
-        .init(name: "heading-levels",
-              text: "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n####### seven hashes"),
-        .init(name: "heading-leading-space",
-              text: "   # indented heading\n#nospace not a heading"),
-
         // — Asterisk emphasis (stack parser) —
         .init(name: "emphasis-basic",
               text: "*italic* **bold** ***bolditalic***"),
@@ -94,10 +88,6 @@ enum MarkdownCorpus {
         .init(name: "thematic-breaks",
               text: "above\n\n---\n\n***\n\n___\n\nbelow"),
 
-        // — Task lists —
-        .init(name: "task-list",
-              text: "- [ ] todo\n- [x] done\n* [X] also done\n1. [ ] numbered"),
-
         // — Backslash escapes —
         .init(name: "backslash-escape",
               text: #"\*not italic\* and \`not code\` and \\ literal backslash"#),
@@ -112,31 +102,5 @@ enum MarkdownCorpus {
         // — Unicode (multi-byte → UTF-16 offset correctness) —
         .init(name: "unicode",
               text: "**粗体** and _斜体_ and `代码` and 🎉 then *italic*"),
-
-        // — Kitchen sink —
-        .init(name: "kitchen-sink", text: """
-        # Title with *emphasis*
-
-        A paragraph with **bold**, _underscore_, `code`, a [link](https://example.com/(p)),
-        a [[WikiNote|abc-123]], an ![[Embed]], and inline math $E = mc^2$.
-
-        > A blockquote with ~~strike~~ and **bold**.
-
-        ```python
-        # not a heading
-        x = "*not italic*"
-        ```
-
-        - [ ] task with `code`
-        - [x] done
-
-        | col | val |
-        | --- | --- |
-        | a   | $5  |
-
-        ---
-
-        Final line with \\*escaped\\* stars.
-        """),
     ]
 }

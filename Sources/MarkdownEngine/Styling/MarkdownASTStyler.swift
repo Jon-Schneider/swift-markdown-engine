@@ -74,8 +74,9 @@ enum MarkdownASTStyler {
         // Text/regex-based passes (AST-agnostic). Code ranges from the AST are
         // used for the "skip inside code" checks instead of token scanning.
         let codeRanges = collectCodeRanges(in: blocks)
+        let checkboxRanges = collectCheckboxRanges(in: blocks)
         styleAutoLinks(ctx: ctx, codeRanges: codeRanges, into: &attrs)
-        styleIncompleteLinkBrackets(ctx: ctx, codeRanges: codeRanges, into: &attrs)
+        styleIncompleteLinkBrackets(ctx: ctx, codeRanges: codeRanges, checkboxRanges: checkboxRanges, into: &attrs)
         return attrs
     }
 
@@ -108,6 +109,19 @@ enum MarkdownASTStyler {
 
     private static func isInCode(_ range: NSRange, _ codeRanges: [NSRange]) -> Bool {
         codeRanges.contains { NSIntersectionRange($0, range).length > 0 }
+    }
+
+    /// Task-checkbox boxes (`[ ]`/`[x]`). The incomplete-link-bracket pass would
+    /// otherwise match these as `[…]` and re-color the brackets visible, painting
+    /// the raw syntax back on top of the rendered checkbox glyph.
+    private static func collectCheckboxRanges(in blocks: [BlockNode]) -> [NSRange] {
+        var ranges: [NSRange] = []
+        for block in blocks {
+            if case .list(_, let items) = block {
+                for item in items where item.checkbox != nil { ranges.append(item.checkbox!) }
+            }
+        }
+        return ranges
     }
 
     private static func regex(_ pattern: String, _ anchored: Bool = true) -> NSRegularExpression? {
@@ -203,7 +217,7 @@ enum MarkdownASTStyler {
         }
     }
 
-    private static func styleIncompleteLinkBrackets(ctx: Ctx, codeRanges: [NSRange], into attrs: inout [StyledRange]) {
+    private static func styleIncompleteLinkBrackets(ctx: Ctx, codeRanges: [NSRange], checkboxRanges: [NSRange], into attrs: inout [StyledRange]) {
         let patterns = [#"\[\]"#, #"\[\[\]\]"#, #"\[[^\]\r\n]*$"#, #"\[[^\]\r\n]+\](?!\()"#,
                         #"\[[^\]\r\n]+\]\([^)\r\n]*$"#, #"\[[^\]\r\n]+\]\(\)"#]
         let muted = ctx.theme.mutedText
@@ -211,7 +225,8 @@ enum MarkdownASTStyler {
         for pattern in patterns {
             guard let re = regex(pattern, false) else { continue }
             for scan in ctx.scanRanges {
-              for m in re.matches(in: ctx.text, options: [], range: scan) where !isInCode(m.range, codeRanges) {
+              for m in re.matches(in: ctx.text, options: [], range: scan)
+                  where !isInCode(m.range, codeRanges) && !isInCode(m.range, checkboxRanges) {
                 for (i, ch) in ctx.ns.substring(with: m.range).enumerated() {
                     let r = NSRange(location: m.range.location + i, length: 1)
                     let isBracket = ch == "[" || ch == "]" || ch == "(" || ch == ")"
@@ -238,7 +253,17 @@ enum MarkdownASTStyler {
         let wikiLinkID: (NSRange) -> String?
         let scopedRanges: [NSRange]?
 
-        func isActive(_ range: NSRange) -> Bool { NSLocationInRange(caret, range) }
+        /// Active (syntax revealed) when the caret is inside the range OR sits
+        /// right at its end — mirroring the pre-AST tokenizer's `caret == end`
+        /// rule, minus a trailing newline. End-adjacency keeps the syntax you
+        /// just typed (and a click that lands right behind a word) revealed
+        /// instead of collapsing the instant the caret reaches the edge.
+        func isActive(_ range: NSRange) -> Bool {
+            if NSLocationInRange(caret, range) { return true }
+            guard range.length > 0, caret == NSMaxRange(range) else { return false }
+            let last = ns.character(at: caret - 1)
+            return last != 0x0A && last != 0x0D
+        }
         var theme: MarkdownEditorTheme { config.theme }
         var text: String { ns as String }
         var fullRange: NSRange { NSRange(location: 0, length: ns.length) }
@@ -506,17 +531,25 @@ enum MarkdownASTStyler {
         }
     }
 
-    private static func shrinkInlineMarkers(_ nodes: [InlineNode], ctx: Ctx, into attrs: inout [StyledRange]) {
+    /// Shrink inactive nodes' markers. When an ancestor span is active (the caret
+    /// sits anywhere inside it) its WHOLE subtree reveals too — so clicking right
+    /// behind a fully-bold word like `**n*o*des**` shows the nested `*…*` markers
+    /// as well, not just the outer `**`. `forceReveal` carries that "an ancestor
+    /// is active" state down the recursion.
+    private static func shrinkInlineMarkers(_ nodes: [InlineNode], ctx: Ctx, forceReveal: Bool = false, into attrs: inout [StyledRange]) {
         for node in nodes {
             switch node {
             case .emphasis(_, let range, let markers, let children):
-                if !ctx.isActive(range) { shrink(markers, ctx: ctx, into: &attrs) }
-                shrinkInlineMarkers(children, ctx: ctx, into: &attrs)
+                let active = forceReveal || ctx.isActive(range)
+                if !active { shrink(markers, ctx: ctx, into: &attrs) }
+                shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
             case .strikethrough(let range, let markers, let children):
-                if !ctx.isActive(range) { shrink(markers, ctx: ctx, into: &attrs) }
-                shrinkInlineMarkers(children, ctx: ctx, into: &attrs)
+                let active = forceReveal || ctx.isActive(range)
+                if !active { shrink(markers, ctx: ctx, into: &attrs) }
+                shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
             case .link(let range, _, _, let markers, let children):
-                if !ctx.isActive(range) {
+                let active = forceReveal || ctx.isActive(range)
+                if !active {
                     shrink(markers, ctx: ctx, into: &attrs)
                     if markers.count >= 4 {   // also hide the "(url)" run
                         let hide = NSRange(location: markers[2].location,
@@ -524,13 +557,13 @@ enum MarkdownASTStyler {
                         attrs.append((hide, [.font: ctx.inlineMarkerFont, .foregroundColor: NSColor.clear]))
                     }
                 }
-                shrinkInlineMarkers(children, ctx: ctx, into: &attrs)
+                shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
             case .wikiLink(let range, _, _, let markers):
-                if !ctx.isActive(range) { shrink(markers, ctx: ctx, into: &attrs) }
+                if !(forceReveal || ctx.isActive(range)) { shrink(markers, ctx: ctx, into: &attrs) }
             case .image(let range, _, _, let markers):
-                if !ctx.isActive(range) { shrink(markers, ctx: ctx, into: &attrs) }
+                if !(forceReveal || ctx.isActive(range)) { shrink(markers, ctx: ctx, into: &attrs) }
             case .escape(let range, _, let marker):
-                if !ctx.isActive(range) { shrink([marker], ctx: ctx, into: &attrs) }
+                if !(forceReveal || ctx.isActive(range)) { shrink([marker], ctx: ctx, into: &attrs) }
             case .text, .code, .imageEmbed, .inlineLatex:
                 break   // own marker handling / not shrunk
             }
