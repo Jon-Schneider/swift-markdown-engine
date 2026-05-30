@@ -389,28 +389,62 @@ enum InlineParser {
         return nil
     }
 
-    /// Ported from the regex tokenizer: rejects currency-looking and trivially
-    /// short non-mathy `$…$` so plain prose isn't misread as math.
+    /// Rejects currency-looking and trivially short non-mathy `$…$` so plain
+    /// prose isn't misread as math. Scanner port of the old heuristic regexes.
     private static func isInlineMathContent(_ content: String) -> Bool {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        let currencyPattern = #"^[+-]?(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?$"#
-        if trimmed.range(of: currencyPattern, options: .regularExpression) != nil { return false }
-        let mathyPattern = #"[\\\^\_\{\}=+\-*/<>]"#
-        let mathyRegex = try? NSRegularExpression(pattern: mathyPattern)
-        let mathyMatches = mathyRegex?.numberOfMatches(
-            in: trimmed, range: NSRange(location: 0, length: trimmed.utf16.count)
-        ) ?? 0
+        if isCurrencyLike(trimmed) { return false }
+        let mathyMatches = mathyCharCount(trimmed)
         if mathyMatches == 0 {
-            if trimmed.count <= 3, trimmed.range(of: #"^[A-Za-z]{1,3}$"#, options: .regularExpression) != nil {
-                return true
-            }
-            return false
+            return trimmed.count <= 3 && isAllAsciiLetters(trimmed)
         }
         let tokenCount = trimmed.split(whereSeparator: { $0.isWhitespace }).count
         if mathyMatches >= 3 { return tokenCount <= 120 }
         if mathyMatches == 2 { return tokenCount <= 40 }
         return tokenCount <= 6
+    }
+
+    /// `^[+-]?(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?$` without regex — a plain,
+    /// optionally signed / thousands-grouped / decimal number (`50`, `1,000.50`,
+    /// `-5`), so currency isn't misread as math.
+    private static func isCurrencyLike(_ s: String) -> Bool {
+        let u = Array(s.utf16)
+        let n = u.count
+        func digit(_ x: Int) -> Bool { x >= 0 && x < n && u[x] >= 0x30 && u[x] <= 0x39 }
+        var i = 0
+        if i < n, u[i] == 0x2B || u[i] == 0x2D { i += 1 }   // + / -
+        guard digit(i) else { return false }
+        var sawDigit = false
+        while i < n {
+            if digit(i) { sawDigit = true; i += 1 }
+            else if u[i] == 0x2C, digit(i + 1), digit(i + 2), digit(i + 3), !digit(i + 4) {
+                i += 4   // a strict `,DDD` thousands group
+            } else { break }
+        }
+        guard sawDigit else { return false }
+        if i < n, u[i] == 0x2E {            // optional `.DDD+`
+            i += 1
+            guard digit(i) else { return false }
+            while digit(i) { i += 1 }
+        }
+        return i == n
+    }
+
+    /// Count of "mathy" characters `\ ^ _ { } = + - * / < >`.
+    private static func mathyCharCount(_ s: String) -> Int {
+        let mathy: Set<unichar> = [0x5C, 0x5E, 0x5F, 0x7B, 0x7D, 0x3D, 0x2B, 0x2D, 0x2A, 0x2F, 0x3C, 0x3E]
+        var count = 0
+        for u in s.utf16 where mathy.contains(u) { count += 1 }
+        return count
+    }
+
+    /// True when `s` is one or more ASCII letters only.
+    private static func isAllAsciiLetters(_ s: String) -> Bool {
+        let u = Array(s.utf16)
+        guard !u.isEmpty else { return false }
+        for x in u where !((x >= 0x41 && x <= 0x5A) || (x >= 0x61 && x <= 0x7A)) { return false }
+        return true
     }
 
     // MARK: - 4. Emphasis (delimiter runs)

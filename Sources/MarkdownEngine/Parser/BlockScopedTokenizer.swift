@@ -3,8 +3,8 @@
 //  MarkdownEngine
 //
 //  The live tokenization pipeline. For each block from `BlockParser`:
-//  block-level tokens (heading, blockquote, table, block LaTeX, code) still
-//  come from the legacy `parseTokens` regexes, while ALL inline tokens come
+//  block-level tokens (heading, blockquote, table, block LaTeX, code) come from
+//  `BlockLevelTokenizer` (hand scanners, no regex), while ALL inline tokens come
 //  from the AST (`InlineParser` → `InlineASTAdapter`). Results are offset back
 //  into document coordinates. Fenced-code blocks emit only their code-block
 //  token (no inline markup inside).
@@ -13,12 +13,6 @@
 import Foundation
 
 extension MarkdownTokenizer {
-
-    /// Block-level token kinds still recognized by the legacy regexes; every
-    /// inline kind is sourced from the AST instead.
-    private static let blockLevelKinds: Set<MarkdownTokenKind> = [
-        .heading, .blockquote, .table, .blockLatex, .codeBlock,
-    ]
 
     /// Per-block memoization: a block's substring → its block-RELATIVE tokens.
     /// Per keystroke only the edited block's substring changes, so every other
@@ -54,14 +48,12 @@ extension MarkdownTokenizer {
         }
         blockTokenLock.unlock()
 
-        let computed: [MarkdownToken]
-        if kind == .fencedCode {
-            computed = parseTokens(in: sub).filter { $0.kind == .codeBlock }
-        } else {
-            let blockLevel = parseTokens(in: sub).filter { blockLevelKinds.contains($0.kind) }
-            let inline = InlineASTAdapter.tokens(from: InlineParser.parse(sub))
-            computed = blockLevel + inline
-        }
+        let blockLevel = BlockLevelTokenizer.tokens(for: kind, in: sub as NSString)
+        // Fenced code is opaque — no inline markup inside it.
+        let inline = kind == .fencedCode
+            ? []
+            : InlineASTAdapter.tokens(from: InlineParser.parse(sub))
+        let computed = blockLevel + inline
 
         blockTokenLock.lock()
         if blockTokenCache[sub] == nil {
