@@ -22,11 +22,19 @@ extension NativeTextView {
         targetWidth: CGFloat? = nil,
         debugTag: String = "?"
     ) {
-        _ = debugTag
         scrollView.contentInsets.bottom = 0
 
         let lineHeight = layoutBridgeDefaultLineHeight(for: self.baseFont, using: layoutBridge)
-        let measured = measuredBaseContentHeight(minimumHeight: lineHeight)
+        // A file switch / view reload ("?") and a width change need a full layout to
+        // measure a stable height, and the ensuing setFrameSize cascade must keep
+        // forcing it until the height settles (a partial layout oscillates). Steady
+        // typing ("textDidChange") and steady-state cascades never force, so the
+        // per-keystroke cost stays O(edit) — no full re-layout while typing.
+        if debugTag == "?" { pendingFullLayoutMeasure = true }
+        let measured = measuredBaseContentHeight(
+            minimumHeight: lineHeight,
+            forceFullLayout: pendingFullLayoutMeasure
+        )
         let visibleHeight = scrollView.contentView.bounds.height
         let policy = BottomOverscrollPolicy(
             overscrollPercent: overscrollPercent,
@@ -43,15 +51,26 @@ extension NativeTextView {
 
         let baseHeightChanged = abs(measured - baseContentHeight) > 0.5
         let overscrollChanged = abs(resolvedOverscroll - activeBottomOverscroll) > 0.5
+        // Height settled → stop forcing full layout (until the next switch/resize).
+        if !(baseHeightChanged || overscrollChanged) { pendingFullLayoutMeasure = false }
         guard baseHeightChanged || overscrollChanged else { return }
         baseContentHeight = measured
         activeBottomOverscroll = resolvedOverscroll
         applyManagedFrameSize(width: targetWidth ?? frame.size.width)
     }
 
-    func measuredBaseContentHeight(minimumHeight: CGFloat) -> CGFloat {
+    func measuredBaseContentHeight(minimumHeight: CGFloat, forceFullLayout: Bool = false) -> CGFloat {
         let minimumContentHeight = ceil(max(minimumHeight, 0) + (textContainerInset.height * 2))
         guard let textLayoutManager else { return minimumContentHeight }
+
+        // TextKit 2 lays out lazily; measuring the document end against a PARTIAL
+        // layout yields a too-short, frame-height-dependent value that oscillates
+        // during the file-switch / resize cascade. Force full layout ONLY there
+        // (one-time per switch — the document needs full layout anyway); the
+        // per-keystroke path skips it to stay O(edit) and keep typing fast.
+        if forceFullLayout {
+            textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+        }
 
         let documentEnd = textLayoutManager.documentRange.endLocation
 
@@ -113,6 +132,7 @@ extension NativeTextView {
 
         let widthChanged = abs(newSize.width - frame.size.width) > 0.5
         if widthChanged {
+            pendingFullLayoutMeasure = true   // re-wrap → re-measure height against a full layout
             isApplyingManagedFrameSize = true
             super.setFrameSize(NSSize(width: newSize.width, height: frame.size.height))
             isApplyingManagedFrameSize = false

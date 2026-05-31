@@ -21,6 +21,10 @@ final class NativeTextView: NSTextView {
     var baseContentHeight: CGFloat = 0
     var activeBottomOverscroll: CGFloat = 0
     var isApplyingManagedFrameSize = false
+    /// Set on a file switch / width change; makes the height measurement force a full
+    /// TextKit-2 layout (a partial layout oscillates) until the resize cascade settles,
+    /// then clears. Keeps steady-state typing off the expensive full-layout path.
+    var pendingFullLayoutMeasure = false
     var suppressAutoRevealOnce: Bool = false
 
     // MARK: Configuration
