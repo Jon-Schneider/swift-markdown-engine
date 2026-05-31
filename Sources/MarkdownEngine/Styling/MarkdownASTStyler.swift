@@ -388,7 +388,12 @@ enum MarkdownASTStyler {
                 attrs.append((NSRange(location: parts.content.location + r.location, length: r.length), [.foregroundColor: fg]))
             }
         }
-        let markerAttrs: [NSAttributedString.Key: Any] = ctx.isActive(parts.codeRange)
+        // Use the whole block range, not `parts.codeRange`: for an incomplete
+        // single-line fence (```lang still being typed, no closing fence yet) the
+        // close fence is mis-detected as the opening backticks, so codeRange
+        // collapses to just the ``` and the caret after the language falls outside
+        // it — which would hide (clear) the line the user is typing.
+        let markerAttrs: [NSAttributedString.Key: Any] = ctx.isActive(range)
             ? [.foregroundColor: ctx.theme.mutedText, .font: ctx.codeFont]
             : [.foregroundColor: NSColor.clear, .font: ctx.codeFont]   // hiddenMarkerFont == codeFont
         attrs.append((parts.openFence, markerAttrs))
