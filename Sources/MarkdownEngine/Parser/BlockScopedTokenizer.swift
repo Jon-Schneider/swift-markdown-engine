@@ -24,18 +24,112 @@ extension MarkdownTokenizer {
     private static var blockTokenOrder: [String] = []
     private static let blockTokenCacheCap = 4096
 
+    // Document-level token memo: reuse the previous token list and re-tokenize
+    // only the blocks the edit touched (everything else shifts by the delta).
+    private static let tokensLock = NSLock()
+    private static var cachedTokenChars: [unichar]?
+    private static var cachedTokens: [MarkdownToken]?
+
     /// The live tokenizer: legacy block-level tokens + inline AST tokens.
     /// Opaque fenced-code blocks emit only their code-block token (no inline
     /// markup inside — fixes the "inline parsed inside a code block" bug).
     static func parseTokensViaAST(in text: String) -> [MarkdownToken] {
         let ns = text as NSString
+        let newLen = ns.length
+        var newChars = [unichar](repeating: 0, count: newLen)
+        if newLen > 0 { ns.getCharacters(&newChars, range: NSRange(location: 0, length: newLen)) }
+
+        let blocks = BlockParser.parse(text)
+
+        tokensLock.lock()
+        let prevChars = cachedTokenChars
+        let prevTokens = cachedTokens
+        tokensLock.unlock()
+
+        let result: [MarkdownToken]
+        if let prevChars, let prevTokens,
+           let (incr, _) = incrementalTokens(oldChars: prevChars, prevTokens: prevTokens, newChars: newChars, blocks: blocks, ns: ns) {
+            result = incr
+        } else {
+            result = fullTokens(blocks: blocks, ns: ns)
+        }
+
+        tokensLock.lock(); cachedTokenChars = newChars; cachedTokens = result; tokensLock.unlock()
+        return result
+    }
+
+    private static func fullTokens(blocks: [Block], ns: NSString) -> [MarkdownToken] {
         var result: [MarkdownToken] = []
-        for block in BlockParser.parse(text) {
+        for block in blocks {
             let delta = block.range.location
             let relTokens = cachedBlockTokens(kind: block.kind, sub: ns.substring(with: block.range))
             result.append(contentsOf: relTokens.map { $0.shifted(by: delta) })
         }
         return result
+    }
+
+    /// Reuse `prevTokens` for the unchanged prefix/suffix (suffix shifted by the
+    /// length delta) and re-tokenize only the blocks the edit touched. Tokens
+    /// live inside blocks and blocks tile the document, so the changed-block span
+    /// is a clean cut — no token straddles a block boundary. Returns the merged
+    /// tokens + how many blocks were re-tokenized, or nil to fall back to full.
+    private static func incrementalTokens(oldChars o: [unichar], prevTokens: [MarkdownToken], newChars n: [unichar], blocks: [Block], ns: NSString) -> (tokens: [MarkdownToken], retok: Int)? {
+        let oldLen = o.count, newLen = n.count
+        guard oldLen > 0, newLen > 0, !blocks.isEmpty else { return nil }
+
+        var p = 0
+        let maxPre = min(oldLen, newLen)
+        while p < maxPre, o[p] == n[p] { p += 1 }
+        var s = 0
+        let maxSuf = maxPre - p
+        while s < maxSuf, o[oldLen - 1 - s] == n[newLen - 1 - s] { s += 1 }
+        let delta = newLen - oldLen
+        let changeStart = p, changeEndNew = newLen - s
+
+        // A fence/block-LaTeX delimiter in the edit can ripple arbitrarily far
+        // (it pairs with a distant partner) → fall back to a full tokenization.
+        if BlockParser.hasBlockDelimiter(o, changeStart, oldLen - s)
+            || BlockParser.hasBlockDelimiter(n, changeStart, changeEndNew) { return nil }
+
+        // New blocks touching the changed char range [changeStart, changeEndNew].
+        var lo = blocks.count, hi = -1
+        for (i, b) in blocks.enumerated()
+        where b.range.location <= changeEndNew && NSMaxRange(b.range) >= changeStart {
+            lo = min(lo, i); hi = max(hi, i)
+        }
+        if hi < 0 { return delta == 0 ? (prevTokens, 0) : nil }
+
+        // Widen the window until no previous token straddles either cut. A block's
+        // EXTENT can change even when its leading text didn't (e.g. an edit that
+        // appends to a table's last row shrinks the whole table block), so a token
+        // spanning the cut must be re-tokenized, not reused.
+        var expanded = true
+        while expanded {
+            expanded = false
+            for t in prevTokens {
+                let cutStart = blocks[lo].range.location
+                if t.range.location < cutStart, NSMaxRange(t.range) > cutStart {
+                    while lo > 0, blocks[lo].range.location > t.range.location { lo -= 1; expanded = true }
+                }
+                let cutEndOld = NSMaxRange(blocks[hi].range) - delta
+                if t.range.location < cutEndOld, NSMaxRange(t.range) > cutEndOld {
+                    while hi < blocks.count - 1, NSMaxRange(blocks[hi].range) - delta < NSMaxRange(t.range) { hi += 1; expanded = true }
+                }
+            }
+        }
+
+        let regionStart = blocks[lo].range.location
+        let regionEndOld = NSMaxRange(blocks[hi].range) - delta
+
+        var result: [MarkdownToken] = []
+        for t in prevTokens where NSMaxRange(t.range) <= regionStart { result.append(t) }   // prefix, unchanged
+        for i in lo...hi {                                                                   // changed window, retokenized
+            let off = blocks[i].range.location
+            let rel = cachedBlockTokens(kind: blocks[i].kind, sub: ns.substring(with: blocks[i].range))
+            result.append(contentsOf: rel.map { $0.shifted(by: off) })
+        }
+        for t in prevTokens where t.range.location >= regionEndOld { result.append(t.shifted(by: delta)) }  // suffix, shifted
+        return (result, hi - lo + 1)
     }
 
     /// Cached block-relative tokens for `sub` (computed on miss). The token

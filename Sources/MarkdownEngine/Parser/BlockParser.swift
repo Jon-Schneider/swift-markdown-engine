@@ -45,7 +45,7 @@ struct Block: Equatable {
 enum BlockParser {
 
     private static let cacheLock = NSLock()
-    private static var cachedText: String?
+    private static var cachedChars: [unichar]?     // UTF-16 buffer of the last parse
     private static var cachedBlocks: [Block]?
 
     /// Splits `text` into a gap-free, ordered sequence of blocks that tile the
@@ -54,17 +54,131 @@ enum BlockParser {
     /// `parseTokensViaAST` and the styler's `DocumentAST.parse` — share a single
     /// line-scan instead of running it twice.
     static func parse(_ text: String) -> [Block] {
+        let textNS = text as NSString
+        let newLen = textNS.length
+        var newChars = [unichar](repeating: 0, count: newLen)
+        if newLen > 0 { textNS.getCharacters(&newChars, range: NSRange(location: 0, length: newLen)) }
+
         cacheLock.lock()
-        if cachedText == text, let cachedBlocks {
-            cacheLock.unlock()
-            return cachedBlocks
+        let prevChars = cachedChars
+        let prevBlocks = cachedBlocks
+        cacheLock.unlock()
+
+        // Identical text → return cached (memcmp on the buffer, not a bridged
+        // `String ==` which is O(document) and slow for an NSString backing).
+        if let prevChars, let prevBlocks, equalBuffers(prevChars, newChars) {
+            return prevBlocks
         }
-        cacheLock.unlock()
+
+        // Incremental: diff against the previous parse and reparse only the
+        // affected block window. Falls back to a full reparse when it can't be
+        // done safely (fenced code / block LaTeX, or a non-tiling splice).
+        if let prevChars, let prevBlocks,
+           let (incr, _) = incrementalParse(oldChars: prevChars, oldBlocks: prevBlocks, newChars: newChars, newNS: textNS) {
+            cacheLock.lock(); cachedChars = newChars; cachedBlocks = incr; cacheLock.unlock()
+            return incr
+        }
+
         let blocks = computeBlocks(text)
-        cacheLock.lock()
-        cachedText = text; cachedBlocks = blocks
-        cacheLock.unlock()
+        cacheLock.lock(); cachedChars = newChars; cachedBlocks = blocks; cacheLock.unlock()
         return blocks
+    }
+
+    private static func equalBuffers(_ a: [unichar], _ b: [unichar]) -> Bool {
+        guard a.count == b.count else { return false }
+        if a.isEmpty { return true }
+        return a.withUnsafeBytes { ap in
+            b.withUnsafeBytes { bp in memcmp(ap.baseAddress!, bp.baseAddress!, ap.count) == 0 }
+        }
+    }
+
+    /// Does `[lo, hi)` (± a small margin, to catch a delimiter formed across the
+    /// edit boundary) contain a `$$` or ``` — a block-LaTeX/fence delimiter that
+    /// can ripple beyond the local window?
+    static func hasBlockDelimiter(_ buf: [unichar], _ lo: Int, _ hi: Int) -> Bool {
+        var i = max(0, lo - 3)
+        let end = min(buf.count, hi + 3)
+        while i < end {
+            if buf[i] == 0x24 {                                          // $
+                if i + 1 < end, buf[i + 1] == 0x24 { return true }       // $$
+            } else if buf[i] == 0x60, i + 2 < end, buf[i + 1] == 0x60, buf[i + 2] == 0x60 {
+                return true                                              // ```
+            }
+            i += 1
+        }
+        return false
+    }
+
+    /// Incremental reparse: diff `old`→`new`, reparse only the affected block
+    /// window, splice it between the untouched prefix/suffix blocks. Returns the
+    /// new block list + how many blocks were reparsed, or nil to fall back to a
+    /// full reparse. Correct even against a stale base: only blocks whose text is
+    /// unchanged (common prefix/suffix) are reused; the rest is reparsed.
+    private static func incrementalParse(oldChars o: [unichar], oldBlocks: [Block], newChars n: [unichar], newNS: NSString) -> (blocks: [Block], window: Int)? {
+        guard !oldBlocks.isEmpty else { return nil }
+        let oldLen = o.count, newLen = n.count
+        guard oldLen > 0, newLen > 0 else { return nil }
+
+        // 1. Common prefix / suffix over the cached UTF-16 buffers (no re-extract).
+        var p = 0
+        let maxPre = min(oldLen, newLen)
+        while p < maxPre, o[p] == n[p] { p += 1 }
+        var s = 0
+        let maxSuf = maxPre - p
+        while s < maxSuf, o[oldLen - 1 - s] == n[newLen - 1 - s] { s += 1 }
+        let delta = newLen - oldLen
+        let changeStart = p
+        let changeEnd = oldLen - s              // [changeStart, changeEnd) in old
+
+        // A fence (```) or block-LaTeX ($$) delimiter in the edit can pair with a
+        // distant partner and ripple arbitrarily far past the window → full reparse.
+        if hasBlockDelimiter(o, changeStart, changeEnd) || hasBlockDelimiter(n, changeStart, newLen - s) {
+            return nil
+        }
+
+        // 2. Affected old-block window (±1 block margin for merges/splits).
+        var firstIdx = 0
+        while firstIdx + 1 < oldBlocks.count, oldBlocks[firstIdx + 1].range.location <= changeStart { firstIdx += 1 }
+        var lastIdx = oldBlocks.count - 1
+        while lastIdx > 0, NSMaxRange(oldBlocks[lastIdx - 1].range) >= changeEnd { lastIdx -= 1 }
+        let winFirst = max(0, min(firstIdx, lastIdx) - 1)
+        let winLast = min(oldBlocks.count - 1, max(firstIdx, lastIdx) + 1)
+
+        // 3. Bail on opaque multi-line blocks — fences / block LaTeX can ripple.
+        for b in oldBlocks[winFirst...winLast] where b.kind == .fencedCode || b.kind == .blockLatex {
+            return nil
+        }
+
+        // 4. Window → new-text range (window start is before the edit → unchanged).
+        let winStart = oldBlocks[winFirst].range.location
+        let winEndNew = NSMaxRange(oldBlocks[winLast].range) + delta
+        guard winStart >= 0, winEndNew >= winStart, winEndNew <= newLen else { return nil }
+
+        // 5. Reparse just the window substring, shift to absolute new coords.
+        let windowText = newNS.substring(with: NSRange(location: winStart, length: winEndNew - winStart))
+        let reparsed = computeBlocks(windowText).map { $0.shifted(by: winStart) }
+        // A trailing fence/latex reaching the window end might continue past it.
+        if let last = reparsed.last, last.kind == .fencedCode || last.kind == .blockLatex,
+           NSMaxRange(last.range) >= winEndNew {
+            return nil
+        }
+
+        // 6. Splice: prefix (unchanged) + reparsed window + suffix (shifted).
+        var result: [Block] = []
+        result.append(contentsOf: oldBlocks[0..<winFirst])
+        result.append(contentsOf: reparsed)
+        if winLast + 1 < oldBlocks.count {
+            result.append(contentsOf: oldBlocks[(winLast + 1)...].map { $0.shifted(by: delta) })
+        }
+
+        // 7. Validate gap-free tiling of [0, newLen); else full reparse.
+        var cursor = 0
+        for b in result {
+            if b.range.location != cursor { return nil }
+            cursor = NSMaxRange(b.range)
+        }
+        guard cursor == newLen else { return nil }
+        return (result, reparsed.count)
     }
 
     private static func computeBlocks(_ text: String) -> [Block] {
@@ -257,5 +371,12 @@ enum BlockParser {
         let lo = ranges.first!.location
         let hi = NSMaxRange(ranges.last!)
         return NSRange(location: lo, length: hi - lo)
+    }
+}
+
+private extension Block {
+    /// A copy with the range moved by `d` UTF-16 units.
+    func shifted(by d: Int) -> Block {
+        Block(kind: kind, range: NSRange(location: range.location + d, length: range.length))
     }
 }
