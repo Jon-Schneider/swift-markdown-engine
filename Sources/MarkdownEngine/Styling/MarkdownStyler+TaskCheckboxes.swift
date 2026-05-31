@@ -13,9 +13,7 @@ import Foundation
 
 extension MarkdownStyler {
 
-    /// Task-list line: optional indent, marker, spacer, then a `[ ]`/`[x]` box.
-    /// Marker set matches the AST's task detection (`-`/`*`/`+`/`•`/`N.`) so the
-    /// caret-crossing trigger agrees with how the styler renders the task.
+    /// Task-list line: indent, marker (`-`/`*`/`+`/`•`/`N.` matching the AST), spacer, `[ ]`/`[x]` box.
     static let taskListRegex: NSRegularExpression = try! NSRegularExpression(
         pattern: #"^([ \t]*)([-•*+]|\d+\.)([ \t]+)(\[[ xX]\])(?=[ \t])"#,
         options: [.anchorsMatchLines]
@@ -23,12 +21,7 @@ extension MarkdownStyler {
 
     // MARK: Task Syntax Membership
 
-    /// Returns the full `<marker><spacer>[ ]` range on `location`'s line if
-    /// `location` sits inside (or right at the trailing edge of) a task-list
-    /// syntax region, else `nil`. The styler intentionally suppresses the
-    /// checkbox glyph while the caret is inside this region so the user can
-    /// edit raw chars; the coordinator uses this to detect crossings and
-    /// trigger a restyle when the caret enters/leaves.
+    /// Full `<marker><spacer>[ ]` range if `location` is inside (or at the trailing edge of) it, else nil.
     static func taskSyntaxRange(at location: Int, in text: String) -> NSRange? {
         let nsText = text as NSString
         let safeLoc = max(0, min(location, nsText.length))

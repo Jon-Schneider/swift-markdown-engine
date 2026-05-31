@@ -123,10 +123,7 @@ enum MarkdownStyler {
         )
 
         var result: [StyledRange] = []
-        // Phase 2.5 swap: the AST-native styler now handles everything except
-        // the NSImage rendering (composition, inline colouring, marker-shrink,
-        // paragraph styles, the text passes, code blocks, blockquotes) — this
-        // is where the composition fixes (e.g. bold inside a heading) come from.
+        // AST-native styler handles everything but NSImage rendering (incl. the composition fixes).
         result += MarkdownASTStyler.styleAttributes(
             text: text, fontName: fontName, fontSize: fontSize,
             caretLocation: caretLocation, wikiLinkIDProvider: wikiLinkIDProvider,
@@ -354,12 +351,7 @@ extension MarkdownStyler {
 
 extension MarkdownStyler {
 
-    /// Returns the line range if `location` sits on a thematic-break line
-    /// (a line of 3+ matching `-`, `*`, or `_` with optional surrounding
-    /// whitespace), else `nil`. The coordinator uses this to trigger a
-    /// restyle on caret crossings in/out of an HR line — HRs are styled
-    /// via a pure attribute (no `MarkdownToken`), so `tokensChanged`
-    /// alone doesn't catch these crossings.
+    /// Line range if `location` is on a thematic-break line (3+ `-`/`*`/`_`), else nil; drives HR restyle.
     static func hrLineRange(at location: Int, in text: String) -> NSRange? {
         let nsText = text as NSString
         let safeLoc = max(0, min(location, nsText.length))

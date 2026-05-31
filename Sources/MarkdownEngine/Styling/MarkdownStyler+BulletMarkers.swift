@@ -12,8 +12,7 @@ import Foundation
 
 extension MarkdownStyler {
 
-    /// Optionally-indented bullet marker at line start, NOT a task checkbox.
-    /// Trailing `[ \t]+` excludes thematic breaks (`---`) and emphasis (`*bold*`).
+    /// Indented bullet marker at line start (trailing space excludes `---`/`*bold*`), not a checkbox.
     static let bulletListRegex: NSRegularExpression = try! NSRegularExpression(
         pattern: #"^([ \t]*)([-*+])([ \t]+)(?!\[[ xX]\])"#,
         options: [.anchorsMatchLines]

@@ -1,2 +1,0 @@
-inlineCode @8+8 content=9+6 markers=[8+1,15+1] «`$price`»
-inlineCode @21+8 content=22+6 markers=[21+1,28+1] «`a + $b`»

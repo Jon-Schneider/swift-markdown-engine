@@ -35,8 +35,7 @@ enum BlockKind: Equatable {
     case blank           // blank / whitespace-only line(s) — separator
 }
 
-/// One block. `range` is the absolute UTF-16 range of the block's lines
-/// (including their trailing newlines); blocks tile the document with no gaps.
+/// One block; `range` is the absolute UTF-16 span of its lines, tiling with no gaps.
 struct Block: Equatable {
     let kind: BlockKind
     let range: NSRange
@@ -48,11 +47,7 @@ enum BlockParser {
     private static var cachedChars: [unichar]?     // UTF-16 buffer of the last parse
     private static var cachedBlocks: [Block]?
 
-    /// Splits `text` into a gap-free, ordered sequence of blocks that tile the
-    /// entire string: every UTF-16 unit belongs to exactly one block. Memoizes
-    /// the last result (1 entry) so the two per-keystroke callers —
-    /// `parseTokensViaAST` and the styler's `DocumentAST.parse` — share a single
-    /// line-scan instead of running it twice.
+    /// Splits `text` into gap-free tiling blocks; memoizes the last parse so both per-keystroke callers share one line-scan.
     static func parse(_ text: String) -> [Block] {
         let textNS = text as NSString
         let newLen = textNS.length
@@ -64,15 +59,12 @@ enum BlockParser {
         let prevBlocks = cachedBlocks
         cacheLock.unlock()
 
-        // Identical text → return cached (memcmp on the buffer, not a bridged
-        // `String ==` which is O(document) and slow for an NSString backing).
+        // Identical text → return cached (memcmp the buffer, not a slow bridged `String ==`).
         if let prevChars, let prevBlocks, equalBuffers(prevChars, newChars) {
             return prevBlocks
         }
 
-        // Incremental: diff against the previous parse and reparse only the
-        // affected block window. Falls back to a full reparse when it can't be
-        // done safely (fenced code / block LaTeX, or a non-tiling splice).
+        // Incremental: reparse only the affected block window, else fall back to a full reparse.
         if let prevChars, let prevBlocks,
            let (incr, _) = incrementalParse(oldChars: prevChars, oldBlocks: prevBlocks, newChars: newChars, newNS: textNS) {
             cacheLock.lock(); cachedChars = newChars; cachedBlocks = incr; cacheLock.unlock()
@@ -92,9 +84,7 @@ enum BlockParser {
         }
     }
 
-    /// Does `[lo, hi)` (± a small margin, to catch a delimiter formed across the
-    /// edit boundary) contain a `$$` or ``` — a block-LaTeX/fence delimiter that
-    /// can ripple beyond the local window?
+    /// Does `[lo, hi)` (± margin for an edit-boundary delimiter) contain a `$$` or ``` that can ripple?
     static func hasBlockDelimiter(_ buf: [unichar], _ lo: Int, _ hi: Int) -> Bool {
         var i = max(0, lo - 3)
         let end = min(buf.count, hi + 3)
@@ -109,17 +99,13 @@ enum BlockParser {
         return false
     }
 
-    /// Incremental reparse: diff `old`→`new`, reparse only the affected block
-    /// window, splice it between the untouched prefix/suffix blocks. Returns the
-    /// new block list + how many blocks were reparsed, or nil to fall back to a
-    /// full reparse. Correct even against a stale base: only blocks whose text is
-    /// unchanged (common prefix/suffix) are reused; the rest is reparsed.
+    /// Diff old→new, reparse the affected window, splice between untouched prefix/suffix; nil to fall back to full.
     private static func incrementalParse(oldChars o: [unichar], oldBlocks: [Block], newChars n: [unichar], newNS: NSString) -> (blocks: [Block], window: Int)? {
         guard !oldBlocks.isEmpty else { return nil }
         let oldLen = o.count, newLen = n.count
         guard oldLen > 0, newLen > 0 else { return nil }
 
-        // 1. Common prefix / suffix over the cached UTF-16 buffers (no re-extract).
+        // 1. Common prefix/suffix over the cached UTF-16 buffers (no re-extract).
         var p = 0
         let maxPre = min(oldLen, newLen)
         while p < maxPre, o[p] == n[p] { p += 1 }
@@ -130,8 +116,7 @@ enum BlockParser {
         let changeStart = p
         let changeEnd = oldLen - s              // [changeStart, changeEnd) in old
 
-        // A fence (```) or block-LaTeX ($$) delimiter in the edit can pair with a
-        // distant partner and ripple arbitrarily far past the window → full reparse.
+        // A fence/block-LaTeX delimiter in the edit can pair with a distant partner → full reparse.
         if hasBlockDelimiter(o, changeStart, changeEnd) || hasBlockDelimiter(n, changeStart, newLen - s) {
             return nil
         }
@@ -197,8 +182,7 @@ enum BlockParser {
 
         func lineText(_ i: Int) -> String { nsText.substring(with: lines[i]) }
 
-        /// If a block-LaTeX run opens at `start`, the line index of its closing
-        /// `$$` (same line for single-line, else a later line); nil if none.
+        /// Line index of the `$$` closing a block-LaTeX run opened at `start`; nil if none.
         func blockLatexCloseIndex(from start: Int) -> Int? {
             let open = lineText(start).trimmingCharacters(in: .whitespacesAndNewlines)
             if open.dropFirst(2).contains("$$") { return start }
@@ -245,8 +229,7 @@ enum BlockParser {
                 i = end + 1
 
             } else if isListItem(line) {
-                // Consecutive list-item lines form one list block; per-item
-                // detail (marker/ordered/task/indent) is parsed in DocumentAST.
+                // Consecutive list-item lines form one list block; per-item detail is parsed in DocumentAST.
                 var end = i
                 while end + 1 < lines.count, isListItem(lineText(end + 1)) { end += 1 }
                 blocks.append(Block(kind: .list, range: union(lines[i...end])))
@@ -289,8 +272,7 @@ enum BlockParser {
         line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// An opening or closing fence line: starts with three backticks
-    /// (matches codeBlockRegex's `^``` …` for both open and close).
+    /// An opening or closing fence line: starts with three backticks.
     private static func isFence(_ line: String) -> Bool {
         line.hasPrefix("```")
     }
@@ -322,10 +304,7 @@ enum BlockParser {
         return rest.first == ">"
     }
 
-    /// A list-item line: optional indent, then a bullet (`-`/`*`/`+`) or an
-    /// ordered marker (`1.` / `1)`, ≤9 digits), followed by a space/tab (or the
-    /// marker alone). Thematic breaks (`---`/`***`) are classified earlier, so
-    /// they never reach here.
+    /// A list-item line: optional indent, a bullet (`-`/`*`/`+`) or ordered marker (`1.`/`1)`), then a space/tab.
     static func isListItem(_ line: String) -> Bool {
         var rest = Substring(line).drop { $0 == " " || $0 == "\t" }
         guard let first = rest.first else { return false }
@@ -339,9 +318,7 @@ enum BlockParser {
         } else {
             return false
         }
-        // A space/tab must follow the marker. A bare `-`/`*`/`1.` is NOT a list
-        // yet — so typing `-` (or `*` to start emphasis) stays literal until a
-        // space is typed, matching the pre-AST bullet behavior.
+        // A space/tab must follow the marker — a bare `-`/`*`/`1.` stays literal (pre-AST bullet behavior).
         guard let after = rest.first else { return false }
         return after == " " || after == "\t"
     }

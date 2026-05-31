@@ -11,10 +11,7 @@
 
 import Foundation
 
-/// One item line of a list. `marker` is the `-`/`*`/`+` or `1.`/`1)` run;
-/// `checkbox` is the `[ ]`/`[x]` bracket range for a GFM task item (else nil).
-/// `indent` is the leading-whitespace column count (a nesting hint that the
-/// styler indents by; Phase B turns it into a real container tree).
+/// One list-item line: marker run, optional GFM checkbox, and indent column count.
 struct ListItem: Equatable {
     let range: NSRange          // the item's full line (incl. trailing newline)
     let marker: NSRange
@@ -55,15 +52,11 @@ enum DocumentAST {
     private static let space: unichar = 0x20
     private static let tab: unichar = 0x09
 
-    /// Build the document AST: block structure with inline children parsed.
-    /// When `scopedRanges` is given, inline content is parsed only for blocks
-    /// intersecting it (per-keystroke restyling) — others get empty inlines, so
-    /// a restyle touches one block instead of the whole document.
+    /// Build the document AST; `scopedRanges` parses inlines only for intersecting blocks.
     static func parse(_ text: String, scopedRanges: [NSRange]? = nil) -> [BlockNode] {
         let ns = text as NSString
         let blocks = BlockParser.parse(text)
-        // In scoped mode the styler only touches blocks intersecting the edit,
-        // so don't even build BlockNodes for the rest (no per-block work × 1000s).
+        // Scoped mode: skip building BlockNodes for blocks outside the edit.
         let relevant = scopedRanges == nil ? blocks : blocks.filter { inScope($0.range, scopedRanges) }
         return relevant.map { node(for: $0, ns: ns, scopedRanges: scopedRanges) }
     }
@@ -108,9 +101,7 @@ enum DocumentAST {
 
         var contentStart = i
         while contentStart < end, ns.character(at: contentStart) == space { contentStart += 1 }
-        // Markers span the `#`(s) AND the following space(s) so the whole syntax
-        // collapses on shrink — otherwise the space renders at heading size and
-        // leaves a small left gap before the text.
+        // Markers span `#`(s) plus trailing space(s) so the whole syntax collapses on shrink.
         let markers = [NSRange(location: hashStart, length: contentStart - hashStart)]
         var contentEnd = end
         while contentEnd > contentStart, isLineBreak(ns.character(at: contentEnd - 1)) { contentEnd -= 1 }
@@ -120,8 +111,7 @@ enum DocumentAST {
                         inlines: scoped ? InlineParser.parse(ns, range: contentRange) : [])
     }
 
-    /// Split a list block into one `ListItem` per physical line (Phase A is
-    /// line-based; Phase B groups continuation lines + nested blocks per item).
+    /// Split a list block into one `ListItem` per physical line.
     private static func list(_ range: NSRange, _ ns: NSString, scoped: Bool = true) -> BlockNode {
         var items: [ListItem] = []
         var cursor = range.location
@@ -134,8 +124,7 @@ enum DocumentAST {
         return .list(range: range, items: items)
     }
 
-    /// Parse one list-item line: indent, marker (`-`/`*`/`+` or `N.`/`N)`),
-    /// optional `[ ]`/`[x]` task checkbox, then the inline content.
+    /// Parse one list-item line: indent, marker, optional task checkbox, inline content.
     private static func listItem(_ lineRange: NSRange, _ ns: NSString, scoped: Bool = true) -> ListItem {
         let end = NSMaxRange(lineRange)
         var i = lineRange.location

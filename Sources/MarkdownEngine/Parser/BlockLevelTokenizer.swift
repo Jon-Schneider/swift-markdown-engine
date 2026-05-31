@@ -50,9 +50,7 @@ enum BlockLevelTokenizer {
         case .table:       return table(in: sub)
         case .blockLatex:  return blockLatex(in: sub)
         case .paragraph, .list, .thematicBreak, .blank:
-            // Tables and block LaTeX are their own BlockParser blocks now. A
-            // safety-net table scan stays (harmless once it's split out); block
-            // LaTeX is line-based, so inline `$$…$$` is left as plain text.
+            // Safety-net table scan; tables/block LaTeX are their own blocks now, inline `$$…$$` stays plain.
             return table(in: sub)
         }
     }

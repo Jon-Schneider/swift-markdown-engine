@@ -25,11 +25,7 @@ extension NativeTextView {
         scrollView.contentInsets.bottom = 0
 
         let lineHeight = layoutBridgeDefaultLineHeight(for: self.baseFont, using: layoutBridge)
-        // A file switch / view reload ("?") and a width change need a full layout to
-        // measure a stable height, and the ensuing setFrameSize cascade must keep
-        // forcing it until the height settles (a partial layout oscillates). Steady
-        // typing ("textDidChange") and steady-state cascades never force, so the
-        // per-keystroke cost stays O(edit) — no full re-layout while typing.
+        // File switch/resize forces full layout until height settles; typing stays O(edit).
         if debugTag == "?" { pendingFullLayoutMeasure = true }
         let measured = measuredBaseContentHeight(
             minimumHeight: lineHeight,
@@ -63,19 +59,14 @@ extension NativeTextView {
         let minimumContentHeight = ceil(max(minimumHeight, 0) + (textContainerInset.height * 2))
         guard let textLayoutManager else { return minimumContentHeight }
 
-        // TextKit 2 lays out lazily; measuring the document end against a PARTIAL
-        // layout yields a too-short, frame-height-dependent value that oscillates
-        // during the file-switch / resize cascade. Force full layout ONLY there
-        // (one-time per switch — the document needs full layout anyway); the
-        // per-keystroke path skips it to stay O(edit) and keep typing fast.
+        // Partial TextKit-2 layout under-measures and oscillates; force full layout only on switch/resize.
         if forceFullLayout {
             textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
         }
 
         let documentEnd = textLayoutManager.documentRange.endLocation
 
-        // Anchor: ensure the last fragment is laid out (also gives a max-Y fallback
-        // in case `enumerateTextSegments` misses the trailing extra-line fragment).
+        // Lay out the last fragment; gives a max-Y fallback if enumerateTextSegments misses it.
         var fragmentMaxY: CGFloat = 0
         var visited = 0
         textLayoutManager.enumerateTextLayoutFragments(
@@ -84,12 +75,7 @@ extension NativeTextView {
         ) { fragment in
             let frame = fragment.layoutFragmentFrame
             fragmentMaxY = max(fragmentMaxY, frame.maxY)
-            // A trailing block image (LaTeX/embed) draws below the text in the last
-            // paragraph's paragraphSpacing, which TextKit omits from the layout
-            // height — so the image on the last line wouldn't be scrollable. Its
-            // extent shows up in the rendering surface; count it (ignoring the few-pt
-            // overdraw normal fragments carry). The image sits on the line before the
-            // trailing extra-line fragment, so visit a few fragments.
+            // Trailing block image draws below TextKit's height; count its surface extent so it scrolls.
             let surfaceMaxY = frame.origin.y + fragment.renderingSurfaceBounds.maxY
             if surfaceMaxY > frame.maxY + 8 { fragmentMaxY = max(fragmentMaxY, surfaceMaxY) }
             visited += 1
@@ -161,8 +147,7 @@ extension NativeTextView {
         }
     }
 
-    /// Restyle exactly the wide-table paragraphs using ranges stamped on their
-    /// anchors at original styling time — avoids re-tokenizing the whole doc.
+    /// Restyle only wide-table paragraphs via stamped anchor ranges; avoids re-tokenizing the doc.
     private func restyleWideTableParagraphsForWidthChange() {
         guard let storage = textStorage,
               let coord = delegate as? NativeTextViewCoordinator else { return }

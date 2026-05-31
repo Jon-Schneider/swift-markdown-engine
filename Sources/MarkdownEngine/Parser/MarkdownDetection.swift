@@ -19,9 +19,7 @@ enum MarkdownDetection {
         in text: NSString,
         suppressed: Bool = false
     ) -> Set<Int> {
-        // In read-only mode (no caret) we never want to reveal raw markdown
-        // syntax — `isEditable: false` should hide all tokens regardless of
-        // the trailing selection NSTextView keeps around after a click.
+        // Read-only mode (no caret) hides all tokens regardless of any trailing selection.
         if suppressed { return [] }
         var indices: Set<Int> = []
         let caretLocation = selectionRange.location
@@ -47,12 +45,7 @@ enum MarkdownDetection {
             }
         }
 
-        // When a "container" token like a table is active (caret inside),
-        // every inline token fully contained within it should also be
-        // active. Otherwise inline-latex/inline-code/emphasis/etc. inside
-        // the table still try to render their decorated form (LaTeX
-        // images, hidden backticks, …) on top of the visible source the
-        // table editor mode is showing.
+        // When a container token (e.g. a table) is active, every inline token inside it becomes active too.
         let activeContainers: [MarkdownToken] = indices.compactMap { idx in
             let token = tokens[idx]
             return token.kind == .table ? token : nil

@@ -31,10 +31,7 @@ struct MarkdownLists {
     static let listRegex = try! NSRegularExpression(
         pattern: #"^\s*((?:(\d+)\.|[-•*+])(?:\s+\[[ xX]\])?\s+)"#
     )
-    /// CommonMark blockquote line: ≤3 spaces of leading indent, then a run
-    /// of `>` markers, then an optional single space before content. The
-    /// captures are: (1) leading whitespace, (2) the `>`/`>>`… marker run.
-    /// Blockquote line: ≤3 indent + one or more `>` markers (also `> >` with spaces); group 2 captures the marker run.
+    /// Blockquote line: ≤3 indent + `>` marker run; group 1 = whitespace, group 2 = markers.
     static let blockquoteRegex = try! NSRegularExpression(
         pattern: #"^( {0,3})(>+(?:[ \t]+>+)*)"#
     )
@@ -47,10 +44,7 @@ struct MarkdownLists {
         return tabCount + (spaceCount / 2)
     }
 
-    /// Remove the leading prefix on the current line (list marker, quote
-    /// marker, …) and place the caret at the line start. Used by Enter
-    /// handling when the marker has no content, so the user exits the block
-    /// without having to backspace through the prefix.
+    /// Remove the current line's leading marker and put the caret at line start (exit empty block on Enter).
     private static func removeLinePrefixAndExit(
         textView: NSTextView,
         currentLineRange: NSRange,
@@ -184,14 +178,7 @@ struct MarkdownLists {
             let currentLineRange = nsText.lineRange(for: NSRange(location: safeLocENTER, length: 0))
             let currentLine = nsText.substring(with: currentLineRange).trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Note: horizontal-rule rendering is handled entirely in the styler
-            // via the `.thematicBreak` attribute and a full-width band in
-            // `MarkdownTextLayoutFragment.drawThematicBreaks`. The source text
-            // stays as the literal `---` (or however many dashes the user
-            // typed) so the file round-trips through any other Markdown tool
-            // — no `Obsidian / Typora / Bear / iA Writer` expand source on
-            // Enter, and doing so here used to leave 80–120 dashes in the
-            // buffer that broke copy-paste, diffs, and inter-editor opening.
+            // Horizontal rules render via the styler; source stays literal `---` so files round-trip.
 
             if currentLine.range(of: "^```\\w*$", options: .regularExpression) != nil {
                 let textBeforeLine = nsText.substring(to: currentLineRange.location)
@@ -273,10 +260,7 @@ struct MarkdownLists {
                         newListItem = "\n" + leadingWhitespace + "\(number + 1). "
                     }
                 } else {
-                    // Continue the bullet with the user's own marker char
-                    // (normalize a legacy `•` to `-`), preserving the line's
-                    // exact leading whitespace so nesting carries over. Storage
-                    // stays raw Markdown — the `•` glyph is drawn, not stored.
+                    // Continue with the user's marker char (legacy `•` → `-`), keeping leading whitespace.
                     let bulletChar = (marker.first == "•") ? "-" : String(marker.prefix(1))
                     if hasCheckbox {
                         newListItem = "\n" + leadingWhitespace + bulletChar + " [ ] "

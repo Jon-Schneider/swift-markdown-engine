@@ -55,9 +55,7 @@ public enum WikiLinkService {
     private static let displayLinkRegex = try! NSRegularExpression(pattern: displayPattern)
     private static let logger = Logger(subsystem: "com.markdownengine.wikilinks", category: "WikiLink")
 
-    /// Convert storage form `[[Name|<id>]]` into display form `[[Name]]`,
-    /// returning both the rewritten string and a metadata map keyed by the
-    /// display range so callers can recover the original storage range and id.
+    /// Convert storage form `[[Name|<id>]]` to display `[[Name]]`, returning a display-range metadata map.
     public static func makeDisplayState(from storageText: String) -> (display: String, metadata: [RangeKey: LinkMetadata]) {
         let nsStorage = storageText as NSString
         let fullRange = NSRange(location: 0, length: nsStorage.length)
@@ -103,18 +101,14 @@ public enum WikiLinkService {
         return (result, metadata)
     }
 
-    /// Convert display form `[[Name]]` back into storage form `[[Name|<id>]]`,
-    /// preferring an id read from the live text storage's `.wikiLinkID`
-    /// attribute and falling back to `existingMetadata`.
+    /// Convert display `[[Name]]` back to storage `[[Name|<id>]]`, preferring the `.wikiLinkID` attribute.
     public static func makeStorageState(
         from displayText: String,
         existingMetadata: [RangeKey: LinkMetadata],
         textStorage: NSTextStorage?
     ) -> (storage: String, metadata: [RangeKey: LinkMetadata]) {
         let nsDisplay = displayText as NSString
-        // No `[[` anywhere → storage == display; return it directly. Skips the
-        // O(document) string rebuild, which is the real per-keystroke cost (not
-        // the link scan) and pure waste when there are no links to convert.
+        // No `[[` anywhere → storage == display; skip the O(document) rebuild.
         if nsDisplay.range(of: "[[").location == NSNotFound {
             return (displayText, [:])
         }
@@ -171,9 +165,7 @@ public enum WikiLinkService {
         return (storage, metadata)
     }
 
-    /// Hand scan for display-form wiki links `(?<!!)\[\[([^\]\r\n]*)\]\]` — a `[[`
-    /// not preceded by `!`, non-`]`/newline content, then `]]`. Replaces the
-    /// per-keystroke whole-document NSRegularExpression (its lookbehind is slow).
+    /// Hand scan for display-form wiki links `(?<!!)\[\[...\]\]`, replacing the slow regex lookbehind.
     static func displayLinkRanges(_ s: NSString) -> [NSRange] {
         let len = s.length
         guard len >= 4 else { return [] }
@@ -204,9 +196,7 @@ public enum WikiLinkService {
         return result
     }
 
-    /// Resolve a clicked link's opaque id by reading the `.wikiLinkID`
-    /// attribute under the caret, falling back to the link's display string
-    /// if the attribute is missing.
+    /// Resolve a clicked link's id from the caret's `.wikiLinkID` attribute, else its display string.
     public static func resolveIdentifier(link: Any, textView: NSTextView, at charIndex: Int) -> String? {
         if let idAttr = textView.textStorage?.attribute(.wikiLinkID, at: charIndex, effectiveRange: nil) as? String {
             return idAttr
@@ -217,16 +207,13 @@ public enum WikiLinkService {
         return nil
     }
 
-    /// Split a single storage fragment `[[Name|<id>]]` into its display
-    /// form (`[[Name]]`) and the opaque identifier.
+    /// Split a storage fragment `[[Name|<id>]]` into its display form and the opaque id.
     public static func displayFragmentAndID(from storageFragment: String) -> (display: String, id: String?) {
         let displayState = makeDisplayState(from: storageFragment)
         return (displayState.display, displayState.metadata.values.first?.id)
     }
 
-    /// Compute the zero-length caret range that should follow a replacement
-    /// of `displayRange` with `storageFragment` (after the storage→display
-    /// rewrite that the engine performs internally).
+    /// Zero-length caret range following replacement of `displayRange` with `storageFragment`.
     public static func caretRangeAfterReplacing(
         displayRange: NSRange,
         with storageFragment: String

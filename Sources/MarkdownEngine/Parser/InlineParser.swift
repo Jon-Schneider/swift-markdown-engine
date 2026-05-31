@@ -35,8 +35,7 @@ enum EmphasisKind: Equatable { case italic, bold, boldItalic }
 /// A node in the inline AST.
 indirect enum InlineNode: Equatable {
     case text(NSRange)
-    /// `` `code` `` — opaque. `range` covers the backticks; `content` strips the
-    /// CommonMark single-space padding.
+    /// `` `code` `` — opaque; `range` covers the backticks, `content` strips single-space padding.
     case code(range: NSRange, content: NSRange)
     /// `*`/`_` emphasis. `markers` is `[openMarker, closeMarker]`.
     case emphasis(EmphasisKind, range: NSRange, markers: [NSRange], children: [InlineNode])
@@ -52,7 +51,7 @@ indirect enum InlineNode: Equatable {
     case strikethrough(range: NSRange, markers: [NSRange], children: [InlineNode])
     /// `$math$` — opaque. `markers` is `[ "$", "$" ]`.
     case inlineLatex(range: NSRange, content: NSRange, markers: [NSRange])
-    /// A backslash escape `\x`. `marker` is the backslash; `character` the now-literal punctuation.
+    /// Backslash escape `\x`; `marker` is the `\`, `character` the now-literal punctuation.
     case escape(range: NSRange, character: NSRange, marker: NSRange)
 }
 
@@ -86,8 +85,7 @@ enum InlineParser {
         return buildTree(region: NSRange(location: 0, length: len), spans: claimed + emphasis, ns: ns)
     }
 
-    /// Parse the inline content of `range` within `ns`, returning nodes in
-    /// absolute document coordinates.
+    /// Parse the inline content of `range` within `ns`, returning nodes in absolute document coordinates.
     static func parse(_ ns: NSString, range: NSRange) -> [InlineNode] {
         offsetNodes(parse(ns.substring(with: range)), by: range.location)
     }
@@ -113,8 +111,7 @@ enum InlineParser {
                 return r
             }
         }
-        /// Region whose interior holds already-collected child spans. Only
-        /// emphasis qualifies; link/strike content is re-parsed, the rest opaque.
+        /// Region whose interior holds collected child spans — only emphasis qualifies.
         var containerContent: NSRange? {
             if case .emphasis(_, _, let open, let close) = self {
                 return NSRange(location: NSMaxRange(open), length: close.location - NSMaxRange(open))
@@ -389,8 +386,7 @@ enum InlineParser {
         return nil
     }
 
-    /// Rejects currency-looking and trivially short non-mathy `$…$` so plain
-    /// prose isn't misread as math. Scanner port of the old heuristic regexes.
+    /// Rejects currency-looking and trivially short non-mathy `$…$` so prose isn't misread as math.
     private static func isInlineMathContent(_ content: String) -> Bool {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
@@ -405,9 +401,7 @@ enum InlineParser {
         return tokenCount <= 6
     }
 
-    /// `^[+-]?(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?$` without regex — a plain,
-    /// optionally signed / thousands-grouped / decimal number (`50`, `1,000.50`,
-    /// `-5`), so currency isn't misread as math.
+    /// A plain signed/thousands-grouped/decimal number (`50`, `1,000.50`, `-5`), regex-free, so currency isn't math.
     private static func isCurrencyLike(_ s: String) -> Bool {
         let u = Array(s.utf16)
         let n = u.count

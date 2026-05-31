@@ -76,3 +76,23 @@ struct MarkdownASTStylerTests {
         #expect(b?.fontDescriptor.symbolicTraits.contains([.bold, .italic]) == true)
     }
 }
+
+/// Canonical, order-independent string of styled ranges so two style runs can be
+/// compared for equality.
+private func styleKeySnapshot(_ ranges: [StyledRange]) -> String {
+    let lines = ranges
+        .map { entry -> (NSRange, [String]) in
+            (entry.range, entry.attributes.keys.map(\.rawValue).sorted())
+        }
+        .sorted { a, b in
+            if a.0.location != b.0.location { return a.0.location < b.0.location }
+            if a.0.length != b.0.length { return a.0.length < b.0.length }
+            return a.1.joined(separator: ",") < b.1.joined(separator: ",")
+        }
+        .map { "@\(fmt($0.0)) keys=[\($0.1.joined(separator: ","))]" }
+    return lines.isEmpty ? "(no styled ranges)" : lines.joined(separator: "\n")
+}
+
+private func fmt(_ r: NSRange) -> String {
+    r.location == NSNotFound ? "∅" : "\(r.location)+\(r.length)"
+}

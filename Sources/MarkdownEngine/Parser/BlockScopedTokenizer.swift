@@ -14,25 +14,18 @@ import Foundation
 
 extension MarkdownTokenizer {
 
-    /// Per-block memoization: a block's substring → its block-RELATIVE tokens.
-    /// Per keystroke only the edited block's substring changes, so every other
-    /// block hits the cache and only the edited one is re-parsed — O(change)
-    /// instead of O(document). FIFO-capped so it can't grow unbounded; locked
-    /// because indexing may tokenize off the main thread.
+    /// Per-block memo (substring → block-relative tokens): only the edited block re-parses, O(change). FIFO-capped, locked.
     private static let blockTokenLock = NSLock()
     private static var blockTokenCache: [String: [MarkdownToken]] = [:]
     private static var blockTokenOrder: [String] = []
     private static let blockTokenCacheCap = 4096
 
-    // Document-level token memo: reuse the previous token list and re-tokenize
-    // only the blocks the edit touched (everything else shifts by the delta).
+    // Document-level token memo: re-tokenize only the touched blocks; the rest shift by the delta.
     private static let tokensLock = NSLock()
     private static var cachedTokenChars: [unichar]?
     private static var cachedTokens: [MarkdownToken]?
 
-    /// The live tokenizer: legacy block-level tokens + inline AST tokens.
-    /// Opaque fenced-code blocks emit only their code-block token (no inline
-    /// markup inside — fixes the "inline parsed inside a code block" bug).
+    /// The live tokenizer: block-level tokens + inline AST tokens; fenced code emits only its code-block token.
     static func parseTokensViaAST(in text: String) -> [MarkdownToken] {
         let ns = text as NSString
         let newLen = ns.length
@@ -68,11 +61,7 @@ extension MarkdownTokenizer {
         return result
     }
 
-    /// Reuse `prevTokens` for the unchanged prefix/suffix (suffix shifted by the
-    /// length delta) and re-tokenize only the blocks the edit touched. Tokens
-    /// live inside blocks and blocks tile the document, so the changed-block span
-    /// is a clean cut — no token straddles a block boundary. Returns the merged
-    /// tokens + how many blocks were re-tokenized, or nil to fall back to full.
+    /// Reuse prefix/suffix tokens (suffix shifted) and re-tokenize only touched blocks; nil to fall back to full.
     private static func incrementalTokens(oldChars o: [unichar], prevTokens: [MarkdownToken], newChars n: [unichar], blocks: [Block], ns: NSString) -> (tokens: [MarkdownToken], retok: Int)? {
         let oldLen = o.count, newLen = n.count
         guard oldLen > 0, newLen > 0, !blocks.isEmpty else { return nil }
@@ -86,8 +75,7 @@ extension MarkdownTokenizer {
         let delta = newLen - oldLen
         let changeStart = p, changeEndNew = newLen - s
 
-        // A fence/block-LaTeX delimiter in the edit can ripple arbitrarily far
-        // (it pairs with a distant partner) → fall back to a full tokenization.
+        // A fence/block-LaTeX delimiter can pair with a distant partner and ripple far → full tokenization.
         if BlockParser.hasBlockDelimiter(o, changeStart, oldLen - s)
             || BlockParser.hasBlockDelimiter(n, changeStart, changeEndNew) { return nil }
 
@@ -99,10 +87,7 @@ extension MarkdownTokenizer {
         }
         if hi < 0 { return delta == 0 ? (prevTokens, 0) : nil }
 
-        // Widen the window until no previous token straddles either cut. A block's
-        // EXTENT can change even when its leading text didn't (e.g. an edit that
-        // appends to a table's last row shrinks the whole table block), so a token
-        // spanning the cut must be re-tokenized, not reused.
+        // Widen the window until no previous token straddles either cut (a block's extent can change in place).
         var expanded = true
         while expanded {
             expanded = false
@@ -132,8 +117,7 @@ extension MarkdownTokenizer {
         return (result, hi - lo + 1)
     }
 
-    /// Cached block-relative tokens for `sub` (computed on miss). The token
-    /// logic is unchanged — this only memoizes it.
+    /// Cached block-relative tokens for `sub` (computed on miss); a pure memo over the token logic.
     private static func cachedBlockTokens(kind: BlockKind, sub: String) -> [MarkdownToken] {
         blockTokenLock.lock()
         if let cached = blockTokenCache[sub] {

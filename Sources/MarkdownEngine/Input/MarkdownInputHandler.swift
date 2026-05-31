@@ -28,9 +28,7 @@ enum MarkdownInputHandler {
         textView.setSelectedRange(NSRange(location: cursorAfter, length: 0))
     }
 
-    /// Ensures block LaTeX ($$...$$) stays on its own line by automatically inserting newlines
-    /// when typing directly before or after a block LaTeX token.
-    /// Returns true if the insertion was handled (caller should return false from shouldChangeTextIn).
+    /// Keeps block LaTeX ($$...$$) on its own line by inserting newlines; returns true if handled.
     static func handleBlockLatexAutoWrap(
         textView: NSTextView,
         affectedCharRange: NSRange,

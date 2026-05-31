@@ -71,8 +71,7 @@ enum MarkdownASTStyler {
         }
         shrinkInactiveMarkers(in: blocks, ctx: ctx, into: &attrs)
 
-        // Text/regex-based passes (AST-agnostic). Code ranges from the AST are
-        // used for the "skip inside code" checks instead of token scanning.
+        // Text/regex passes (AST-agnostic); AST code ranges drive the "skip inside code" checks.
         let codeRanges = collectCodeRanges(in: blocks)
         let checkboxRanges = collectCheckboxRanges(in: blocks)
         styleAutoLinks(ctx: ctx, codeRanges: codeRanges, into: &attrs)
@@ -111,9 +110,7 @@ enum MarkdownASTStyler {
         codeRanges.contains { NSIntersectionRange($0, range).length > 0 }
     }
 
-    /// Task-checkbox boxes (`[ ]`/`[x]`). The incomplete-link-bracket pass would
-    /// otherwise match these as `[…]` and re-color the brackets visible, painting
-    /// the raw syntax back on top of the rendered checkbox glyph.
+    /// Checkbox boxes (`[ ]`/`[x]`), excluded so the incomplete-link pass doesn't repaint their brackets.
     private static func collectCheckboxRanges(in blocks: [BlockNode]) -> [NSRange] {
         var ranges: [NSRange] = []
         for block in blocks {
@@ -128,10 +125,7 @@ enum MarkdownASTStyler {
         try? NSRegularExpression(pattern: pattern, options: anchored ? [.anchorsMatchLines] : [])
     }
 
-    /// Thematic break (`---`/`***`/`___`) styling, driven by the AST node (so a
-    /// `---` line inside a fenced code block is never mistaken for a rule). Tags
-    /// the line so the layout fragment paints a full-width rule; suppressed while
-    /// the caret sits on the line so the raw dashes stay editable.
+    /// Tag a thematic-break line for a full-width rule (AST-driven); suppressed while the caret edits it.
     private static func styleThematicBreak(range: NSRange, ctx: Ctx, into attrs: inout [StyledRange]) {
         var hr = range
         while hr.length > 0 {
@@ -145,11 +139,7 @@ enum MarkdownASTStyler {
         attrs.append((hr, [.paragraphStyle: NSMutableParagraphStyle()]))
     }
 
-    /// List-item decoration from the AST node: indent paragraph style (mirrors
-    /// the former `MarkdownLists.paragraphAttributes`), the `•` bullet glyph, and
-    /// the task checkbox + strikethrough — all caret-aware (the raw marker is
-    /// revealed while the caret edits it). Replaces the bullet/task/list-indent
-    /// regex passes.
+    /// AST list-item decoration: indent paragraph, `•` bullet, checkbox + strikethrough, all caret-aware.
     private static func styleListItem(_ item: ListItem, ctx: Ctx, into attrs: inout [StyledRange]) {
         guard ctx.config.lists.helpersEnabled else { return }
 
@@ -253,11 +243,7 @@ enum MarkdownASTStyler {
         let wikiLinkID: (NSRange) -> String?
         let scopedRanges: [NSRange]?
 
-        /// Active (syntax revealed) when the caret is inside the range OR sits
-        /// right at its end — mirroring the pre-AST tokenizer's `caret == end`
-        /// rule, minus a trailing newline. End-adjacency keeps the syntax you
-        /// just typed (and a click that lands right behind a word) revealed
-        /// instead of collapsing the instant the caret reaches the edge.
+        /// Active (syntax revealed) when the caret is inside the range or at its end (minus a newline).
         func isActive(_ range: NSRange) -> Bool {
             if NSLocationInRange(caret, range) { return true }
             guard range.length > 0, caret == NSMaxRange(range) else { return false }
@@ -320,8 +306,7 @@ enum MarkdownASTStyler {
         }
     }
 
-    /// Per-line blockquote styling: indent paragraph, mute content, hide/show
-    /// the `>` markers, and tag the first char with the bar level.
+    /// Per-line blockquote: indent, mute content, hide/show `>` markers, tag first char with bar level.
     private static func styleBlockquote(range: NSRange, ctx: Ctx, into attrs: inout [StyledRange]) {
         let indentPerLevel = MarkdownTextLayoutFragment.blockquoteIndentPerLevel
         var lineStart = range.location
@@ -388,11 +373,7 @@ enum MarkdownASTStyler {
                 attrs.append((NSRange(location: parts.content.location + r.location, length: r.length), [.foregroundColor: fg]))
             }
         }
-        // Use the whole block range, not `parts.codeRange`: for an incomplete
-        // single-line fence (```lang still being typed, no closing fence yet) the
-        // close fence is mis-detected as the opening backticks, so codeRange
-        // collapses to just the ``` and the caret after the language falls outside
-        // it — which would hide (clear) the line the user is typing.
+        // Use the whole block range (not codeRange): an incomplete fence collapses codeRange to the ```.
         let markerAttrs: [NSAttributedString.Key: Any] = ctx.isActive(range)
             ? [.foregroundColor: ctx.theme.mutedText, .font: ctx.codeFont]
             : [.foregroundColor: NSColor.clear, .font: ctx.codeFont]   // hiddenMarkerFont == codeFont
@@ -400,9 +381,7 @@ enum MarkdownASTStyler {
         attrs.append((parts.closeFence, markerAttrs))
     }
 
-    /// Splits a fenced-code block range into its parts (matching the legacy
-    /// codeBlock token: opening fence incl. language + newline, content, the
-    /// closing backtick run, and the language).
+    /// Split a fenced-code range into open fence (+language), content, close fence, and language.
     private static func codeBlockParts(_ range: NSRange, _ ns: NSString)
         -> (codeRange: NSRange, openFence: NSRange, content: NSRange, closeFence: NSRange, language: String?) {
         let start = range.location
@@ -515,9 +494,7 @@ enum MarkdownASTStyler {
 
     // MARK: - Marker shrinking (hide syntax of inactive nodes)
 
-    /// Inactive nodes' markers collapse to a tiny, negatively-kerned font so the
-    /// `**`/`#`/`>`/`[]()` syntax visually disappears. Code spans, inline code,
-    /// inline LaTeX and image embeds manage their own markers and are skipped.
+    /// Collapse inactive nodes' markers to a tiny kerned font so syntax vanishes; code/LaTeX skip themselves.
     private static func shrinkInactiveMarkers(in blocks: [BlockNode], ctx: Ctx, into attrs: inout [StyledRange]) {
         for block in blocks where ctx.inScope(block.range) {
             switch block {
@@ -527,8 +504,7 @@ enum MarkdownASTStyler {
             case .paragraph(_, let inlines), .blockquote(_, let inlines):
                 shrinkInlineMarkers(inlines, ctx: ctx, into: &attrs)
             case .list(_, let items):
-                // Phase A: shrink only the items' inline markers; the list
-                // marker itself is still hidden by the bullet/task text pass.
+                // Phase A: shrink only inline markers; the list marker is hidden by the bullet/task pass.
                 for item in items { shrinkInlineMarkers(item.inlines, ctx: ctx, into: &attrs) }
             case .codeBlock, .blockLatex, .table, .thematicBreak, .blank:
                 break
@@ -536,11 +512,7 @@ enum MarkdownASTStyler {
         }
     }
 
-    /// Shrink inactive nodes' markers. When an ancestor span is active (the caret
-    /// sits anywhere inside it) its WHOLE subtree reveals too — so clicking right
-    /// behind a fully-bold word like `**n*o*des**` shows the nested `*…*` markers
-    /// as well, not just the outer `**`. `forceReveal` carries that "an ancestor
-    /// is active" state down the recursion.
+    /// Shrink inactive markers; an active ancestor reveals its whole subtree via `forceReveal`.
     private static func shrinkInlineMarkers(_ nodes: [InlineNode], ctx: Ctx, forceReveal: Bool = false, into attrs: inout [StyledRange]) {
         for node in nodes {
             switch node {

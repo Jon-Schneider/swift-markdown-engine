@@ -30,11 +30,7 @@ extension MarkdownStyler {
         // Per-content occurrence counter so identical tables get distinct sourceIDs.
         var occurrenceByContentHash: [Int: Int] = [:]
         for (idx, token) in ctx.tokens.enumerated() where token.kind == .table {
-            // The tokenizer already drops table matches that overlap a
-            // fenced code block, so we don't re-check that here. (The
-            // generic isInsideCodeBlock helper also flags overlap with
-            // inline code, which would falsely reject any table that
-            // contains a `…` cell.)
+            // Tokenizer already drops tables overlapping fenced code, so no re-check here.
             attrs.append((token.range, [.spellingState: 0]))
 
             let source = ctx.nsText.substring(with: token.range)
@@ -47,10 +43,7 @@ extension MarkdownStyler {
 
             let isActive = ctx.activeTokenIndices.contains(idx)
             if isActive {
-                // Caret inside the table — show source so the user can
-                // edit. We mute pipes so the structure stays legible
-                // without dominating, matching how the rest of the engine
-                // dims syntax characters.
+                // Caret inside the table — show editable source, pipes muted like other syntax.
                 let muted = ctx.configuration.theme.mutedText
                 let body = ctx.configuration.theme.bodyText
                 attrs.append((token.range, [.foregroundColor: body, .font: ctx.baseFont]))
@@ -160,12 +153,7 @@ extension MarkdownStyler {
 
     // MARK: - Inline-formatted cell strings
 
-    /// Convert a raw cell string (which may contain inline markdown like
-    /// `**bold**`, `*italic*`, `` `code` ``, `~~strike~~`, `$math$`) into an
-    /// `NSAttributedString`. Markers themselves are stripped so the rendered
-    /// table image only shows the formatted result. LaTeX spans become
-    /// `NSTextAttachment` images so the math metrics flow through to
-    /// column-width measurement. Header cells start out bold.
+    /// Raw cell → `NSAttributedString`: inline markdown applied, markers stripped, LaTeX as attachments.
     static func formattedCellString(
         _ raw: String,
         baseFont: NSFont,
@@ -189,8 +177,7 @@ extension MarkdownStyler {
         return out
     }
 
-    /// Compose `current`'s bold/italic traits with `kind` so nested emphasis
-    /// stacks to any depth (italic inside bold → boldItalic).
+    /// Compose `current`'s bold/italic traits with `kind` so nested emphasis stacks (italic+bold).
     private static func composeEmphasis(
         _ current: NSFont, _ kind: EmphasisKind,
         baseDescriptor: NSFontDescriptor, pointSize: CGFloat
@@ -204,10 +191,7 @@ extension MarkdownStyler {
         return NSFont(descriptor: baseDescriptor.withSymbolicTraits(traits), size: pointSize) ?? current
     }
 
-    /// Walk the inline AST, appending marker-stripped attributed runs. LaTeX
-    /// spans become `NSTextAttachment` images (so metrics flow into column
-    /// widths); links/embeds are emitted raw — not specially rendered inside a
-    /// cell, matching prior behavior.
+    /// Walk the inline AST into marker-stripped runs; LaTeX as attachments, links/embeds emitted raw.
     private static func appendInlineCell(
         _ nodes: [InlineNode],
         in ns: NSString,
@@ -283,9 +267,7 @@ extension MarkdownStyler {
         let cellHPadding: CGFloat = 12
         let cellVPadding: CGFloat = 6
         let borderWidth: CGFloat = 1
-        // Resolve under the editor's real appearance: `.withAlphaComponent()` on a
-        // dynamic color freezes it to whatever NSAppearance.current happens to be,
-        // which made the lines invisible in light mode (frozen to the dark value).
+        // Resolve under the real appearance: `.withAlphaComponent()` freezes a dynamic color otherwise.
         func mutedColor(alpha: CGFloat) -> NSColor {
             var resolved: NSColor = theme.mutedText
             appearance.performAsCurrentDrawingAppearance {
@@ -297,9 +279,7 @@ extension MarkdownStyler {
         let baseLineHeight: CGFloat = ceil(baseFont.ascender - baseFont.descender + baseFont.leading)
         let minColumnContentWidth: CGFloat = 16
 
-        // Pre-format every cell so column-width measurement and drawing
-        // both use the same NSAttributedString (incl. bold/italic/code
-        // metrics + LaTeX attachment sizes).
+        // Pre-format every cell so width measurement and drawing share one NSAttributedString.
         let headerCells = table.header.map {
             formattedCellString(
                 $0, baseFont: baseFont, header: true, theme: theme,
@@ -341,8 +321,7 @@ extension MarkdownStyler {
 
         let size = NSSize(width: totalWidth, height: totalHeight)
 
-        // Pre-compute layout offsets (top-down coords; the drawing handler
-        // runs in a flipped context so this reads naturally).
+        // Pre-compute layout offsets (top-down coords; drawing runs flipped).
         var columnLeft = [CGFloat](repeating: 0, count: columnCount + 1)
         columnLeft[0] = borderWidth
         for i in 0..<columnCount {
@@ -357,9 +336,7 @@ extension MarkdownStyler {
         let alignments = table.alignments
         let headerFill = mutedColor(alpha: 0.08)
 
-        // Use a flipped image so AppKit drawing routines (NSBezierPath,
-        // NSAttributedString.draw) handle the y-flip themselves; manually
-        // applying an NSAffineTransform mirror flips the glyphs as well.
+        // Flipped image so AppKit handles the y-flip; a manual transform mirror would flip glyphs too.
         return NSImage(size: size, flipped: true) { _ in
             // Header row fill
             headerFill.setFill()
@@ -401,11 +378,7 @@ extension MarkdownStyler {
                 let cellLeft = columnLeft[col] + cellHPadding
                 let cellRight = columnLeft[col + 1] - borderWidth - cellHPadding
                 let availableWidth = cellRight - cellLeft
-                // Use NSParagraphStyle's alignment within the cell-content
-                // rect rather than computing the x-offset manually. The
-                // text engine then handles ellipsis/clipping consistently
-                // and we don't have to second-guess where the line origin
-                // ends up in flipped coords.
+                // Align via NSParagraphStyle in the content rect so the text engine handles clipping.
                 let paragraph = NSMutableParagraphStyle()
                 switch alignments[col] {
                 case .left:   paragraph.alignment = .left
