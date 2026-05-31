@@ -50,9 +50,10 @@ enum BlockLevelTokenizer {
         case .table:       return table(in: sub)
         case .blockLatex:  return blockLatex(in: sub)
         case .paragraph, .list, .thematicBreak, .blank:
-            // Tables and block LaTeX hide inside paragraph/list blocks today
-            // (BlockParser doesn't classify them), so scan for both there.
-            return table(in: sub) + blockLatex(in: sub)
+            // Tables and block LaTeX are their own BlockParser blocks now. A
+            // safety-net table scan stays (harmless once it's split out); block
+            // LaTeX is line-based, so inline `$$…$$` is left as plain text.
+            return table(in: sub)
         }
     }
 

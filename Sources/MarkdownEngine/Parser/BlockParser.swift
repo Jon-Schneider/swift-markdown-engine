@@ -83,6 +83,16 @@ enum BlockParser {
 
         func lineText(_ i: Int) -> String { nsText.substring(with: lines[i]) }
 
+        /// If a block-LaTeX run opens at `start`, the line index of its closing
+        /// `$$` (same line for single-line, else a later line); nil if none.
+        func blockLatexCloseIndex(from start: Int) -> Int? {
+            let open = lineText(start).trimmingCharacters(in: .whitespacesAndNewlines)
+            if open.dropFirst(2).contains("$$") { return start }
+            var j = start + 1
+            while j < lines.count { if lineText(j).contains("$$") { return j }; j += 1 }
+            return nil
+        }
+
         // 2. Classify + group.
         var blocks: [Block] = []
         var i = 0
@@ -128,6 +138,18 @@ enum BlockParser {
                 blocks.append(Block(kind: .list, range: union(lines[i...end])))
                 i = end + 1
 
+            } else if isTableRow(line), i + 1 < lines.count, isTableSeparator(lineText(i + 1)) {
+                // GFM table: a `|…|` header, a `|-…-|` separator, then data rows.
+                var end = i + 1
+                while end + 1 < lines.count, isTableRow(lineText(end + 1)) { end += 1 }
+                blocks.append(Block(kind: .table, range: union(lines[i...end])))
+                i = end + 1
+
+            } else if isBlockLatexOpen(line), let end = blockLatexCloseIndex(from: i) {
+                // Block LaTeX `$$…$$` — a single line or a `$$`-delimited run.
+                blocks.append(Block(kind: .blockLatex, range: union(lines[i...end])))
+                i = end + 1
+
             } else {
                 // Paragraph: merge consecutive plain (non-blank, non-special) lines.
                 var end = i
@@ -135,6 +157,9 @@ enum BlockParser {
                     let next = lineText(end + 1)
                     if isBlank(next) || isFence(next) || isThematicBreak(next)
                         || isHeading(next) || isBlockquote(next) || isListItem(next) { break }
+                    // A table (row + separator) or a block-LaTeX run interrupts it.
+                    if isTableRow(next), end + 2 < lines.count, isTableSeparator(lineText(end + 2)) { break }
+                    if isBlockLatexOpen(next), blockLatexCloseIndex(from: end + 1) != nil { break }
                     end += 1
                 }
                 blocks.append(Block(kind: .paragraph, range: union(lines[i...end])))
@@ -205,6 +230,27 @@ enum BlockParser {
         // space is typed, matching the pre-AST bullet behavior.
         guard let after = rest.first else { return false }
         return after == " " || after == "\t"
+    }
+
+    /// A GFM table row: `^[ \t]*\|.+\|[ \t]*$` — outer pipes, content between.
+    private static func isTableRow(_ line: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.count >= 3 && t.hasPrefix("|") && t.hasSuffix("|")
+    }
+
+    /// A GFM table separator: `^[ \t]*\|[- \t:|]+\|[ \t]*$` — only `- : |` + ws inside.
+    private static func isTableSeparator(_ line: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.count >= 3, t.hasPrefix("|"), t.hasSuffix("|") else { return false }
+        let middle = t.dropFirst().dropLast()
+        return !middle.isEmpty && middle.allSatisfy {
+            $0 == "-" || $0 == ":" || $0 == "|" || $0 == " " || $0 == "\t"
+        }
+    }
+
+    /// A block-LaTeX opener: a line whose content starts with `$$`.
+    private static func isBlockLatexOpen(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("$$")
     }
 
     private static func union(_ ranges: ArraySlice<NSRange>) -> NSRange {
