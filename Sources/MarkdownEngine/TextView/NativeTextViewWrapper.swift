@@ -182,6 +182,25 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         textView.postsFrameChangedNotifications = true
         textView.autoresizingMask = [.width]
         textView.backgroundColor = .clear
+        // Layer-back the scrolled document view so an embedder-supplied header
+        // (hosted in a layer-backed clip subview, see `buildHeader`) and the body
+        // text composite within ONE Core Animation tree and advance on the same
+        // commit. Without this the header is a CA-sublayer island inside a
+        // non-layer-backed, transparent text view: during a live scroll the header
+        // layer is repositioned by Core Animation while the body strip just below
+        // the reserved band is repainted synchronously by TextKit on a different
+        // cadence, so for a frame the freshly-drawn body shows through where the
+        // header's lower rows belong (the inline inspector's summary row dropping
+        // out mid-scroll). `.onSetNeedsDisplay` keeps TextKit caret/selection
+        // redraw on-demand rather than re-rasterizing on every bounds change.
+        textView.wantsLayer = true
+        textView.layerContentsRedrawPolicy = .onSetNeedsDisplay
+        // TEMP (remove before merge): one-shot startup marker so a tester can
+        // confirm in the console that a FRESH engine build is running — Xcode
+        // aggressively serves stale local-package builds; if this line is absent,
+        // delete ~/Library/Developer/Xcode/DerivedData/Nodes-* and rebuild.
+        NSLog("⟦NODES-ENGINE⟧ editor created — wantsLayer=%@ — build=header-compositing-fix-1",
+              textView.wantsLayer ? "true" : "false")
         let font = NSFont(name: fontName, size: fontSize) ?? NSFont.systemFont(ofSize: fontSize)
         textView.font = font
         textView.baseFont = font
@@ -477,17 +496,38 @@ private extension NativeTextViewWrapper {
 
         // SOLE writer of topContentInset: the clip's height drives the reserved
         // region. Synchronous (queue nil) so the body tracks the header with no lag.
+        //
+        // While the *constant* constraint governs (collapsed, or mid-animation) the
+        // reserved height is its `.constant` — the intended, stable value — NOT the
+        // live `clip.frame.height`. The text view is autoresizing-mask driven while
+        // the clip is Auto-Layout-pinned to it, so a scroll-time layout pass can
+        // momentarily expose a smaller in-flight clip frame before the required
+        // constant re-settles. Trusting that transient would shrink topContentInset
+        // and slide the body up under the heading (clipping the summary row +
+        // chevron). Reading the constant instead keeps the collapsed reservation
+        // rock-stable through scrolling. When expanded, the equality constraint is
+        // active and `clip.frame.height` (== host height) is the live source.
         coord.headerContentObserver = NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification, object: clip, queue: nil
-        ) { [weak clip, weak native] _ in
+        ) { [weak clip, weak native, weak coord] _ in
             guard let clip, let native else { return }
-            let h = clip.frame.height
+            let h = Self.reservedHeaderHeight(clip: clip, coord: coord)
             guard abs(native.topContentInset - h) > 0.5 else { return }
             native.topContentInset = h
         }
 
         textView.layoutSubtreeIfNeeded()
-        native.topContentInset = clip.frame.height
+        native.topContentInset = Self.reservedHeaderHeight(clip: clip, coord: coord)
+    }
+
+    /// The reserved top inset the body should sit below. When the constant
+    /// constraint governs (collapsed / animating) this is its `.constant` — stable
+    /// against transient mid-layout clip frames; otherwise the live clip height.
+    static func reservedHeaderHeight(clip: NSView, coord: NativeTextViewCoordinator?) -> CGFloat {
+        if let constantC = coord?.headerConstantConstraint, constantC.isActive {
+            return constantC.constant
+        }
+        return clip.frame.height
     }
 
     func applyExpansion(textView: NSTextView, native: NativeTextView, coord: NativeTextViewCoordinator) {
