@@ -75,6 +75,32 @@ struct MarkdownASTStylerTests {
         #expect(a?.fontDescriptor.symbolicTraits.contains(.italic) == false)
         #expect(b?.fontDescriptor.symbolicTraits.contains([.bold, .italic]) == true)
     }
+
+    /// Code is not prose: fenced blocks and inline `code` spans must carry
+    /// `.spellingState: 0` so the system spell-checker leaves them alone,
+    /// matching the existing convention that links / wiki-links / LaTeX / tables
+    /// already follow.
+    @Test("code blocks and inline code receive .spellingState: 0; prose does not")
+    func codeRegionsSuppressSpellCheck() {
+        let text = "prose word\n\n```\nfencedcd notaword\n```\n\nplain `inlnecode` tail"
+        let attrs = MarkdownASTStyler.styleAttributes(text: text, fontName: fontName, fontSize: base)
+        let ns = text as NSString
+        let fencedContent = ns.range(of: "fencedcd notaword")
+        let inlineSpan = ns.range(of: "`inlnecode`")
+        let prose = ns.range(of: "prose word")
+
+        // Pull every `.spellingState` value from styled ranges that intersect `r`.
+        func spellingStates(intersecting r: NSRange) -> [Int] {
+            attrs.compactMap { entry -> Int? in
+                guard NSIntersectionRange(entry.range, r).length > 0 else { return nil }
+                return entry.attributes[.spellingState] as? Int
+            }
+        }
+
+        #expect(spellingStates(intersecting: fencedContent).contains(0))
+        #expect(spellingStates(intersecting: inlineSpan).contains(0))
+        #expect(spellingStates(intersecting: prose).isEmpty)
+    }
 }
 
 /// Canonical, order-independent string of styled ranges so two style runs can be

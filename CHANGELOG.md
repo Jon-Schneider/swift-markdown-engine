@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SafeAreaInsets` struct exposing `top` / `leading` / `trailing` / `bottom`
   inset knobs for the editor's enclosing scroll view, configurable via
   `MarkdownEditorConfiguration.safeAreaInsets`.
+- `MarkdownASTStyler` now stamps `.spellingState: 0` on fenced code blocks
+  and inline `` `code` `` spans, completing the engine's existing
+  spell-check suppression convention (links, wiki-links, LaTeX, and tables
+  already carry the same attribute). The system spell-checker no longer
+  underlines tokens inside code regions even when continuous spell
+  checking is enabled.
 
 ### Fixed
 - `NativeTextViewWrapper` keeps links clickable and text selectable
