@@ -60,6 +60,14 @@ extension NativeTextView {
             self.placeholderView = nil
         }
         refreshPlaceholderVisibility()
+        // An empty doc's text view sits at its one-line content height, which
+        // clips the placeholder subview. Stretch it to the viewport (its intended
+        // height): the first layout can run before the scroll view is sized and
+        // `restack` never re-measures height, so otherwise the quote stays clipped
+        // after the editor is rebuilt (e.g. graph view and back).
+        if let placeholderView, !placeholderView.isHidden {
+            applyManagedFrameSize(width: frame.width)
+        }
     }
 
     /// Visible only while the document is truly empty: the first typed character
