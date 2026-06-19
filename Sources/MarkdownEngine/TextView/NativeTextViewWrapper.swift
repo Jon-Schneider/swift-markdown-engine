@@ -20,6 +20,21 @@ import AppKit
 /// and callback closures (link clicks, caret movement, inline-selection and
 /// code-block change notifications). All visual styling and external
 /// dependencies are routed through ``MarkdownEditorConfiguration``.
+///
+/// ### Fit-to-content height
+///
+/// Set ``MarkdownEditorConfiguration/heightBehavior`` to `.fitsContent` to
+/// make the editor report its content height to SwiftUI instead of scrolling
+/// internally. Wrap the editor in a `ScrollView` so the page scrolls:
+///
+/// ```swift
+/// ScrollView {
+///     NativeTextViewWrapper(
+///         text: $text,
+///         configuration: .init(heightBehavior: .fitsContent)
+///     )
+/// }
+/// ```
 public struct NativeTextViewWrapper: NSViewRepresentable {
     public typealias Coordinator = NativeTextViewCoordinator
     public typealias NSViewType = NSScrollView
@@ -138,10 +153,33 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         self.retainedScrollDocumentIds = retainedScrollDocumentIds
     }
 
+    public func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: NSScrollView,
+        context: Context
+    ) -> CGSize? {
+        guard configuration.heightBehavior == .fitsContent,
+              let container = nsView.documentView as? NativeTextViewContainer else {
+            return nil
+        }
+        let width = proposal.width ?? nsView.contentView.bounds.width
+        // Height is taken from the most recent layout pass rather than re-measured
+        // at `proposal.width`. Re-measuring TextKit content at a speculative width
+        // inside sizeThatFits risks layout loops (TextKit relayout → frame change →
+        // sizeThatFits re-entry) and is expensive for large documents. In practice
+        // SwiftUI calls sizeThatFits after the view has already been laid out at the
+        // proposed width, and `invalidateIntrinsicContentSize` in
+        // `applyManagedFrameSize` ensures SwiftUI re-queries after every width-driven
+        // relayout, so the returned height stays correct.
+        return CGSize(width: width, height: container.scrollableContentHeight)
+    }
+
     public func makeNSView(context: Context) -> NSScrollView {
         let scrollView = ClampedScrollView()
+        scrollView.fitsContent = configuration.heightBehavior == .fitsContent
         scrollView.borderType = .noBorder
-        scrollView.hasVerticalScroller = configuration.scrollers.hasVerticalScroller
+        let disableScroller = configuration.heightBehavior == .fitsContent
+        scrollView.hasVerticalScroller = disableScroller ? false : configuration.scrollers.hasVerticalScroller
         scrollView.hasHorizontalScroller = configuration.scrollers.hasHorizontalScroller
         scrollView.autohidesScrollers = configuration.scrollers.autohidesScrollers
         scrollView.drawsBackground = false
@@ -273,8 +311,16 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             // back here and re-trigger recalcOverscroll, causing a 149pt height
             // oscillation after clicks. Compare the CONTAINER (the document view) height
             // to the viewport — it tracks the viewport for short docs.
-            guard let container = scrollView.documentView as? NativeTextViewContainer,
-                  abs(container.frame.height - scrollView.contentView.bounds.height) > 1 else { return }
+            guard let container = scrollView.documentView as? NativeTextViewContainer else { return }
+            if configuration.heightBehavior == .fitsContent {
+                // In .fitsContent the container is content-tall (not viewport-tall),
+                // so the container-vs-viewport guard below is always true — which
+                // would fire recalcOverscroll on every clip-view frame change. Only
+                // width changes need a re-measure (text re-wraps); height-only
+                // changes are already handled by the width-change block above.
+                return
+            }
+            guard abs(container.frame.height - scrollView.contentView.bounds.height) > 1 else { return }
             textView.recalcOverscroll(for: scrollView)
             scrollView.clampToInsets()
         }
@@ -328,14 +374,31 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
 
         textView.onPasteImage = onPasteImage
         textView.setPlaceholder(placeholder)
-        if nsView.hasVerticalScroller != configuration.scrollers.hasVerticalScroller {
-            nsView.hasVerticalScroller = configuration.scrollers.hasVerticalScroller
+        // Sync heightBehavior across all three layers (scroll view, text view,
+        // coordinator) so a runtime switch fully reconfigures.
+        let heightBehaviorChanged = textView.configuration.heightBehavior != configuration.heightBehavior
+        if let clamped = nsView as? ClampedScrollView {
+            clamped.fitsContent = configuration.heightBehavior == .fitsContent
+        }
+        textView.configuration.heightBehavior = configuration.heightBehavior
+        context.coordinator.configuration.heightBehavior = configuration.heightBehavior
+        let desiredVerticalScroller = configuration.heightBehavior == .fitsContent
+            ? false : configuration.scrollers.hasVerticalScroller
+        if nsView.hasVerticalScroller != desiredVerticalScroller {
+            nsView.hasVerticalScroller = desiredVerticalScroller
         }
         if nsView.hasHorizontalScroller != configuration.scrollers.hasHorizontalScroller {
             nsView.hasHorizontalScroller = configuration.scrollers.hasHorizontalScroller
         }
         if nsView.autohidesScrollers != configuration.scrollers.autohidesScrollers {
             nsView.autohidesScrollers = configuration.scrollers.autohidesScrollers
+        }
+        // When heightBehavior changes at runtime, re-measure and re-report so the
+        // view reconfigures immediately (inflation toggles, overscroll zeroing).
+        if heightBehaviorChanged {
+            textView.recalcOverscroll(for: nsView)
+            (nsView as? ClampedScrollView)?.clampToInsets()
+            nsView.invalidateIntrinsicContentSize()
         }
         // Reading column centers by POSITION (container subview), so the text inset is constant.
         let desiredTextInset = NSSize(
@@ -477,6 +540,14 @@ private extension NativeTextViewWrapper {
     /// Host the embedder's header above the body, inside the container document
     /// view. The hosted content refreshes on every SwiftUI update; build,
     /// collapse/expand, and teardown live in `ScrollingHeaderController`.
+    ///
+    /// **`.fitsContent` note:** The header's band height is included in the
+    /// reported content height (via `scrollableContentHeight`), so a static
+    /// header works correctly. The *collapse-on-scroll* animation is driven by
+    /// the inner scroll offset, which is always zero in `.fitsContent` (no
+    /// internal scrolling), so the collapse never triggers. Combining a
+    /// collapsing header with `.fitsContent` is allowed but the collapse
+    /// behavior is not meaningful.
     func reconcileHeader(textView: NSTextView, context: Context) {
         let coord = context.coordinator
         guard let container = (textView as? NativeTextView)?.superview as? NativeTextViewContainer else { return }
