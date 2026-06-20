@@ -408,6 +408,11 @@ public struct CheckboxStyle: Sendable {
 // MARK: - Blockquote
 
 /// Extra line height added to blockquote lines.
+///
+/// By default blockquote lines use the font's natural line height with no
+/// extra spacing. Set `extraLineHeight` to add breathing room, matching
+/// the pattern used by `ListStyle.extraLineHeight` and
+/// `ParagraphStyle.lineHeightExtraSpacing`.
 public struct BlockquoteStyle: Sendable {
     /// Extra height (points) added to the default line height for blockquote lines.
     public var extraLineHeight: CGFloat
