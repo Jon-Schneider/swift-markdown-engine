@@ -15,3 +15,6 @@ DerivedData/
 # Generated documentation
 /docs
 *.doccarchive
+
+# iOS feasibility spike (Phase 0.5 throwaway harness — see iOS-Support-Plan.md)
+/Spike
