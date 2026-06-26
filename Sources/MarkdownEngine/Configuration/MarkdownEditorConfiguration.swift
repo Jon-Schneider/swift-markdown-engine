@@ -269,6 +269,17 @@ public struct ListStyle: Sendable {
     public var autoClosePairsEnabled: Bool
     /// Indent (in points) that one nesting level adds to the list item.
     public var indentPerLevel: CGFloat
+    /// Leading indent (in points) before a *top-level* list marker. Decoupled
+    /// from `indentPerLevel` so first-level bullets can hug the margin while
+    /// nested levels still step by `indentPerLevel`.
+    public var baseIndent: CGFloat
+    /// Size multiplier applied to the rendered `•` bullet glyph relative to the
+    /// surrounding body font. `1` matches the text size; larger reads bolder.
+    public var bulletScale: CGFloat
+    /// Extra gap (in points) inserted between an unordered bullet and the start
+    /// of its text, on top of the source's trailing space. `0` keeps the
+    /// natural single-space gap.
+    public var markerContentSpacing: CGFloat
     /// Maximum nesting level reachable by pressing Tab inside a list.
     public var maximumNestingLevel: Int
     /// Extra line height added on top of the default to give list items room.
@@ -278,12 +289,18 @@ public struct ListStyle: Sendable {
         helpersEnabled: Bool = true,
         autoClosePairsEnabled: Bool = true,
         indentPerLevel: CGFloat = 27.5,
+        baseIndent: CGFloat = 8,
+        bulletScale: CGFloat = 1.5,
+        markerContentSpacing: CGFloat = 3,
         maximumNestingLevel: Int = 3,
         extraLineHeight: CGFloat = 2
     ) {
         self.helpersEnabled = helpersEnabled
         self.autoClosePairsEnabled = autoClosePairsEnabled
         self.indentPerLevel = indentPerLevel
+        self.baseIndent = baseIndent
+        self.bulletScale = bulletScale
+        self.markerContentSpacing = markerContentSpacing
         self.maximumNestingLevel = maximumNestingLevel
         self.extraLineHeight = extraLineHeight
     }

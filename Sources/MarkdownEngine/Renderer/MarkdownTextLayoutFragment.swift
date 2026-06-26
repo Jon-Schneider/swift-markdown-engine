@@ -510,8 +510,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         let nsContext = NSGraphicsContext(cgContext: context, flipped: true)
         NSGraphicsContext.current = nsContext
 
-        let theme = (textLayoutManager?.textContainer?.textView as? NativeTextView)?
-            .configuration.theme ?? .default
+        let configuration = (textLayoutManager?.textContainer?.textView as? NativeTextView)?.configuration
+        let theme = configuration?.theme ?? .default
+        let bulletScale = configuration?.lists.bulletScale ?? ListStyle.default.bulletScale
         let storageString = ts.string as NSString
 
         ts.enumerateAttribute(.bulletMarker, in: range, options: []) { [weak self] value, attrRange, _ in
@@ -522,15 +523,20 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
             let font = (ts.attribute(.font, at: attrRange.location, effectiveRange: nil) as? NSFont)
                 ?? (self.textLayoutManager?.textContainer?.textView?.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize))
-            let bulletAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: theme.bodyText]
+            // Draw the bullet in a (possibly enlarged) copy of the source font.
+            let bulletFont = NSFont(descriptor: font.fontDescriptor, size: font.pointSize * bulletScale) ?? font
+            let bulletAttrs: [NSAttributedString.Key: Any] = [.font: bulletFont, .foregroundColor: theme.bodyText]
             let bullet = "•" as NSString
 
             let markerWidth = storageString.substring(with: attrRange).size(withAttributes: [.font: font]).width
             let bulletWidth = bullet.size(withAttributes: bulletAttrs).width
             let xOffset = max(0, (markerWidth - bulletWidth) / 2)
-            // Flipped context: text origin is its top edge, baseline sits one
-            // ascent below — so top = baseline − ascent aligns the glyph.
-            let topY = pos.baselineY - font.ascender
+            // Center the glyph on the text line's vertical midpoint rather than
+            // its baseline, so an enlarged • stays optically aligned. This
+            // reduces exactly to the old `baselineY − ascender` placement when
+            // bulletScale == 1 (same font ⇒ lineCenter − halfBox == baselineY − ascender).
+            let lineCenter = pos.baselineY - (font.ascender + font.descender) / 2
+            let topY = lineCenter - (bulletFont.ascender - bulletFont.descender) / 2
             bullet.draw(at: CGPoint(x: pos.x + xOffset, y: topY), withAttributes: bulletAttrs)
         }
     }

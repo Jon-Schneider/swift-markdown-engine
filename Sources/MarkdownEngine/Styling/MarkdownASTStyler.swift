@@ -162,6 +162,9 @@ enum MarkdownASTStyler {
         let extraSpacing = (item.checkbox != nil && !item.checked)
             ? HeadingHelpers.checkboxExtraSpacing(font: ctx.baseFont, configuration: ctx.config.checkbox)
             : 0
+        // Extra breathing room between a bullet and its text (kerned in below).
+        let isBullet = !item.ordered && item.checkbox == nil
+        let contentGap = isBullet ? ctx.config.lists.markerContentSpacing : 0
         let ps = NSMutableParagraphStyle()
         let lineHeight = ctx.baseLineHeight + ctx.config.lists.extraLineHeight
         ps.minimumLineHeight = lineHeight
@@ -171,8 +174,11 @@ enum MarkdownASTStyler {
         ps.paragraphSpacingBefore = 0
         ps.tabStops = []
         ps.defaultTabInterval = ctx.config.lists.indentPerLevel
-        ps.firstLineHeadIndent = ctx.config.lists.indentPerLevel
-        ps.headIndent = ctx.config.lists.indentPerLevel + depthIndent + markerWidth + extraSpacing
+        // Base (leading) offset is independent of the per-level step: top-level
+        // markers sit at `baseIndent`, while nested levels are still driven onto
+        // the `indentPerLevel` tab grid by the literal tab chars in the source.
+        ps.firstLineHeadIndent = ctx.config.lists.baseIndent
+        ps.headIndent = ctx.config.lists.baseIndent + depthIndent + markerWidth + extraSpacing + contentGap
         attrs.append((line, [.paragraphStyle: ps]))
 
         // 2. Marker decoration (suppressed while the caret edits the syntax).
@@ -194,6 +200,12 @@ enum MarkdownASTStyler {
                                  length: item.contentRange.location - item.marker.location)
             if NSLocationInRange(ctx.caret, syntax) { return }
             attrs.append((item.marker, [.bulletMarker: true, .foregroundColor: NSColor.clear]))
+            // Widen the gap to the text by kerning the trailing space before it,
+            // so the first line matches the bumped `headIndent` used by wraps.
+            if contentGap > 0, item.contentRange.location > NSMaxRange(item.marker) {
+                let trailingSpace = NSRange(location: item.contentRange.location - 1, length: 1)
+                attrs.append((trailingSpace, [.kern: contentGap]))
+            }
         }
     }
 
