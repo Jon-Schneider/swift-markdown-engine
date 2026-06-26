@@ -7,7 +7,6 @@
 //  Block ($$...$$) and inline ($...$) LaTeX formula rendering.
 //
 
-import AppKit
 import Foundation
 
 extension MarkdownStyler {
@@ -105,7 +104,7 @@ extension MarkdownStyler {
                         attrs.append((firstCharRange, [
                             .latexImage: entry.image,
                             .latexBounds: NSValue(rect: imageBounds),
-                            .foregroundColor: NSColor.clear,
+                            .foregroundColor: PlatformColor.clear,
                             .font: ctx.latexMarkerFont,
                             .kern: entry.size.width - HeadingHelpers.textWidth(firstChar, font: ctx.latexMarkerFont)
                         ]))
@@ -114,7 +113,7 @@ extension MarkdownStyler {
                             let restRange = NSRange(location: token.contentRange.location + 1, length: contentLength - 1)
                             let restText = ctx.nsText.substring(with: restRange)
                             attrs.append((restRange, [
-                                .foregroundColor: NSColor.clear,
+                                .foregroundColor: PlatformColor.clear,
                                 .font: ctx.latexMarkerFont,
                                 .kern: -HeadingHelpers.textWidth(restText, font: ctx.latexMarkerFont)
                             ]))
@@ -124,12 +123,12 @@ extension MarkdownStyler {
                     let openMarker = token.markerRanges[0]
                     attrs.append((openMarker, [
                         .font: ctx.latexMarkerFont,
-                        .foregroundColor: NSColor.clear,
+                        .foregroundColor: PlatformColor.clear,
                         .kern: -tinyDollarWidth
                     ]))
                     let closeMarker = token.markerRanges[1]
                     attrs.append((closeMarker, [
-                        .foregroundColor: NSColor.clear,
+                        .foregroundColor: PlatformColor.clear,
                         .kern: -baseDollarWidth
                     ]))
                 } else {

@@ -5,7 +5,7 @@
 //  Created by Luca Chen on 16.03.26.
 //
 
-import AppKit
+import Foundation
 import CoreGraphics
 
 /// Parsed `![[name|optional-id|optional-width]]` reference.
@@ -99,10 +99,10 @@ final class EmbeddedImageCache {
     static let shared = EmbeddedImageCache()
     private init() {}
 
-    private var cache: [String: NSImage] = [:]
+    private var cache: [String: PlatformImage] = [:]
     private var lastFingerprint: AnyHashable?
 
-    func image(for reference: ImageEmbedReference, services: MarkdownEditorServices) -> NSImage? {
+    func image(for reference: ImageEmbedReference, services: MarkdownEditorServices) -> PlatformImage? {
         let currentFingerprint = services.images.fingerprint()
         if currentFingerprint != lastFingerprint {
             cache.removeAll()

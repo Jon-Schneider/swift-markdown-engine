@@ -12,7 +12,7 @@ import Foundation
 
 struct TextStylingService {
     static func makeBaseTypingAttributes(
-        font: NSFont,
+        font: PlatformFont,
         paragraphStyle: NSParagraphStyle,
         theme: MarkdownEditorTheme = .default
     ) -> [NSAttributedString.Key: Any] {
@@ -28,8 +28,8 @@ struct TextStylingService {
         fontSize: CGFloat,
         layoutBridge: LayoutBridge? = nil,
         configuration: MarkdownEditorConfiguration = .default
-    ) -> (font: NSFont, style: NSMutableParagraphStyle) {
-        let baseFont = NSFont(name: fontName, size: fontSize) ?? NSFont.systemFont(ofSize: fontSize)
+    ) -> (font: PlatformFont, style: NSMutableParagraphStyle) {
+        let baseFont = PlatformFont(name: fontName, size: fontSize) ?? PlatformFont.systemFont(ofSize: fontSize)
         let defaultLineHeight = layoutBridgeDefaultLineHeight(for: baseFont, using: layoutBridge)
         let paragraph = NSMutableParagraphStyle()
         paragraph.minimumLineHeight = ceil(defaultLineHeight) + configuration.paragraph.lineHeightExtraSpacing
@@ -49,12 +49,13 @@ struct TextStylingService {
         textView: NSTextView,
         layoutBridge: LayoutBridge?,
         paragraphCandidates: [NSRange],
-        baseFont: NSFont,
+        baseFont: PlatformFont,
         paragraphStyle: NSMutableParagraphStyle,
         caretLocation: Int,
         activeTokenIndices: Set<Int>,
         wikiLinkIDProvider: @escaping (NSRange) -> String?,
         precomputedTokens: [MarkdownToken]? = nil,
+        colorScheme: MarkdownColorScheme,
         configuration: MarkdownEditorConfiguration = .default
     ) {
         let paragraphs = normalize(paragraphCandidates)
@@ -80,6 +81,7 @@ struct TextStylingService {
             wikiLinkIDProvider: wikiLinkIDProvider,
             precomputedTokens: precomputedTokens,
             scopedRanges: paragraphs,
+            colorScheme: colorScheme,
             configuration: configuration
         )
 

@@ -64,6 +64,7 @@ extension NativeTextViewCoordinator {
             caretLocation: caretLocation,
             activeTokenIndices: activeTokenIndices,
             precomputedTokens: tokens,
+            colorScheme: .resolved(from: textView.effectiveAppearance),
             configuration: configuration
         )
         for (range, attrs) in ranges {
@@ -118,6 +119,7 @@ extension NativeTextViewCoordinator {
                 self?.wikiLinkID(for: range)
             },
             precomputedTokens: tokens,
+            colorScheme: .resolved(from: textView.effectiveAppearance),
             configuration: configuration
         )
         // Reconcile wide-table overlays after layout settles.

@@ -12,7 +12,11 @@
 //  reaches into the host app for any of these concerns.
 //
 
+#if canImport(UIKit)
+import UIKit
+#else
 import AppKit
+#endif
 import Foundation
 
 // MARK: - Wiki Links
@@ -72,7 +76,7 @@ public struct NoOpWikiLinkResolver: WikiLinkResolver {
 public protocol EmbeddedImageProvider: Sendable {
     /// Returns an image for the given reference, or `nil` if no image
     /// is available.
-    func image(for reference: EmbeddedImageRequest) -> NSImage?
+    func image(for reference: EmbeddedImageRequest) -> PlatformImage?
 
     /// A coarse fingerprint of the provider's current state. Returning
     /// a different value invalidates the engine's image cache. Embedders
@@ -99,7 +103,7 @@ public struct EmbeddedImageRequest: Sendable, Equatable {
 /// Default provider that never returns images.
 public struct NoOpEmbeddedImageProvider: EmbeddedImageProvider {
     public init() {}
-    public func image(for reference: EmbeddedImageRequest) -> NSImage? { nil }
+    public func image(for reference: EmbeddedImageRequest) -> PlatformImage? { nil }
     public func fingerprint() -> AnyHashable { 0 }
 }
 
@@ -108,12 +112,12 @@ public struct NoOpEmbeddedImageProvider: EmbeddedImageProvider {
 /// Provides code-block font, background color, and syntax highlighting.
 public protocol SyntaxHighlighter: Sendable {
     /// Monospace font used for fenced code blocks at the requested size.
-    func codeFont(size: CGFloat) -> NSFont
+    func codeFont(size: CGFloat) -> PlatformFont
 
     /// Background color used to fill code-block paragraphs. The engine
     /// also uses this color to detect which fragments are code blocks
     /// when drawing custom backgrounds.
-    func backgroundColor() -> NSColor
+    func backgroundColor() -> PlatformColor
 
     /// Highlight `code` written in `language`. Return an attributed string
     /// whose attributes carry per-token foreground colors. Return `nil` if
@@ -132,12 +136,18 @@ public protocol SyntaxHighlighter: Sendable {
 public struct PlainTextSyntaxHighlighter: SyntaxHighlighter {
     public init() {}
 
-    public func codeFont(size: CGFloat) -> NSFont {
-        NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    public func codeFont(size: CGFloat) -> PlatformFont {
+        PlatformFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
-    public func backgroundColor() -> NSColor {
-        NSColor.textBackgroundColor.withAlphaComponent(0)
+    public func backgroundColor() -> PlatformColor {
+        // A fully-transparent default background. AppKit and UIKit spell the
+        // base text background differently; alpha 0 makes either one invisible.
+        #if canImport(UIKit)
+        return UIColor.systemBackground.withAlphaComponent(0)
+        #else
+        return NSColor.textBackgroundColor.withAlphaComponent(0)
+        #endif
     }
 
     public func highlight(code: String, language: String?) -> NSAttributedString? {
@@ -159,13 +169,13 @@ public protocol LatexRenderer: Sendable {
 
 /// Output of a LaTeX render call.
 public struct LatexRenderResult: Sendable {
-    public let image: NSImage
+    public let image: PlatformImage
     public let size: CGSize
     /// Distance from the image's bottom edge to its visual baseline.
     /// Used to align inline math with the surrounding text.
     public let baselineOffset: CGFloat
 
-    public init(image: NSImage, size: CGSize, baselineOffset: CGFloat) {
+    public init(image: PlatformImage, size: CGSize, baselineOffset: CGFloat) {
         self.image = image
         self.size = size
         self.baselineOffset = baselineOffset

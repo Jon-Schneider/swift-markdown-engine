@@ -59,9 +59,11 @@ extension MarkdownStyler {
                 continue
             }
 
-            // See renderTable: resolve table colors under the text view's real appearance.
-            let renderAppearance = ctx.layoutBridge?.firstTextContainer?.textView?.effectiveAppearance
-                ?? NSApp.effectiveAppearance
+            // Resolve table colors under the scheme threaded in from the view
+            // adapter — no `effectiveAppearance`/`NSApp` probing in shared styling
+            // logic. (Collapses to light/dark; the macOS table renderer maps it
+            // back to an `NSAppearance`. See iOS-Support-Plan.md Phase 0.)
+            let renderAppearance = ctx.colorScheme.appKitAppearance
             let image = renderTable(
                 parsed,
                 baseFont: ctx.baseFont,

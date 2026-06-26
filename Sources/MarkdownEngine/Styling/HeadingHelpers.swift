@@ -6,7 +6,11 @@
 //
 
 // Small helper values for heading size/spacing, plus shared text measurements.
+#if canImport(UIKit)
+import UIKit
+#else
 import AppKit
+#endif
 
 enum HeadingHelpers {
 
@@ -14,7 +18,7 @@ enum HeadingHelpers {
     static func latexFontSize(
         for token: MarkdownToken,
         tokens: [MarkdownToken],
-        baseFont: NSFont,
+        baseFont: PlatformFont,
         configuration: HeadingStyle = .default
     ) -> CGFloat {
         if let headingToken = tokens.first(where: { $0.kind == .heading && NSLocationInRange(token.contentRange.location, $0.contentRange) }) {
@@ -24,12 +28,12 @@ enum HeadingHelpers {
         return baseFont.pointSize
     }
 
-    static func textWidth(_ text: String, font: NSFont) -> CGFloat {
+    static func textWidth(_ text: String, font: PlatformFont) -> CGFloat {
         (text as NSString).size(withAttributes: [.font: font]).width
     }
 
     static func checkboxExtraSpacing(
-        font: NSFont,
+        font: PlatformFont,
         configuration: CheckboxStyle = .default
     ) -> CGFloat {
         max(

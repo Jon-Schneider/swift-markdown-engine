@@ -7,7 +7,6 @@
 //  Image embed (`![[...]]`) styling and layout.
 //
 
-import AppKit
 import Foundation
 
 extension MarkdownStyler {
@@ -97,7 +96,7 @@ extension MarkdownStyler {
                     // range and stays visible unless we collapse it too.
                     let urlText = ctx.nsText.substring(with: urlRange)
                     attrs.append((urlRange, [
-                        .foregroundColor: NSColor.clear,
+                        .foregroundColor: PlatformColor.clear,
                         .font: ctx.latexMarkerFont,
                         .kern: -HeadingHelpers.textWidth(urlText, font: ctx.latexMarkerFont)
                     ]))

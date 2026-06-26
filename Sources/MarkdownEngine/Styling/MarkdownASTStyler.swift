@@ -17,7 +17,11 @@
 //  bullets, task checkboxes, horizontal rules.
 //
 
+#if canImport(UIKit)
+import UIKit
+#else
 import AppKit
+#endif
 import Foundation
 
 enum MarkdownASTStyler {
@@ -31,7 +35,7 @@ enum MarkdownASTStyler {
         scopedRanges: [NSRange]? = nil,
         configuration: MarkdownEditorConfiguration = .default
     ) -> [StyledRange] {
-        let baseFont = NSFont(name: fontName, size: fontSize) ?? .systemFont(ofSize: fontSize)
+        let baseFont = PlatformFont(name: fontName, size: fontSize) ?? .systemFont(ofSize: fontSize)
         let baseLineHeight = ceil(baseFont.ascender - baseFont.descender + baseFont.leading)
         let baseParagraphSpacing = ceil(baseLineHeight * configuration.paragraph.spacingFactor)
         let codeFontSize = round(fontSize * configuration.codeBlock.fontSizeScale)
@@ -58,7 +62,7 @@ enum MarkdownASTStyler {
             codeFont: codeFont,
             codeBackground: configuration.services.syntaxHighlighter.backgroundColor(),
             codeParagraphStyle: codePara,
-            inlineMarkerFont: NSFont(name: fontName, size: hiddenSize) ?? .systemFont(ofSize: hiddenSize),
+            inlineMarkerFont: PlatformFont(name: fontName, size: hiddenSize) ?? .systemFont(ofSize: hiddenSize),
             caret: caretLocation,
             config: configuration,
             wikiLinkID: wikiLinkIDProvider,
@@ -135,7 +139,7 @@ enum MarkdownASTStyler {
         }
         guard hr.length > 0,
               !(NSLocationInRange(ctx.caret, hr) || ctx.caret == NSMaxRange(hr)) else { return }
-        attrs.append((hr, [.foregroundColor: NSColor.clear, .thematicBreak: true]))
+        attrs.append((hr, [.foregroundColor: PlatformColor.clear, .thematicBreak: true]))
         attrs.append((hr, [.paragraphStyle: NSMutableParagraphStyle()]))
     }
 
@@ -180,9 +184,9 @@ enum MarkdownASTStyler {
             let syntax = NSRange(location: item.marker.location, length: NSMaxRange(box) - item.marker.location)
             if NSLocationInRange(ctx.caret, syntax) || ctx.caret == NSMaxRange(box) { return }
             let spacer = NSRange(location: NSMaxRange(item.marker), length: box.location - NSMaxRange(item.marker))
-            attrs.append((item.marker, [.foregroundColor: NSColor.clear]))
-            if spacer.length > 0 { attrs.append((spacer, [.foregroundColor: NSColor.clear])) }
-            attrs.append((box, [.taskCheckbox: item.checked, .foregroundColor: NSColor.clear]))
+            attrs.append((item.marker, [.foregroundColor: PlatformColor.clear]))
+            if spacer.length > 0 { attrs.append((spacer, [.foregroundColor: PlatformColor.clear])) }
+            attrs.append((box, [.taskCheckbox: item.checked, .foregroundColor: PlatformColor.clear]))
             if item.checked, NSMaxRange(item.range) > NSMaxRange(box) {
                 attrs.append((NSRange(location: NSMaxRange(box), length: NSMaxRange(item.range) - NSMaxRange(box)), [
                     .strikethroughStyle: NSUnderlineStyle.single.rawValue,
@@ -193,7 +197,7 @@ enum MarkdownASTStyler {
             let syntax = NSRange(location: item.marker.location,
                                  length: item.contentRange.location - item.marker.location)
             if NSLocationInRange(ctx.caret, syntax) { return }
-            attrs.append((item.marker, [.bulletMarker: true, .foregroundColor: NSColor.clear]))
+            attrs.append((item.marker, [.bulletMarker: true, .foregroundColor: PlatformColor.clear]))
         }
     }
 
@@ -231,13 +235,13 @@ enum MarkdownASTStyler {
     private struct Ctx {
         let ns: NSString
         let fontName: String
-        let baseFont: NSFont
+        let baseFont: PlatformFont
         let baseLineHeight: CGFloat
         let baseParagraphSpacing: CGFloat
-        let codeFont: NSFont
-        let codeBackground: NSColor
+        let codeFont: PlatformFont
+        let codeBackground: PlatformColor
         let codeParagraphStyle: NSParagraphStyle
-        let inlineMarkerFont: NSFont
+        let inlineMarkerFont: PlatformFont
         let caret: Int
         let config: MarkdownEditorConfiguration
         let wikiLinkID: (NSRange) -> String?
@@ -264,14 +268,14 @@ enum MarkdownASTStyler {
 
     // MARK: - Blocks
 
-    private static func styleBlock(_ block: BlockNode, font: NSFont, ctx: Ctx, into attrs: inout [StyledRange]) {
+    private static func styleBlock(_ block: BlockNode, font: PlatformFont, ctx: Ctx, into attrs: inout [StyledRange]) {
         switch block {
         case .paragraph(_, let inlines):
             styleInlines(inlines, font: font, ctx: ctx, into: &attrs)
 
         case .heading(let level, let range, let markers, let inlines):
             let multiplier = ctx.config.headings.fontMultiplier(for: level)
-            let headingBase = NSFont(name: ctx.fontName, size: ctx.baseFont.pointSize * multiplier)
+            let headingBase = PlatformFont(name: ctx.fontName, size: ctx.baseFont.pointSize * multiplier)
                 ?? .systemFont(ofSize: ctx.baseFont.pointSize * multiplier)
             let headingFont = adding(.bold, to: headingBase)
             let lineHeight = ceil(headingFont.ascender - headingFont.descender + headingFont.leading) + 1
@@ -356,7 +360,7 @@ enum MarkdownASTStyler {
             if ctx.isActive(tokenRange) {
                 attrs.append((markerRange, [.foregroundColor: ctx.theme.mutedText]))
             } else {
-                attrs.append((markerRange, [.foregroundColor: NSColor.clear, .font: ctx.inlineMarkerFont]))
+                attrs.append((markerRange, [.foregroundColor: PlatformColor.clear, .font: ctx.inlineMarkerFont]))
             }
             // Whole line, not just the first char, so each soft-wrapped visual line
             attrs.append((tokenRange, [.blockquoteLevel: level]))
@@ -381,7 +385,7 @@ enum MarkdownASTStyler {
         // Use the whole block range (not codeRange): an incomplete fence collapses codeRange to the ```.
         let markerAttrs: [NSAttributedString.Key: Any] = ctx.isActive(range)
             ? [.foregroundColor: ctx.theme.mutedText, .font: ctx.codeFont]
-            : [.foregroundColor: NSColor.clear, .font: ctx.codeFont]   // hiddenMarkerFont == codeFont
+            : [.foregroundColor: PlatformColor.clear, .font: ctx.codeFont]   // hiddenMarkerFont == codeFont
         attrs.append((parts.openFence, markerAttrs))
         attrs.append((parts.closeFence, markerAttrs))
     }
@@ -414,7 +418,7 @@ enum MarkdownASTStyler {
 
     // MARK: - Inlines (composing)
 
-    private static func styleInlines(_ nodes: [InlineNode], font: NSFont, ctx: Ctx, into attrs: inout [StyledRange]) {
+    private static func styleInlines(_ nodes: [InlineNode], font: PlatformFont, ctx: Ctx, into attrs: inout [StyledRange]) {
         for node in nodes {
             switch node {
             case .text:
@@ -456,7 +460,7 @@ enum MarkdownASTStyler {
 
     private static func styleLink(
         range: NSRange, textRange: NSRange, url urlRange: NSRange, markers: [NSRange],
-        children: [InlineNode], font: NSFont, ctx: Ctx, into attrs: inout [StyledRange]
+        children: [InlineNode], font: PlatformFont, ctx: Ctx, into attrs: inout [StyledRange]
     ) {
         attrs.append((range, [.spellingState: 0]))
         var urlString = ctx.ns.substring(with: urlRange)
@@ -539,7 +543,7 @@ enum MarkdownASTStyler {
                     if markers.count >= 4 {   // also hide the "(url)" run
                         let hide = NSRange(location: markers[2].location,
                                            length: NSMaxRange(markers[3]) - markers[2].location)
-                        attrs.append((hide, [.font: ctx.inlineMarkerFont, .foregroundColor: NSColor.clear]))
+                        attrs.append((hide, [.font: ctx.inlineMarkerFont, .foregroundColor: PlatformColor.clear]))
                     }
                 }
                 shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
@@ -563,7 +567,7 @@ enum MarkdownASTStyler {
 
     // MARK: - Helpers
 
-    private static func traits(for kind: EmphasisKind) -> NSFontDescriptor.SymbolicTraits {
+    private static func traits(for kind: EmphasisKind) -> PlatformFontDescriptor.SymbolicTraits {
         switch kind {
         case .italic: return .italic
         case .bold: return .bold
@@ -571,9 +575,9 @@ enum MarkdownASTStyler {
         }
     }
 
-    private static func adding(_ extra: NSFontDescriptor.SymbolicTraits, to font: NSFont) -> NSFont {
+    private static func adding(_ extra: PlatformFontDescriptor.SymbolicTraits, to font: PlatformFont) -> PlatformFont {
         let merged = font.fontDescriptor.symbolicTraits.union(extra)
-        return NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(merged), size: font.pointSize) ?? font
+        return PlatformFont(descriptor: font.fontDescriptor.withSymbolicTraits(merged), size: font.pointSize) ?? font
     }
 
     private static func content(of markers: [NSRange]) -> NSRange {

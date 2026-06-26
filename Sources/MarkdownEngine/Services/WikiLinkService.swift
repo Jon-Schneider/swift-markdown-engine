@@ -17,7 +17,11 @@
 //  via the ``WikiLinkResolver`` protocol.
 //
 
+#if canImport(UIKit)
+import UIKit
+#else
 import AppKit
+#endif
 import Foundation
 import os
 
