@@ -261,7 +261,7 @@ Each MVP deferral maps to its re-enablement so the `#if os(macOS)` gates don't b
 | `@objc(extraLineFragmentAttributes)` (FB15131180, gated off iOS) | a public-API trailing-metrics fix for iOS document-end spacing (only if the degradation proves visible) |
 | RTL gutter mirroring (bars/bullets hardcoded left) | mirror gutter-drawn blockquote bars + bullets under right-to-left layout |
 | ~~iOS undo / marked-text-IME / autocorrect / paste / link taps~~ | **DONE** — edits route through `UITextInput` (undoable); restyle is guarded against active marked text (IME-safe) and autocorrect re-enabled; blockquote-continued paste; tap-to-open links via `onLinkTap`. (IME named cases not interactively verified here.) |
-| iOS formatting context menu (Bold / Italic / Heading / List) | the remaining Phase-2 interaction piece — extract the macOS `ContextMenu` formatting commands (`enclosingBoldToken`/`wrapSelection`/`unwrapToken`/`applyList`/`applyHeading`) into a cross-platform function (like `computeListInsertion`), then wire `UIEditMenuInteraction`. System cut/copy/paste/select already work. |
+| ~~iOS formatting context menu (Bold / Italic / Heading / List)~~ | **DONE** — extracted the macOS `ContextMenu` commands into cross-platform `MarkdownFormatting` (12 unit tests) and wired them onto the iOS-16 `editMenuForTextIn` "Format" submenu via the undoable edit path. macOS `ContextMenu` left untouched. |
 | Full-document restyle on iOS (`MarkdownUITextView.restyleInPlace`) | paragraph-scoped incremental restyle (the macOS path is already scoped) for large-doc keystroke perf |
 
 Anything still gated after MVP must appear in this table — a gate with no backlog row is a bug.
