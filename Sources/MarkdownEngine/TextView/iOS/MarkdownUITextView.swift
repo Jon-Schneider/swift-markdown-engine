@@ -87,10 +87,40 @@ public final class MarkdownUITextView: UITextView {
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleCheckboxTap(_:)))
         tap.delegate = self
         addGestureRecognizer(tap)
+
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(keyboardFrameWillChange(_:)),
+                           name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        center.addObserver(self, selector: #selector(keyboardWillHide(_:)),
+                           name: UIResponder.keyboardWillHideNotification, object: nil)
     }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    // MARK: - Keyboard avoidance
+
+    @objc private func keyboardFrameWillChange(_ note: Notification) {
+        guard isFirstResponder,
+              let endFrame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        else { return }
+        let space = window?.screen.coordinateSpace ?? UIScreen.main.coordinateSpace
+        let keyboardInView = convert(endFrame, from: space)
+        let overlap = bounds.intersection(keyboardInView)
+        let bottomInset = overlap.isNull ? 0 : overlap.height
+        contentInset.bottom = bottomInset
+        verticalScrollIndicatorInsets.bottom = bottomInset
+        if let range = selectedTextRange {
+            scrollRectToVisible(caretRect(for: range.end), animated: true)
+        }
+    }
+
+    @objc private func keyboardWillHide(_ note: Notification) {
+        contentInset.bottom = 0
+        verticalScrollIndicatorInsets.bottom = 0
+    }
 
     // MARK: - Loading
 
@@ -217,6 +247,13 @@ public final class MarkdownUITextView: UITextView {
         isApplyingProgrammaticEdit = false
         restyleInPlace()   // re-parses the flipped source and re-applies .taskCheckbox
         return true
+    }
+
+    /// Force a restyle, optionally invalidating the token cache so it re-parses (the
+    /// realistic per-keystroke cost). Internal for iOS-simulator perf measurement.
+    func restyleNowForTesting(invalidatingCache: Bool = true) {
+        if invalidatingCache { tokenCache = nil }
+        restyleInPlace()
     }
 
     /// View-coordinate rect of the first task-checkbox glyph, if any. Internal for testing.
