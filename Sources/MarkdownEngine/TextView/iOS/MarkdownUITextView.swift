@@ -303,6 +303,29 @@ public final class MarkdownUITextView: UITextView {
         )
     }
 
+    // MARK: - Formatting commands
+
+    /// Apply a formatting command to `range` via the undoable edit path.
+    func applyFormatting(_ command: MarkdownFormattingCommand, in range: NSRange) {
+        let edit = MarkdownFormatting.edit(for: command, text: text, selection: range)
+        applyUndoableEdit(replacing: edit.range, with: edit.text, finalSelection: edit.selection)
+    }
+
+    fileprivate func formatAction(_ title: String, _ command: MarkdownFormattingCommand, _ range: NSRange) -> UIAction {
+        let active = MarkdownFormatting.isActive(command, text: text, selection: range)
+        var attributes: UIMenuElement.Attributes = []
+        var state: UIMenuElement.State = .off
+        switch command {
+        case .bold, .italic:
+            state = active ? .on : .off                       // toggleable
+        default:
+            if active { attributes.insert(.disabled) }        // heading/list: disabled once applied (macOS parity)
+        }
+        return UIAction(title: title, attributes: attributes, state: state) { [weak self] _ in
+            self?.applyFormatting(command, in: range)
+        }
+    }
+
     // MARK: - Checkbox tap-toggle
 
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
@@ -418,6 +441,21 @@ extension MarkdownUITextView: UITextViewDelegate {
         if markedTextRange != nil { return }
         restyleInPlace()
         emitStorageTextIfChanged()
+    }
+
+    /// Append a "Format" submenu (Bold / Italic / Heading / Lists) to the edit menu.
+    public func textView(_ textView: UITextView, editMenuForTextIn range: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
+        guard isEditable else { return nil }
+        let format = UIMenu(title: "Format", image: UIImage(systemName: "textformat"), children: [
+            formatAction("Bold", .bold, range),
+            formatAction("Italic", .italic, range),
+            UIMenu(title: "Heading", children: (1...3).map { formatAction("H\($0)", .heading($0), range) }),
+            UIMenu(title: "Lists", children: [
+                formatAction("Bullet", .bulletList, range),
+                formatAction("Numbered", .numberedList, range),
+            ]),
+        ])
+        return UIMenu(children: suggestedActions + [format])
     }
 
     public func textViewDidChangeSelection(_ textView: UITextView) {
