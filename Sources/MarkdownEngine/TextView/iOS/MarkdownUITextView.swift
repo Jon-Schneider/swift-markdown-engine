@@ -68,7 +68,7 @@ public final class MarkdownUITextView: UITextView {
         isEditable = true
         isSelectable = true
         backgroundColor = .clear
-        textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        applyTextContainerInset()
         // Dynamic Type is applied manually by scaling the base size via UIFontMetrics
         // in `restyleInPlace` (our fonts aren't metrics-tracking), so the system's own
         // auto-adjust would double-count — leave it off.
@@ -128,11 +128,28 @@ public final class MarkdownUITextView: UITextView {
     /// is for initial / external content — in-place edits go through the delegate.
     public func render(markdown storageText: String) {
         lastRenderedSource = storageText
+        applyTextContainerInset()            // configuration may have changed with the text
         let display = WikiLinkService.makeDisplayState(from: storageText).display
         isApplyingProgrammaticEdit = true
         text = display                       // plain text; restyleInPlace adds the styling
         isApplyingProgrammaticEdit = false
         restyleInPlace()
+    }
+
+    /// Re-apply configuration-derived state (insets + styling) without changing the
+    /// text — used by the SwiftUI wrapper when only `configuration` changes (e.g. a
+    /// new theme or syntax highlighter) so the displayed attributes don't go stale.
+    public func reapplyConfiguration() {
+        applyTextContainerInset()
+        restyleInPlace()
+    }
+
+    private func applyTextContainerInset() {
+        let insets = configuration.textInsets
+        textContainerInset = UIEdgeInsets(
+            top: insets.vertical, left: insets.horizontal,
+            bottom: insets.vertical, right: insets.horizontal
+        )
     }
 
     // MARK: - Styling

@@ -163,7 +163,8 @@ extension MarkdownStyler {
         header: Bool,
         theme: MarkdownEditorTheme,
         codeBackgroundColor: NSColor,
-        latex: any LatexRenderer
+        latex: any LatexRenderer,
+        colorScheme: MarkdownColorScheme
     ) -> NSAttributedString {
         let descriptor = baseFont.fontDescriptor
         let pointSize = baseFont.pointSize
@@ -175,7 +176,8 @@ extension MarkdownStyler {
         appendInlineCell(
             InlineParser.parse(raw), in: raw as NSString, into: out,
             font: startFont, baseDescriptor: descriptor, pointSize: pointSize,
-            codeFont: codeFont, theme: theme, codeBackgroundColor: codeBackgroundColor, latex: latex
+            codeFont: codeFont, theme: theme, codeBackgroundColor: codeBackgroundColor, latex: latex,
+            colorScheme: colorScheme
         )
         return out
     }
@@ -205,12 +207,14 @@ extension MarkdownStyler {
         codeFont: NSFont,
         theme: MarkdownEditorTheme,
         codeBackgroundColor: NSColor,
-        latex: any LatexRenderer
+        latex: any LatexRenderer,
+        colorScheme: MarkdownColorScheme
     ) {
         func recurse(_ children: [InlineNode], _ f: NSFont) {
             appendInlineCell(children, in: ns, into: out, font: f, baseDescriptor: baseDescriptor,
                              pointSize: pointSize, codeFont: codeFont, theme: theme,
-                             codeBackgroundColor: codeBackgroundColor, latex: latex)
+                             codeBackgroundColor: codeBackgroundColor, latex: latex,
+                             colorScheme: colorScheme)
         }
         func appendPlain(_ range: NSRange, _ f: NSFont) {
             out.append(NSAttributedString(string: ns.substring(with: range),
@@ -238,10 +242,7 @@ extension MarkdownStyler {
                     .font: codeFont, .backgroundColor: codeBackgroundColor, .foregroundColor: theme.bodyText
                 ]))
             case .inlineLatex(let range, let content, _):
-                // macOS-only path: the macOS LaTeX bridge ignores `colorScheme` (it
-                // reads the window appearance), so `.light` here is an inert placeholder.
-                // When `+Tables` is ported to iOS, thread the real scheme through.
-                if let entry = latex.render(latex: ns.substring(with: content), fontSize: pointSize, theme: theme, colorScheme: .light) {
+                if let entry = latex.render(latex: ns.substring(with: content), fontSize: pointSize, theme: theme, colorScheme: colorScheme) {
                     let attachment = NSTextAttachment()
                     attachment.image = entry.image
                     attachment.bounds = CGRect(x: 0, y: entry.baselineOffset,
@@ -286,17 +287,20 @@ extension MarkdownStyler {
         let minColumnContentWidth: CGFloat = 16
 
         // Pre-format every cell so width measurement and drawing share one NSAttributedString.
+        let tableColorScheme = MarkdownColorScheme.resolved(from: appearance)
         let headerCells = table.header.map {
             formattedCellString(
                 $0, baseFont: baseFont, header: true, theme: theme,
-                codeBackgroundColor: codeBackgroundColor, latex: latex
+                codeBackgroundColor: codeBackgroundColor, latex: latex,
+                colorScheme: tableColorScheme
             )
         }
         let bodyCells = table.rows.map { row in
             row.map {
                 formattedCellString(
                     $0, baseFont: baseFont, header: false, theme: theme,
-                    codeBackgroundColor: codeBackgroundColor, latex: latex
+                    codeBackgroundColor: codeBackgroundColor, latex: latex,
+                    colorScheme: tableColorScheme
                 )
             }
         }

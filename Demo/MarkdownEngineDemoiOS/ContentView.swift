@@ -19,6 +19,7 @@ import MarkdownEngineLatex
 struct ContentView: View {
     private var configuration: MarkdownEditorConfiguration {
         var config = MarkdownEditorConfiguration.default
+        config.textInsets = TextInsets(horizontal: 16, vertical: 12)
         #if canImport(MarkdownEngineCodeBlocks)
         config.services.syntaxHighlighter = HighlighterSwiftBridge()
         #endif

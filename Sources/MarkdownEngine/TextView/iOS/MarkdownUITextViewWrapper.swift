@@ -29,10 +29,13 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
 
     public func updateUIView(_ view: MarkdownUITextView, context: Context) {
         view.configuration = configuration
-        // Re-render only when the source text actually changed from outside, so a
-        // routine SwiftUI update doesn't wipe the user's in-place edits.
         if view.lastRenderedSource != text {
+            // Source changed from outside → full reload.
             view.render(markdown: text)
+        } else {
+            // Text unchanged but `configuration` may have (theme/highlighter/insets):
+            // re-apply config-derived state without wiping in-place edits.
+            view.reapplyConfiguration()
         }
     }
 }
