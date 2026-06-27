@@ -5,10 +5,14 @@
 //  Ready-made SyntaxHighlighter conformance backed by HighlighterSwift.
 //
 
-import AppKit
 import Foundation
 import Highlighter
 import MarkdownEngine
+#if canImport(UIKit)
+import UIKit
+#else
+import AppKit
+#endif
 
 extension Notification.Name {
     /// Posted by ``HighlighterSwiftBridge`` after the macOS appearance flips and themes are re-applied; the engine subscribes via ``SyntaxHighlighter/appearanceDidChangeNotification`` to invalidate cached attributes.
@@ -20,21 +24,21 @@ extension Notification.Name {
 ///
 /// Defaults match the Nodes app's look: opaque light/dark code-block
 /// backgrounds and an `SF Mono → Menlo → system monospace` font chain.
-/// Override the init params if you'd rather adopt HighlighterSwift's
-/// CSS-theme-driven background/font directly.
 ///
-/// When `autoSwitchAppearance` is `true`, the bridge observes
-/// `AppleInterfaceThemeChangedNotification` and swaps `lightTheme` /
-/// `darkTheme` accordingly, posting
-/// ``Notification/Name/markdownEngineHighlighterDidChangeAppearance`` so
-/// the engine can re-render code blocks.
+/// **Appearance source differs by platform.** On macOS the bridge reads the
+/// window/app effective appearance (and, when `autoSwitchAppearance` is `true`,
+/// observes `AppleInterfaceThemeChangedNotification`, posting
+/// ``Notification/Name/markdownEngineHighlighterDidChangeAppearance``). On iOS
+/// there is no `NSApp`; the bridge instead honors the `colorScheme` the engine
+/// passes to `backgroundColor(for:)` / `highlight(code:language:colorScheme:)`,
+/// and the iOS view re-renders code blocks on a trait change.
 public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendable {
     private let highlighter: Highlighter?
     private let lightTheme: String
     private let darkTheme: String
     private let autoSwitchAppearance: Bool
-    private let lightBackground: NSColor
-    private let darkBackground: NSColor
+    private let lightBackground: PlatformColor
+    private let darkBackground: PlatformColor
     private let preferredFontNames: [String]
     private var currentTheme: String = ""
 
@@ -43,13 +47,32 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
     private let failedCache = NSCache<NSString, NSNumber>()
     private var unsupportedLanguages: Set<String> = []
 
+    /// Default opaque light-mode code-block background (`calibratedWhite 0.95` on
+    /// macOS, the UIKit equivalent on iOS).
+    public static var defaultLightBackground: PlatformColor {
+        #if os(macOS)
+        return NSColor(calibratedWhite: 0.95, alpha: 1.0)
+        #else
+        return PlatformColor(white: 0.95, alpha: 1.0)
+        #endif
+    }
+    /// Default opaque dark-mode code-block background.
+    public static var defaultDarkBackground: PlatformColor {
+        #if os(macOS)
+        return NSColor(calibratedWhite: 0.13, alpha: 1.0)
+        #else
+        return PlatformColor(white: 0.13, alpha: 1.0)
+        #endif
+    }
+
     /// - Parameters:
     ///   - lightTheme: HighlighterSwift theme name applied in light mode.
     ///   - darkTheme: HighlighterSwift theme name applied in dark mode.
-    ///   - autoSwitchAppearance: When `true`, observes the system appearance
-    ///     and swaps themes automatically. Set to `false` to pin to `lightTheme`.
+    ///   - autoSwitchAppearance: When `true`, follow the light/dark appearance
+    ///     (macOS: observed system appearance; iOS: the engine-supplied scheme).
+    ///     Set to `false` to pin to `lightTheme`.
     ///   - lightBackground: Code-block background in light mode. Pass `nil`
-    ///     to use HighlighterSwift's CSS-theme background instead.
+    ///     to use HighlighterSwift's CSS-theme background (transparent) instead.
     ///   - darkBackground: Code-block background in dark mode. Pass `nil`
     ///     to use HighlighterSwift's CSS-theme background instead.
     ///   - preferredFontNames: PostScript font names tried in order before
@@ -58,8 +81,8 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
         lightTheme: String = "atom-one-light",
         darkTheme: String = "atom-one-dark",
         autoSwitchAppearance: Bool = true,
-        lightBackground: NSColor? = NSColor(calibratedWhite: 0.95, alpha: 1.0),
-        darkBackground: NSColor? = NSColor(calibratedWhite: 0.13, alpha: 1.0),
+        lightBackground: PlatformColor? = HighlighterSwiftBridge.defaultLightBackground,
+        darkBackground: PlatformColor? = HighlighterSwiftBridge.defaultDarkBackground,
         preferredFontNames: [String] = ["SF Mono", "Menlo"]
     ) {
         self.highlighter = Highlighter()
@@ -73,8 +96,9 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
         highlightCache.totalCostLimit = 2_000_000
         failedCache.countLimit = 256
         failedCache.totalCostLimit = 2_000_000
-        applyAppearanceTheme()
 
+        #if os(macOS)
+        applyAppearanceTheme()
         if autoSwitchAppearance {
             DistributedNotificationCenter.default.addObserver(
                 forName: NSNotification.Name("AppleInterfaceThemeChangedNotification"),
@@ -89,6 +113,10 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
                 )
             }
         }
+        #else
+        // iOS: the active theme is selected per call from the engine-supplied scheme.
+        applyTheme(lightTheme)
+        #endif
     }
 
     /// Drops the internal highlight cache. Call after manual theme changes the bridge can't observe.
@@ -97,15 +125,27 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
         failedCache.removeAllObjects()
     }
 
+    private func applyTheme(_ themeName: String) {
+        guard let highlighter, currentTheme != themeName else { return }
+        currentTheme = themeName
+        highlighter.setTheme(themeName)
+        highlightCache.removeAllObjects()
+        failedCache.removeAllObjects()
+    }
+
+    private func themeName(for colorScheme: MarkdownColorScheme) -> String {
+        guard autoSwitchAppearance else { return lightTheme }
+        return colorScheme == .dark ? darkTheme : lightTheme
+    }
+
+    private func resolvedBackground(for colorScheme: MarkdownColorScheme) -> PlatformColor {
+        guard autoSwitchAppearance else { return lightBackground }
+        return colorScheme == .dark ? darkBackground : lightBackground
+    }
+
+    #if os(macOS)
     private func applyAppearanceTheme() {
-        guard let highlighter else { return }
-        let theme = isDarkAppearance() ? darkTheme : lightTheme
-        if currentTheme != theme {
-            currentTheme = theme
-            highlighter.setTheme(theme)
-            highlightCache.removeAllObjects()
-            failedCache.removeAllObjects()
-        }
+        applyTheme(isDarkAppearance() ? darkTheme : lightTheme)
     }
 
     private func isDarkAppearance() -> Bool {
@@ -113,30 +153,45 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
         let appearance = NSApp.keyWindow?.effectiveAppearance ?? NSApp.effectiveAppearance
         return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
+    #endif
 
     // MARK: - SyntaxHighlighter
 
     public var appearanceDidChangeNotification: Notification.Name? {
-        autoSwitchAppearance ? .markdownEngineHighlighterDidChangeAppearance : nil
+        #if os(macOS)
+        return autoSwitchAppearance ? .markdownEngineHighlighterDidChangeAppearance : nil
+        #else
+        // iOS re-renders code blocks when the view's trait collection flips, which
+        // re-calls highlight(...) with the new scheme — no global notification needed.
+        return nil
+        #endif
     }
 
-    public func codeFont(size: CGFloat) -> NSFont {
+    public func codeFont(size: CGFloat) -> PlatformFont {
         for name in preferredFontNames {
-            if let font = NSFont(name: name, size: size) {
+            if let font = PlatformFont(name: name, size: size) {
                 return font
             }
         }
         return .monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
-    public func backgroundColor(for colorScheme: MarkdownColorScheme) -> NSColor {
-        // macOS keeps its richer NSApp/window-appearance source (the engine's
-        // colorScheme is derived from the same effectiveAppearance, so this matches).
-        isDarkAppearance() ? darkBackground : lightBackground
+    public func backgroundColor(for colorScheme: MarkdownColorScheme) -> PlatformColor {
+        #if os(macOS)
+        // macOS keeps its window-appearance source (the engine's scheme is derived
+        // from the same effectiveAppearance, so the result matches).
+        return isDarkAppearance() ? darkBackground : lightBackground
+        #else
+        return resolvedBackground(for: colorScheme)
+        #endif
     }
 
     public func highlight(code: String, language: String?, colorScheme: MarkdownColorScheme) -> NSAttributedString? {
+        #if os(macOS)
         applyAppearanceTheme()
+        #else
+        applyTheme(themeName(for: colorScheme))
+        #endif
         guard let highlighter else { return nil }
 
         let normalized = language?.lowercased().trimmingCharacters(in: .whitespaces)

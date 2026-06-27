@@ -9,10 +9,21 @@
 
 import SwiftUI
 import MarkdownEngine
+#if canImport(MarkdownEngineCodeBlocks)
+import MarkdownEngineCodeBlocks
+#endif
 
 struct ContentView: View {
+    private var configuration: MarkdownEditorConfiguration {
+        var config = MarkdownEditorConfiguration.default
+        #if canImport(MarkdownEngineCodeBlocks)
+        config.services.syntaxHighlighter = HighlighterSwiftBridge()
+        #endif
+        return config
+    }
+
     var body: some View {
-        MarkdownUITextViewWrapper(text: sampleMarkdown)
+        MarkdownUITextViewWrapper(text: sampleMarkdown, configuration: configuration)
             .ignoresSafeArea(edges: .bottom)
     }
 }
@@ -30,9 +41,12 @@ A **read-only** render through the cross-platform TextKit-2 fragment ported in P
 - [x] A completed task
 
 ## Code block
-```
+```swift
 let answer = 42
-print("hello, iOS")
+func greet(_ name: String) -> String {
+    return "hello, \\(name)"
+}
+print(greet("iOS"))
 ```
 
 ## Blockquote
