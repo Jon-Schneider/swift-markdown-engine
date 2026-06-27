@@ -73,6 +73,36 @@ extension PlatformColor {
     }
 }
 
+/// Composite `draw` into a bitmap-backed `PlatformImage` of `size`, with a top-left /
+/// y-down drawing context current — so callers express geometry in top-down coordinates
+/// on both platforms (the table grid does, mirroring the original macOS table renderer).
+///
+/// macOS: a `flipped: true` `NSImage` (AppKit applies the y-flip without mirroring glyphs).
+/// iOS: `UIGraphicsImageRenderer`, whose context is already top-left/y-down.
+func renderFlippedPlatformImage(size: CGSize, _ draw: @escaping () -> Void) -> PlatformImage {
+#if canImport(UIKit)
+    let renderer = UIGraphicsImageRenderer(size: size)
+    return renderer.image { _ in draw() }
+#else
+    return NSImage(size: size, flipped: true) { _ in
+        draw()
+        return true
+    }
+#endif
+}
+
+extension PlatformBezierPath {
+    /// AppKit spells the line-segment append `line(to:)`; UIKit spells it `addLine(to:)`.
+    /// (`move(to:)` agrees across both.)
+    func addLineCompat(to point: CGPoint) {
+#if canImport(UIKit)
+        addLine(to: point)
+#else
+        line(to: point)
+#endif
+    }
+}
+
 /// A tinted SF Symbol image at the given point size, or nil if the symbol is missing.
 /// The tint is applied explicitly (`.alwaysOriginal` on iOS, hierarchical on macOS)
 /// so a template symbol doesn't inherit the surrounding context fill — the checkbox

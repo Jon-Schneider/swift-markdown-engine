@@ -1,16 +1,22 @@
-#if os(macOS)
 //
 //  MarkdownStyler+Tables.swift
 //  MarkdownEngine
 //
-//  GFM tables. The block is rendered to a single NSImage and emitted via
+//  GFM tables. The block is rendered to a single PlatformImage and emitted via
 //  the same collapsedSource path block-LaTeX uses, so the source stays
 //  in sync with the document but the user only sees the rendered grid
 //  when the caret is outside the table.
 //
+//  Cross-platform: the grid is composited via UIGraphicsImageRenderer (iOS) or a
+//  flipped NSImage (macOS); both draw in the same top-down coordinate space.
+//
 
-import AppKit
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#else
+import AppKit
+#endif
 
 extension MarkdownStyler {
 
@@ -60,20 +66,20 @@ extension MarkdownStyler {
                 continue
             }
 
-            // Resolve table colors under the scheme threaded in from the view
-            // adapter — no `effectiveAppearance`/`NSApp` probing in shared styling
-            // logic. (Collapses to light/dark; the macOS table renderer maps it
-            // back to an `NSAppearance`. See iOS-Support-Plan.md Phase 0.)
-            let renderAppearance = ctx.colorScheme.appKitAppearance
+            // Render the grid under the scheme threaded in from the view adapter —
+            // no `effectiveAppearance`/`NSApp` probing in shared styling logic.
+            // (Collapses to light/dark; `renderTable` resolves the real colors.
+            // See iOS-Support-Plan.md Phase 0.)
             let image = renderTable(
                 parsed,
                 baseFont: ctx.baseFont,
                 theme: ctx.configuration.theme,
                 codeBackgroundColor: ctx.codeBackgroundColor,
                 latex: ctx.services.latex,
-                appearance: renderAppearance
+                colorScheme: ctx.colorScheme
             )
             let imageBounds = CGRect(x: 0, y: 0, width: image.size.width, height: image.size.height)
+#if os(macOS)
             // Wide tables → scrollable mode (NSScrollView overlay); narrow → collapsed.
             let containerWidth = effectiveContainerWidth(for: ctx)
             let isWide = image.size.width > containerWidth + 0.5
@@ -88,6 +94,13 @@ extension MarkdownStyler {
                     sourceID: computedSourceID
                 )
                 : .collapsedSource(markerTexts: [])
+#else
+            // iOS: the horizontal-scroll overlay (NSScrollView-backed `WideTableOverlay`)
+            // isn't ported yet, so render every table collapsed — wide ones simply size to
+            // their full width. Horizontal scrolling for wide tables is a Phase 4 follow-up.
+            _ = occurrenceIndex
+            let mode: RenderedStandaloneBlockMode = .collapsedSource(markerTexts: [])
+#endif
             _ = appendRenderedStandaloneBlock(
                 for: token,
                 rawContent: source,
@@ -159,18 +172,18 @@ extension MarkdownStyler {
     /// Raw cell → `NSAttributedString`: inline markdown applied, markers stripped, LaTeX as attachments.
     static func formattedCellString(
         _ raw: String,
-        baseFont: NSFont,
+        baseFont: PlatformFont,
         header: Bool,
         theme: MarkdownEditorTheme,
-        codeBackgroundColor: NSColor,
+        codeBackgroundColor: PlatformColor,
         latex: any LatexRenderer,
         colorScheme: MarkdownColorScheme
     ) -> NSAttributedString {
         let descriptor = baseFont.fontDescriptor
         let pointSize = baseFont.pointSize
-        let codeFont = NSFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
+        let codeFont = PlatformFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
         let startFont = header
-            ? (NSFont(descriptor: descriptor.withSymbolicTraits(.bold), size: pointSize) ?? baseFont)
+            ? (PlatformFont(descriptor: descriptor.withSymbolicTraitsCompat(.boldTrait), size: pointSize) ?? baseFont)
             : baseFont
         let out = NSMutableAttributedString()
         appendInlineCell(
@@ -184,16 +197,17 @@ extension MarkdownStyler {
 
     /// Compose `current`'s bold/italic traits with `kind` so nested emphasis stacks (italic+bold).
     private static func composeEmphasis(
-        _ current: NSFont, _ kind: EmphasisKind,
-        baseDescriptor: NSFontDescriptor, pointSize: CGFloat
-    ) -> NSFont {
-        var traits = current.fontDescriptor.symbolicTraits.intersection([.bold, .italic])
+        _ current: PlatformFont, _ kind: EmphasisKind,
+        baseDescriptor: PlatformFontDescriptor, pointSize: CGFloat
+    ) -> PlatformFont {
+        let boldItalic: PlatformFontDescriptor.SymbolicTraits = [.boldTrait, .italicTrait]
+        var traits = current.fontDescriptor.symbolicTraits.intersection(boldItalic)
         switch kind {
-        case .bold: traits.insert(.bold)
-        case .italic: traits.insert(.italic)
-        case .boldItalic: traits.formUnion([.bold, .italic])
+        case .bold: traits.insert(.boldTrait)
+        case .italic: traits.insert(.italicTrait)
+        case .boldItalic: traits.formUnion(boldItalic)
         }
-        return NSFont(descriptor: baseDescriptor.withSymbolicTraits(traits), size: pointSize) ?? current
+        return PlatformFont(descriptor: baseDescriptor.withSymbolicTraitsCompat(traits), size: pointSize) ?? current
     }
 
     /// Walk the inline AST into marker-stripped runs; LaTeX as attachments, links/embeds emitted raw.
@@ -201,22 +215,22 @@ extension MarkdownStyler {
         _ nodes: [InlineNode],
         in ns: NSString,
         into out: NSMutableAttributedString,
-        font: NSFont,
-        baseDescriptor: NSFontDescriptor,
+        font: PlatformFont,
+        baseDescriptor: PlatformFontDescriptor,
         pointSize: CGFloat,
-        codeFont: NSFont,
+        codeFont: PlatformFont,
         theme: MarkdownEditorTheme,
-        codeBackgroundColor: NSColor,
+        codeBackgroundColor: PlatformColor,
         latex: any LatexRenderer,
         colorScheme: MarkdownColorScheme
     ) {
-        func recurse(_ children: [InlineNode], _ f: NSFont) {
+        func recurse(_ children: [InlineNode], _ f: PlatformFont) {
             appendInlineCell(children, in: ns, into: out, font: f, baseDescriptor: baseDescriptor,
                              pointSize: pointSize, codeFont: codeFont, theme: theme,
                              codeBackgroundColor: codeBackgroundColor, latex: latex,
                              colorScheme: colorScheme)
         }
-        func appendPlain(_ range: NSRange, _ f: NSFont) {
+        func appendPlain(_ range: NSRange, _ f: PlatformFont) {
             out.append(NSAttributedString(string: ns.substring(with: range),
                                           attributes: [.font: f, .foregroundColor: theme.bodyText]))
         }
@@ -264,35 +278,40 @@ extension MarkdownStyler {
 
     private static func renderTable(
         _ table: ParsedTable,
-        baseFont: NSFont,
+        baseFont: PlatformFont,
         theme: MarkdownEditorTheme,
-        codeBackgroundColor: NSColor,
+        codeBackgroundColor: PlatformColor,
         latex: any LatexRenderer,
-        appearance: NSAppearance
-    ) -> NSImage {
+        colorScheme: MarkdownColorScheme
+    ) -> PlatformImage {
         let columnCount = table.alignments.count
         let cellHPadding: CGFloat = 12
         let cellVPadding: CGFloat = 6
         let borderWidth: CGFloat = 1
-        // Resolve under the real appearance: `.withAlphaComponent()` freezes a dynamic color otherwise.
-        func mutedColor(alpha: CGFloat) -> NSColor {
+        // Resolve the dynamic muted color for the active scheme *before* `.withAlphaComponent()`,
+        // which would otherwise freeze a dynamic color at whatever appearance is current.
+        func mutedColor(alpha: CGFloat) -> PlatformColor {
+#if canImport(UIKit)
+            let traits = UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light)
+            return theme.mutedText.resolvedColor(with: traits).withAlphaComponent(alpha)
+#else
             var resolved: NSColor = theme.mutedText
-            appearance.performAsCurrentDrawingAppearance {
+            colorScheme.appKitAppearance.performAsCurrentDrawingAppearance {
                 resolved = theme.mutedText.usingColorSpace(.sRGB) ?? theme.mutedText
             }
             return resolved.withAlphaComponent(alpha)
+#endif
         }
         let borderColor = mutedColor(alpha: 0.5)
         let baseLineHeight: CGFloat = ceil(baseFont.ascender - baseFont.descender + baseFont.leading)
         let minColumnContentWidth: CGFloat = 16
 
         // Pre-format every cell so width measurement and drawing share one NSAttributedString.
-        let tableColorScheme = MarkdownColorScheme.resolved(from: appearance)
         let headerCells = table.header.map {
             formattedCellString(
                 $0, baseFont: baseFont, header: true, theme: theme,
                 codeBackgroundColor: codeBackgroundColor, latex: latex,
-                colorScheme: tableColorScheme
+                colorScheme: colorScheme
             )
         }
         let bodyCells = table.rows.map { row in
@@ -300,7 +319,7 @@ extension MarkdownStyler {
                 formattedCellString(
                     $0, baseFont: baseFont, header: false, theme: theme,
                     codeBackgroundColor: codeBackgroundColor, latex: latex,
-                    colorScheme: tableColorScheme
+                    colorScheme: colorScheme
                 )
             }
         }
@@ -329,7 +348,7 @@ extension MarkdownStyler {
         let rowHeight = lineHeight + 2 * cellVPadding
         let totalHeight = CGFloat(rowCount) * rowHeight + CGFloat(rowCount + 1) * borderWidth
 
-        let size = NSSize(width: totalWidth, height: totalHeight)
+        let size = CGSize(width: totalWidth, height: totalHeight)
 
         // Pre-compute layout offsets (top-down coords; drawing runs flipped).
         var columnLeft = [CGFloat](repeating: 0, count: columnCount + 1)
@@ -346,11 +365,12 @@ extension MarkdownStyler {
         let alignments = table.alignments
         let headerFill = mutedColor(alpha: 0.08)
 
-        // Flipped image so AppKit handles the y-flip; a manual transform mirror would flip glyphs too.
-        return NSImage(size: size, flipped: true) { _ in
+        // Top-down drawing space on both platforms (flipped NSImage / UIGraphicsImageRenderer);
+        // a manual transform mirror would flip glyphs too.
+        return renderFlippedPlatformImage(size: size) {
             // Header row fill
             headerFill.setFill()
-            NSBezierPath(rect: NSRect(
+            PlatformBezierPath(rect: CGRect(
                 x: borderWidth,
                 y: borderWidth,
                 width: size.width - 2 * borderWidth,
@@ -359,7 +379,7 @@ extension MarkdownStyler {
 
             // Outer border
             borderColor.setStroke()
-            let outer = NSBezierPath(rect: NSRect(
+            let outer = PlatformBezierPath(rect: CGRect(
                 x: borderWidth / 2,
                 y: borderWidth / 2,
                 width: size.width - borderWidth,
@@ -369,17 +389,17 @@ extension MarkdownStyler {
             outer.stroke()
 
             // Internal separators
-            let separators = NSBezierPath()
+            let separators = PlatformBezierPath()
             separators.lineWidth = borderWidth
             for i in 1..<columnCount {
                 let x = columnLeft[i] - borderWidth / 2
-                separators.move(to: NSPoint(x: x, y: 0))
-                separators.line(to: NSPoint(x: x, y: size.height))
+                separators.move(to: CGPoint(x: x, y: 0))
+                separators.addLineCompat(to: CGPoint(x: x, y: size.height))
             }
             for i in 1..<rowCount {
                 let y = rowTop[i] - borderWidth / 2
-                separators.move(to: NSPoint(x: 0, y: y))
-                separators.line(to: NSPoint(x: size.width, y: y))
+                separators.move(to: CGPoint(x: 0, y: y))
+                separators.addLineCompat(to: CGPoint(x: size.width, y: y))
             }
             separators.stroke()
 
@@ -403,7 +423,7 @@ extension MarkdownStyler {
                     range: NSRange(location: 0, length: aligned.length)
                 )
                 let cellInnerTop = rowTop[row] + max(0, (rowHeight - lineHeight) / 2)
-                let drawRect = NSRect(
+                let drawRect = CGRect(
                     x: cellLeft,
                     y: cellInnerTop,
                     width: availableWidth,
@@ -420,7 +440,6 @@ extension MarkdownStyler {
                     drawCell(cell, col: col, row: rowIdx + 1)
                 }
             }
-            return true
         }
     }
 
@@ -431,6 +450,8 @@ extension MarkdownStyler {
         if let container = ctx.layoutBridge?.firstTextContainer {
             let raw = container.size.width
             if raw.isFinite, raw > 0, raw < 100_000 { return raw }
+#if os(macOS)
+            // AppKit-only fallback: `NSTextContainer.textView` doesn't exist on UIKit.
             if let textView = container.textView {
                 let inset = textView.textContainerInset
                 let usable = textView.bounds.width - inset.width * 2
@@ -438,6 +459,7 @@ extension MarkdownStyler {
                 let frameUsable = textView.frame.width - inset.width * 2
                 if frameUsable.isFinite, frameUsable > 0 { return frameUsable }
             }
+#endif
         }
         return 500
     }
@@ -459,5 +481,3 @@ extension MarkdownStyler {
         return hasher.finalize()
     }
 }
-
-#endif

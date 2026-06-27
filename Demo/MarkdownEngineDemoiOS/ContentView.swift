@@ -65,6 +65,13 @@ Inline math like $E = mc^2$ flows with the text, and block math centers:
 
 $$\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}$$
 
+## Tables
+| Feature   | Status | Notes            |
+|-----------|:------:|------------------|
+| Lists     |   ✓    | continue on ⏎    |
+| Checkboxes|   ✓    | tap to toggle    |
+| **Tables**|   ✓    | rendered as $E=mc^2$ |
+
 ## Blockquote
 > A quoted line in the left gutter,
 > continued on a second line.

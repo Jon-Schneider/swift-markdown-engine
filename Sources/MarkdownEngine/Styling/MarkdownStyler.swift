@@ -97,11 +97,10 @@ enum MarkdownStyler {
         result += styleInlineLatex(ctx)
         result += styleImageEmbeds(ctx)
         result += styleImageLinks(ctx)
-        #if os(macOS)
-        // Table rendering composites to NSImage (MarkdownStyler+Tables, macOS-only).
-        // iOS renders tables in a later Phase 2 pass.
+        // Table rendering composites the grid to a PlatformImage (MarkdownStyler+Tables);
+        // cross-platform as of the iOS tables port (wide-table horizontal scroll still
+        // macOS-only — see MarkdownStyler+Tables `styleTables`).
         result += styleTables(ctx)
-        #endif
         return result
     }
 }
