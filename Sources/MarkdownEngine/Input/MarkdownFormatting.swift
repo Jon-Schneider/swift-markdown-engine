@@ -85,10 +85,12 @@ enum MarkdownFormatting {
         case .heading(let level):
             let line = ns.substring(with: ns.lineRange(for: selection)).trimmingCharacters(in: .whitespacesAndNewlines)
             return line.hasPrefix(String(repeating: "#", count: level) + " ")
-        case .bulletList, .numberedList:
+        case .bulletList:
             let line = ns.substring(with: ns.lineRange(for: selection))
-            return line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ")
-                || line.hasPrefix("\t• ") || line.hasPrefix("1. ")
+            return line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") || line.hasPrefix("\t• ")
+        case .numberedList:
+            let line = ns.substring(with: ns.lineRange(for: selection))
+            return line.range(of: #"^\d+\. "#, options: .regularExpression) != nil
         }
     }
 

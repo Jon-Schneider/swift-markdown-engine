@@ -179,12 +179,20 @@ public final class MarkdownUITextView: UITextView {
     public func render(markdown storageText: String) {
         lastRenderedSource = storageText
         applyTextContainerInset()            // configuration may have changed with the text
+        // Document reset: drop the previous doc's wide-table overlays synchronously (so they
+        // don't paint over the new content for a frame) and its persisted scroll offsets (so
+        // a new table that hashes to an old sourceID doesn't inherit a stale scroll position).
+        removeAllTableScrollOverlays()
+        tableHorizontalScrollOffsets.removeAll()
         let displayState = WikiLinkService.makeDisplayState(from: storageText)
         wikiLinkMetadata = displayState.metadata
         isApplyingProgrammaticEdit = true
         text = displayState.display          // plain text; restyleInPlace adds the styling
         isApplyingProgrammaticEdit = false
         restyleInPlace()
+        // Republish host state after an (external) load so the toolbar / link context reflect
+        // the new document, deferred out of any SwiftUI view-update cycle.
+        DispatchQueue.main.async { [weak self] in self?.publishHostStateNow() }
     }
 
     /// Convert the current (display-form) text back to storage form and notify the
@@ -659,8 +667,14 @@ extension MarkdownUITextView: UITextViewDelegate {
     public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         if isApplyingProgrammaticEdit { return true }
         // During IME composition (kana→kanji, Pinyin, dictation) the text is
-        // provisional — let the input system drive it; don't run list logic on it.
-        if markedTextRange != nil { return true }
+        // provisional — let the input system drive it; don't run list logic on it. Clear any
+        // pending scope state so an interleaved composition can't carry a stale edited range
+        // into the next real edit (the resulting nil → full-restyle fallback is safe).
+        if markedTextRange != nil {
+            pendingEditedRange = nil
+            pendingPreEditActiveTokens = nil
+            return true
+        }
         switch MarkdownLists.computeListInsertion(
             currentText: textView.text, affectedCharRange: range,
             replacementString: text, configuration: configuration
@@ -762,12 +776,28 @@ extension MarkdownUITextView: UITextViewDelegate {
         // or in/out of a link — without the active-token set shifting), reusing the tokens
         // already parsed above.
         publishHostState(display: display, tokens: parsed)
-        // Reveal/hide the caret token's raw markers — restyle only when the active set shifts.
-        guard current != previous else { return }
+
+        // Reveal/hide markers as the caret enters/leaves an element. Restyle when the active
+        // token set shifts OR when the caret crosses task-checkbox / thematic-break / bullet
+        // syntax — those glyphs are caret-position-driven but are NOT tokens, so `current !=
+        // previous` alone misses them (mirrors the macOS selection-change gate in
+        // NativeTextViewCoordinator+TextDelegate).
+        let caretLoc = min(selectedRange.location, ns.length)
+        let syntaxCrossingChanged: Bool = {
+            guard let previousLoc = previousCaretLocation, previousLoc != caretLoc else { return false }
+            func changed(_ rangeAt: (Int, String) -> NSRange?) -> Bool {
+                let before = rangeAt(previousLoc, display)
+                let after = rangeAt(caretLoc, display)
+                return before?.location != after?.location || before?.length != after?.length
+            }
+            return changed(MarkdownStyler.taskSyntaxRange)
+                || changed(MarkdownStyler.hrLineRange)
+                || changed(MarkdownStyler.bulletSyntaxRange)
+        }()
+        guard current != previous || syntaxCrossingChanged else { return }
 
         // Scope to the paragraph the caret entered + the one it left + the tokens whose
         // active state changed (so their markers reveal/hide), not the whole document.
-        let caretLoc = min(selectedRange.location, ns.length)
         let caretParagraph = ns.paragraphRange(for: NSRange(location: caretLoc, length: 0))
         var candidates: [NSRange] = [caretParagraph]
         if caretParagraph.length == 0 && caretLoc > 0 {

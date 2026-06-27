@@ -101,6 +101,10 @@ struct MarkdownFormattingTests {
         #expect(!MarkdownFormatting.isActive(.bold, text: "foo", selection: NSRange(location: 0, length: 3)))
         #expect(MarkdownFormatting.isActive(.heading(1), text: "# foo", selection: NSRange(location: 0, length: 0)))
         #expect(MarkdownFormatting.isActive(.bulletList, text: "- foo", selection: NSRange(location: 0, length: 0)))
+        // Bullet and numbered are distinct (a numbered line isn't "active" for bullet, and vice-versa).
+        #expect(MarkdownFormatting.isActive(.numberedList, text: "1. foo", selection: NSRange(location: 0, length: 0)))
+        #expect(!MarkdownFormatting.isActive(.bulletList, text: "1. foo", selection: NSRange(location: 0, length: 0)))
+        #expect(!MarkdownFormatting.isActive(.numberedList, text: "- foo", selection: NSRange(location: 0, length: 0)))
     }
 
     // MARK: - Selection state (toolbar sync)

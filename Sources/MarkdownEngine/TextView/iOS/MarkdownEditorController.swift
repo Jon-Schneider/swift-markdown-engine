@@ -48,6 +48,10 @@ public final class MarkdownEditorController: ObservableObject {
 
     /// Bind the controller to its editor view. Internal: invoked by the wrapper, not the host.
     func attach(_ view: MarkdownUITextView) {
+        // Bind once per view — `updateUIView` calls this every SwiftUI pass; re-binding the
+        // closures and re-publishing each time risks "publishing changes from within view
+        // updates". The closures are stable, so a single bind is enough.
+        guard self.view !== view else { return }
         self.view = view
         view.onSelectionStateChange = { [weak self] state in
             self?.updateSelectionState(state)
@@ -55,8 +59,9 @@ public final class MarkdownEditorController: ObservableObject {
         view.onInlineLinkContextChange = { [weak self] context in
             self?.updateInlineLinkContext(context)
         }
-        // Publish initial state so freshly-shown host UI isn't stale.
-        view.publishHostStateNow()
+        // Publish initial state so freshly-shown host UI isn't stale — deferred to the next
+        // main-actor tick so it doesn't mutate @Published from inside the view-update cycle.
+        DispatchQueue.main.async { [weak view] in view?.publishHostStateNow() }
     }
 
     private func updateSelectionState(_ state: MarkdownSelectionState) {
