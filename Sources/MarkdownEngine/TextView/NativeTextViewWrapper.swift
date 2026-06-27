@@ -219,6 +219,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         textContainer.heightTracksTextView = false
 
         let layoutDelegate = MarkdownLayoutManagerDelegate()
+        layoutDelegate.context = textView
         context.coordinator.layoutDelegate = layoutDelegate
         textLayoutManager.delegate = layoutDelegate
         textView.configuration = configuration
