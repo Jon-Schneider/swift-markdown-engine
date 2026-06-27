@@ -29,7 +29,11 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
 
     public func updateUIView(_ view: MarkdownUITextView, context: Context) {
         view.configuration = configuration
-        view.render(markdown: text)
+        // Re-render only when the source text actually changed from outside, so a
+        // routine SwiftUI update doesn't wipe the user's in-place edits.
+        if view.lastRenderedSource != text {
+            view.render(markdown: text)
+        }
     }
 }
 #endif

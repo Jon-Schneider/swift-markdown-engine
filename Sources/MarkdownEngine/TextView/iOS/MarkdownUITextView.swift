@@ -2,13 +2,14 @@
 //  MarkdownUITextView.swift
 //  MarkdownEngine
 //
-//  iOS read-only Markdown view (Phase 2a). A `UITextView` backed by a TextKit-2
-//  stack whose layout-manager delegate installs the cross-platform
-//  `MarkdownTextLayoutFragment`; the view itself is the fragment's
-//  `MarkdownFragmentContext`, supplying theme/config/selection/scale.
+//  iOS Markdown view (Phase 2a read-only → Phase 2b editable). A `UITextView` on a
+//  TextKit-2 stack whose layout-manager delegate installs the cross-platform
+//  `MarkdownTextLayoutFragment`; the view is the fragment's `MarkdownFragmentContext`.
 //
-//  Scope: rendering only (not editable). Editing, input handling, IME, gestures,
-//  and selection-model work are later Phase 2 passes.
+//  Phase 2b adds: editing with live restyle, the shared list/blockquote/indent/
+//  auto-pair input behaviors (via `MarkdownLists.computeListInsertion`), and
+//  tap-to-toggle task checkboxes. Out of scope (later passes): marked-text/IME,
+//  autocorrect lifecycle, paste, context menus, link taps, undo integration.
 //
 
 #if canImport(UIKit)
@@ -20,19 +21,27 @@ public final class MarkdownUITextView: UITextView {
     public var fontName: String
     public var fontSize: CGFloat
 
-    /// Resolved base body font (set on each render). Part of `MarkdownFragmentContext`.
+    /// Resolved base body font (updated on each restyle). Part of `MarkdownFragmentContext`.
     public var baseFont: PlatformFont
     /// TextKit-2 measurement bridge. Part of `MarkdownFragmentContext`.
     /// Internal: `LayoutBridge` is an internal type, so this can't be `public`.
     var layoutBridge: LayoutBridge?
 
-    // Retained TextKit-2 stack pieces (NSTextContainer.textLayoutManager and
-    // NSTextLayoutManager.delegate are weak, so we must own them).
+    /// The storage-form Markdown last loaded from outside (so the SwiftUI wrapper
+    /// re-renders only on a genuine external change, never wiping in-place edits).
+    public private(set) var lastRenderedSource: String?
+
+    // Retained TextKit-2 stack pieces (the container/layout-manager back-refs are weak).
     private let contentStorage: NSTextContentStorage
     private var markdownLayoutDelegate: MarkdownLayoutManagerDelegate?
 
-    private var renderedMarkdown: String = ""
     private var lastInterfaceStyle: UIUserInterfaceStyle = .unspecified
+    /// Suppresses delegate re-entrancy while we mutate storage / set text ourselves.
+    private var isApplyingProgrammaticEdit = false
+    /// Active token set from the last restyle — selection changes only restyle when it shifts.
+    private var lastActiveTokens: Set<Int> = []
+    /// Token cache keyed by exact text, so caret moves don't re-parse an unchanged document.
+    private var tokenCache: (text: String, tokens: [MarkdownToken])?
 
     public init(
         configuration: MarkdownEditorConfiguration = .default,
@@ -44,8 +53,6 @@ public final class MarkdownUITextView: UITextView {
         self.fontSize = fontSize
         self.baseFont = PlatformFont(name: fontName, size: fontSize) ?? .systemFont(ofSize: fontSize)
 
-        // Build an explicit TextKit-2 stack (the `usingTextLayoutManager:`
-        // convenience initializer is not subclass-friendly).
         let contentStorage = NSTextContentStorage()
         let layoutManager = NSTextLayoutManager()
         contentStorage.addTextLayoutManager(layoutManager)
@@ -57,84 +64,205 @@ public final class MarkdownUITextView: UITextView {
 
         super.init(frame: .zero, textContainer: container)
 
-        isEditable = false
+        isEditable = true
         isSelectable = true
         backgroundColor = .clear
         textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         adjustsFontForContentSizeCategory = true
+        autocorrectionType = .no            // marked-text/autocorrect lifecycle is a later pass
+        smartDashesType = .no
+        smartQuotesType = .no
+        delegate = self
 
-        let delegate = MarkdownLayoutManagerDelegate()
-        delegate.context = self           // weak inside the delegate; self owns `delegate`
-        markdownLayoutDelegate = delegate
-        layoutManager.delegate = delegate
+        let layoutDelegate = MarkdownLayoutManagerDelegate()
+        layoutDelegate.context = self
+        markdownLayoutDelegate = layoutDelegate
+        layoutManager.delegate = layoutDelegate
         layoutBridge = LayoutBridge(layoutManager)
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleCheckboxTap(_:)))
+        tap.delegate = self
+        addGestureRecognizer(tap)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    // MARK: - Rendering
+    // MARK: - Loading
 
-    /// Parse + style `storageText` and display it. Reuses the shared styling
-    /// pipeline (`WikiLinkService` → `TextStylingService` → `MarkdownStyler`),
-    /// identical to the macOS restyle path minus the live-edit incrementality.
+    /// Load `storageText` (storage form) and style it. Resets the document, so this
+    /// is for initial / external content — in-place edits go through the delegate.
     public func render(markdown storageText: String) {
-        renderedMarkdown = storageText
-        lastInterfaceStyle = traitCollection.userInterfaceStyle
-
-        // Storage form (`[[Name|id]]`) → display form (`[[Name]]`).
+        lastRenderedSource = storageText
         let display = WikiLinkService.makeDisplayState(from: storageText).display
+        isApplyingProgrammaticEdit = true
+        text = display                       // plain text; restyleInPlace adds the styling
+        isApplyingProgrammaticEdit = false
+        restyleInPlace()
+    }
+
+    // MARK: - Styling
+
+    private func tokens(for display: String) -> [MarkdownToken] {
+        if let cache = tokenCache, cache.text == display { return cache.tokens }
+        let parsed = MarkdownTokenizer.parseTokensViaAST(in: display)
+        tokenCache = (display, parsed)
+        return parsed
+    }
+
+    /// Re-apply Markdown styling to the current text as ATTRIBUTE edits only — the
+    /// string and the selection are untouched, so the caret stays put. Mirrors the
+    /// macOS restyle (`beginEditing`/`setAttributes`/`addAttribute`/`endEditing`).
+    private func restyleInPlace() {
+        let display = textStorage.string
         let ns = display as NSString
         let fullRange = NSRange(location: 0, length: ns.length)
 
         let (resolvedBaseFont, paragraph) = TextStylingService.makeBaseFontAndStyle(
-            fontName: fontName,
-            fontSize: fontSize,
-            layoutBridge: layoutBridge,
-            configuration: configuration
+            fontName: fontName, fontSize: fontSize, layoutBridge: layoutBridge, configuration: configuration
         )
         baseFont = resolvedBaseFont
-
-        let attributed = NSMutableAttributedString(
-            string: display,
-            attributes: TextStylingService.makeBaseTypingAttributes(
-                font: resolvedBaseFont,
-                paragraphStyle: paragraph,
-                theme: configuration.theme
-            )
+        let baseAttributes = TextStylingService.makeBaseTypingAttributes(
+            font: resolvedBaseFont, paragraphStyle: paragraph, theme: configuration.theme
         )
+        typingAttributes = baseAttributes
 
-        // Read-only: no caret, so no token is "active" (markers stay rendered/hidden).
+        let parsed = tokens(for: display)
+        let active = MarkdownDetection.computeActiveTokenIndices(
+            selectionRange: selectedRange, tokens: parsed, in: ns
+        )
+        lastActiveTokens = active
+
         let styled = MarkdownStyler.styleAttributes(
-            text: display,
-            fontName: fontName,
-            fontSize: fontSize,
-            layoutBridge: layoutBridge,
-            caretLocation: NSNotFound,
-            activeTokenIndices: [],
+            text: display, fontName: fontName, fontSize: fontSize, layoutBridge: layoutBridge,
+            caretLocation: selectedRange.location, activeTokenIndices: active,
+            precomputedTokens: parsed,
             colorScheme: MarkdownColorScheme.resolved(from: traitCollection),
             configuration: configuration
         )
+
+        textStorage.beginEditing()
+        textStorage.setAttributes(baseAttributes, range: fullRange)
         for (range, attrs) in styled {
             let clipped = NSIntersectionRange(range, fullRange)
             guard clipped.length > 0 else { continue }
-            for (key, value) in attrs {
-                attributed.addAttribute(key, value: value, range: clipped)
-            }
+            for (key, value) in attrs { textStorage.addAttribute(key, value: value, range: clipped) }
         }
-
-        attributedText = attributed
-        if let tlm = textLayoutManager {
-            tlm.ensureLayout(for: tlm.documentRange)
-        }
+        textStorage.endEditing()
     }
 
     public override func traitCollectionDidChange(_ previous: UITraitCollection?) {
         super.traitCollectionDidChange(previous)
-        // Re-render on light/dark flips so themed colors track the appearance.
-        if traitCollection.userInterfaceStyle != lastInterfaceStyle, !renderedMarkdown.isEmpty {
-            render(markdown: renderedMarkdown)
+        if traitCollection.userInterfaceStyle != lastInterfaceStyle, lastRenderedSource != nil {
+            lastInterfaceStyle = traitCollection.userInterfaceStyle
+            restyleInPlace()
         }
+    }
+
+    // MARK: - Checkbox tap-toggle
+
+    @objc private func handleCheckboxTap(_ recognizer: UITapGestureRecognizer) {
+        // For a scroll view, `location(in: self)` is already in content coordinates
+        // (bounds.origin == contentOffset).
+        toggleCheckbox(at: recognizer.location(in: self))
+    }
+
+    /// Toggle a task checkbox if `point` (in view coordinates) lands on one,
+    /// flipping `[ ]`↔`[x]` in the source and restyling. Returns whether a
+    /// checkbox was hit. Internal so iOS-simulator integration tests can drive it.
+    @discardableResult
+    func toggleCheckbox(at point: CGPoint) -> Bool {
+        guard let layoutBridge else { return false }
+        let containerPoint = CGPoint(x: point.x - textContainerInset.left,
+                                     y: point.y - textContainerInset.top)
+
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        var hitRange: NSRange?
+        var hitIsChecked = false
+        textStorage.enumerateAttribute(.taskCheckbox, in: fullRange, options: []) { value, attrRange, stop in
+            guard let isChecked = value as? Bool else { return }
+            if layoutBridge.boundingRect(forCharacterRange: attrRange, in: textContainer).contains(containerPoint) {
+                hitRange = attrRange
+                hitIsChecked = isChecked
+                stop.pointee = true
+            }
+        }
+        guard let effectiveRange = hitRange else { return false }
+        let nsText = textStorage.string as NSString
+        guard nsText.substring(with: effectiveRange).range(of: #"\[[ xX]\]"#, options: .regularExpression) != nil else { return false }
+
+        let replacement = hitIsChecked ? "[ ]" : "[x]"
+        isApplyingProgrammaticEdit = true
+        textStorage.beginEditing()
+        textStorage.replaceCharacters(in: effectiveRange, with: replacement)
+        textStorage.endEditing()
+        isApplyingProgrammaticEdit = false
+        restyleInPlace()   // re-parses the flipped source and re-applies .taskCheckbox
+        return true
+    }
+
+    /// View-coordinate rect of the first task-checkbox glyph, if any. Internal for testing.
+    func firstCheckboxBoundingRect() -> CGRect? {
+        guard let layoutBridge else { return nil }
+        var result: CGRect?
+        textStorage.enumerateAttribute(.taskCheckbox, in: NSRange(location: 0, length: textStorage.length), options: []) { value, attrRange, stop in
+            guard value is Bool else { return }
+            result = layoutBridge.boundingRect(forCharacterRange: attrRange, in: textContainer)
+                .offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
+            stop.pointee = true
+        }
+        return result
+    }
+}
+
+// MARK: - UITextViewDelegate (editing + live restyle)
+
+extension MarkdownUITextView: UITextViewDelegate {
+
+    public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        if isApplyingProgrammaticEdit { return true }
+        switch MarkdownLists.computeListInsertion(
+            currentText: textView.text, affectedCharRange: range,
+            replacementString: text, configuration: configuration
+        ) {
+        case .allowDefault:
+            return true
+        case .block:
+            return false
+        case .replace(let replaceRange, let replaceText, let caret):
+            isApplyingProgrammaticEdit = true
+            textStorage.beginEditing()
+            textStorage.replaceCharacters(in: replaceRange, with: replaceText)
+            textStorage.endEditing()
+            selectedRange = NSRange(location: caret, length: 0)
+            isApplyingProgrammaticEdit = false
+            restyleInPlace()
+            return false
+        }
+    }
+
+    public func textViewDidChange(_ textView: UITextView) {
+        if isApplyingProgrammaticEdit { return }
+        restyleInPlace()
+    }
+
+    public func textViewDidChangeSelection(_ textView: UITextView) {
+        if isApplyingProgrammaticEdit { return }
+        // Reveal/hide the caret token's raw markers — restyle only when the active set shifts.
+        let display = textStorage.string
+        let active = MarkdownDetection.computeActiveTokenIndices(
+            selectionRange: selectedRange, tokens: tokens(for: display), in: display as NSString
+        )
+        if active != lastActiveTokens { restyleInPlace() }
+    }
+}
+
+// MARK: - UIGestureRecognizerDelegate
+
+extension MarkdownUITextView: UIGestureRecognizerDelegate {
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                                  shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true   // coexist with the text view's own tap (caret placement)
     }
 }
 
