@@ -34,9 +34,21 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarkdownUITextViewWrapper(text: text, configuration: configuration) { edited in
-                text = edited   // write-back: edits round-trip into the model
-            }
+            MarkdownUITextViewWrapper(
+                text: text,
+                configuration: configuration,
+                onTextChange: { edited in
+                    text = edited   // write-back: edits round-trip into the model
+                },
+                onPasteImage: { data in
+                    // Host owns storage: save the pasted bytes and return a reference the
+                    // editor inserts as ![](path).
+                    let url = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("pasted-\(UUID().uuidString).png")
+                    try? data.write(to: url)
+                    return url.path
+                }
+            )
             .controller(controller)
 
             // Host-built formatting toolbar: its buttons reflect the cursor context

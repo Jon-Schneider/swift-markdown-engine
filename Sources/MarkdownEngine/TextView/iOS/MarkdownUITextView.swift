@@ -41,6 +41,10 @@ public final class MarkdownUITextView: UITextView {
     /// Called whenever the formatting active at the selection may have changed (caret move
     /// or edit), so a host toolbar can reflect it. Wired by `MarkdownEditorController`.
     var onSelectionStateChange: ((MarkdownSelectionState) -> Void)?
+    /// Called when an image is pasted, with the image's PNG bytes. The host persists it
+    /// however it likes and returns a path/URL to reference (or nil to decline and fall
+    /// back to the default paste); the editor then inserts `![](returnedPath)`.
+    public var onPasteImage: ((Data) -> String?)?
     private var wikiLinkMetadata: [WikiLinkService.RangeKey: WikiLinkService.LinkMetadata] = [:]
 
     // Retained TextKit-2 stack pieces (the container/layout-manager back-refs are weak).
@@ -410,7 +414,17 @@ public final class MarkdownUITextView: UITextView {
     /// continuation lines with that line's `>` markers, so the whole paste stays in
     /// the quote (parity with the macOS editor). Plain pastes fall through to the system.
     public override func paste(_ sender: Any?) {
-        guard isEditable, let pasted = UIPasteboard.general.string, pasted.contains("\n") else {
+        guard isEditable else { super.paste(sender); return }
+        // Image paste: hand the bytes to the host (which persists them) and insert the
+        // returned reference as `![](path)`. Falls through to the default paste if there's
+        // no image, no handler, or the host declines (returns nil).
+        if onPasteImage != nil, UIPasteboard.general.hasImages,
+           let data = UIPasteboard.general.image?.pngData(),
+           insertPastedImage(data) {
+            return
+        }
+        // Multi-line text paste inside a blockquote → keep the quote markers.
+        guard let pasted = UIPasteboard.general.string, pasted.contains("\n") else {
             super.paste(sender)
             return
         }
@@ -424,6 +438,23 @@ public final class MarkdownUITextView: UITextView {
             replacing: selectedRange, with: transformed,
             finalSelection: NSRange(location: insertLocation + (transformed as NSString).length, length: 0)
         )
+    }
+
+    /// Hand `imageData` to the host's `onPasteImage`; if it returns a reference, insert
+    /// `![](reference)` at the selection through the undoable edit path. Returns whether an
+    /// image was inserted. Internal so tests can exercise it without the pasteboard.
+    @discardableResult
+    func insertPastedImage(_ imageData: Data) -> Bool {
+        guard let onPasteImage, let reference = onPasteImage(imageData), !reference.isEmpty else {
+            return false
+        }
+        let markdown = "![](\(reference))"
+        let insertLocation = selectedRange.location
+        applyUndoableEdit(
+            replacing: selectedRange, with: markdown,
+            finalSelection: NSRange(location: insertLocation + (markdown as NSString).length, length: 0)
+        )
+        return true
     }
 
     // MARK: - Formatting commands

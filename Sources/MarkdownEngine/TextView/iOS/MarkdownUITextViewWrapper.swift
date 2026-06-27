@@ -21,6 +21,9 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
     public var onTextChange: ((String) -> Void)?
     /// Called when the user taps a link (markdown link / auto-detected URL / wiki-link).
     public var onLinkTap: ((URL) -> Void)?
+    /// Called when an image is pasted, with the PNG bytes. Persist it and return a path/URL
+    /// to reference (or nil to decline); the editor inserts `![](returnedPath)`.
+    public var onPasteImage: ((Data) -> String?)?
 
     /// Optional controller for selection-state observation + formatting commands, bound via
     /// the `.controller(_:)` modifier (see `MarkdownEditorController`).
@@ -30,18 +33,21 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         text: String,
         configuration: MarkdownEditorConfiguration = .default,
         onTextChange: ((String) -> Void)? = nil,
-        onLinkTap: ((URL) -> Void)? = nil
+        onLinkTap: ((URL) -> Void)? = nil,
+        onPasteImage: ((Data) -> String?)? = nil
     ) {
         self.text = text
         self.configuration = configuration
         self.onTextChange = onTextChange
         self.onLinkTap = onLinkTap
+        self.onPasteImage = onPasteImage
     }
 
     public func makeUIView(context: Context) -> MarkdownUITextView {
         let view = MarkdownUITextView(configuration: configuration)
         view.onTextChange = onTextChange
         view.onLinkTap = onLinkTap
+        view.onPasteImage = onPasteImage
         view.render(markdown: text)
         boundController?.attach(view)
         return view
@@ -51,6 +57,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         view.configuration = configuration
         view.onTextChange = onTextChange   // capture the latest closure each SwiftUI pass
         view.onLinkTap = onLinkTap
+        view.onPasteImage = onPasteImage
         boundController?.attach(view)
         if view.lastRenderedSource != text {
             // Source changed from outside → full reload.
