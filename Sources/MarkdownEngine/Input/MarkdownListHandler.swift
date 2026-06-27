@@ -31,7 +31,10 @@ enum ListInsertionDecision: Equatable {
 
 struct MarkdownLists {
     #if os(macOS)
-    static func performEdit(_ textView: NSTextView, replace range: NSRange, with string: String) {
+    /// Returns whether the edit was actually applied (a vetoed `shouldChangeText`
+    /// leaves the document untouched, so callers must not move the caret).
+    @discardableResult
+    static func performEdit(_ textView: NSTextView, replace range: NSRange, with string: String) -> Bool {
         let ns = textView.string as NSString
         let loc = min(range.location, ns.length)
         let maxLen = ns.length - loc
@@ -43,9 +46,10 @@ struct MarkdownLists {
             if let coord = textView.delegate as? NativeTextViewWrapper.Coordinator { coord.isProgrammaticEdit = false }
         }
 
-        guard textView.shouldChangeText(in: safeRange, replacementString: string) else { return }
+        guard textView.shouldChangeText(in: safeRange, replacementString: string) else { return false }
         textView.textStorage?.replaceCharacters(in: safeRange, with: string)
         textView.didChangeText()
+        return true
     }
     #endif
 
@@ -338,8 +342,11 @@ struct MarkdownLists {
         case .block:
             return false
         case .replace(let range, let text, let caret):
-            performEdit(textView, replace: range, with: text)
-            textView.setSelectedRange(NSRange(location: caret, length: 0))
+            // Only move the caret if the edit actually applied — a vetoed
+            // shouldChangeText leaves the document and selection untouched.
+            if performEdit(textView, replace: range, with: text) {
+                textView.setSelectedRange(NSRange(location: caret, length: 0))
+            }
             return false
         }
     }
