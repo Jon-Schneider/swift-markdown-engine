@@ -64,7 +64,8 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
     public func render(
         latex: String,
         fontSize: CGFloat,
-        theme: MarkdownEditorTheme
+        theme: MarkdownEditorTheme,
+        colorScheme: MarkdownColorScheme
     ) -> LatexRenderResult? {
         let normalizedLatex = latex.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedLatex.isEmpty else { return nil }

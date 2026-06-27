@@ -129,11 +129,13 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
         return .monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
-    public func backgroundColor() -> NSColor {
+    public func backgroundColor(for colorScheme: MarkdownColorScheme) -> NSColor {
+        // macOS keeps its richer NSApp/window-appearance source (the engine's
+        // colorScheme is derived from the same effectiveAppearance, so this matches).
         isDarkAppearance() ? darkBackground : lightBackground
     }
 
-    public func highlight(code: String, language: String?) -> NSAttributedString? {
+    public func highlight(code: String, language: String?, colorScheme: MarkdownColorScheme) -> NSAttributedString? {
         applyAppearanceTheme()
         guard let highlighter else { return nil }
 

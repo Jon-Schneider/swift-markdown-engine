@@ -68,7 +68,7 @@ enum MarkdownStyler {
             layoutBridge?.defaultLineHeight(for: baseFont)
             ?? (baseFont.ascender - baseFont.descender + baseFont.leading)
         )
-        let codeBackgroundColor = configuration.services.syntaxHighlighter.backgroundColor()
+        let codeBackgroundColor = configuration.services.syntaxHighlighter.backgroundColor(for: colorScheme)
         let hiddenMarkerSize = configuration.markers.hiddenMarkerFontSize
         let ctx = StylingContext(
             nsText: nsText,
@@ -90,7 +90,7 @@ enum MarkdownStyler {
         result += MarkdownASTStyler.styleAttributes(
             text: text, fontName: fontName, fontSize: fontSize,
             caretLocation: caretLocation, wikiLinkIDProvider: wikiLinkIDProvider,
-            scopedRanges: scopedRanges, configuration: configuration
+            scopedRanges: scopedRanges, configuration: configuration, colorScheme: colorScheme
         )
         // NSImage rendering reuses the existing, proven machinery.
         result += styleBlockLatex(ctx)

@@ -114,15 +114,19 @@ public protocol SyntaxHighlighter: Sendable {
     /// Monospace font used for fenced code blocks at the requested size.
     func codeFont(size: CGFloat) -> PlatformFont
 
-    /// Background color used to fill code-block paragraphs. The engine
-    /// also uses this color to detect which fragments are code blocks
-    /// when drawing custom backgrounds.
-    func backgroundColor() -> PlatformColor
+    /// Background color used to fill code-block paragraphs, resolved for the
+    /// given light/dark `colorScheme`. The engine also uses this color to detect
+    /// which fragments are code blocks when drawing custom backgrounds.
+    ///
+    /// The scheme is passed explicitly (rather than read from the environment) so
+    /// the highlighter is platform-independent — on iOS there is no `NSApp` to
+    /// probe. The engine derives it from the editing view's appearance.
+    func backgroundColor(for colorScheme: MarkdownColorScheme) -> PlatformColor
 
-    /// Highlight `code` written in `language`. Return an attributed string
-    /// whose attributes carry per-token foreground colors. Return `nil` if
-    /// no highlighting is available for this language.
-    func highlight(code: String, language: String?) -> NSAttributedString?
+    /// Highlight `code` written in `language`, tinted for the given light/dark
+    /// `colorScheme`. Return an attributed string whose attributes carry per-token
+    /// foreground colors, or `nil` if no highlighting is available for this language.
+    func highlight(code: String, language: String?, colorScheme: MarkdownColorScheme) -> NSAttributedString?
 
     /// Notification name posted when the highlighter's appearance source
     /// changes (light/dark mode flip, theme switch). The engine subscribes
@@ -140,7 +144,7 @@ public struct PlainTextSyntaxHighlighter: SyntaxHighlighter {
         PlatformFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
-    public func backgroundColor() -> PlatformColor {
+    public func backgroundColor(for colorScheme: MarkdownColorScheme) -> PlatformColor {
         // A fully-transparent default background. AppKit and UIKit spell the
         // base text background differently; alpha 0 makes either one invisible.
         #if canImport(UIKit)
@@ -150,7 +154,7 @@ public struct PlainTextSyntaxHighlighter: SyntaxHighlighter {
         #endif
     }
 
-    public func highlight(code: String, language: String?) -> NSAttributedString? {
+    public func highlight(code: String, language: String?, colorScheme: MarkdownColorScheme) -> NSAttributedString? {
         nil
     }
 
@@ -161,10 +165,11 @@ public struct PlainTextSyntaxHighlighter: SyntaxHighlighter {
 
 /// Renders LaTeX formulas to images for inline display.
 public protocol LatexRenderer: Sendable {
-    /// Render `latex` at the requested font size, optionally tinted by `theme`.
+    /// Render `latex` at the requested font size, tinted by `theme` for the given
+    /// light/dark `colorScheme`.
     /// - Returns: A rendered result, or `nil` if the renderer cannot produce
     ///   an image (unsupported syntax, missing dependency, …).
-    func render(latex: String, fontSize: CGFloat, theme: MarkdownEditorTheme) -> LatexRenderResult?
+    func render(latex: String, fontSize: CGFloat, theme: MarkdownEditorTheme, colorScheme: MarkdownColorScheme) -> LatexRenderResult?
 }
 
 /// Output of a LaTeX render call.
@@ -186,7 +191,7 @@ public struct LatexRenderResult: Sendable {
 /// rendering the source text when this is in use.
 public struct NoOpLatexRenderer: LatexRenderer {
     public init() {}
-    public func render(latex: String, fontSize: CGFloat, theme: MarkdownEditorTheme) -> LatexRenderResult? { nil }
+    public func render(latex: String, fontSize: CGFloat, theme: MarkdownEditorTheme, colorScheme: MarkdownColorScheme) -> LatexRenderResult? { nil }
 }
 
 // MARK: - Event Bus

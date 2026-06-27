@@ -333,5 +333,9 @@ extension MarkdownUITextView: MarkdownFragmentContext {
         let scale = traitCollection.displayScale
         return scale > 0 ? scale : UIScreen.main.scale
     }
+
+    public var colorScheme: MarkdownColorScheme {
+        MarkdownColorScheme.resolved(from: traitCollection)
+    }
 }
 #endif

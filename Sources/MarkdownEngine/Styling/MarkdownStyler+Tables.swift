@@ -238,7 +238,10 @@ extension MarkdownStyler {
                     .font: codeFont, .backgroundColor: codeBackgroundColor, .foregroundColor: theme.bodyText
                 ]))
             case .inlineLatex(let range, let content, _):
-                if let entry = latex.render(latex: ns.substring(with: content), fontSize: pointSize, theme: theme) {
+                // macOS-only path: the macOS LaTeX bridge ignores `colorScheme` (it
+                // reads the window appearance), so `.light` here is an inert placeholder.
+                // When `+Tables` is ported to iOS, thread the real scheme through.
+                if let entry = latex.render(latex: ns.substring(with: content), fontSize: pointSize, theme: theme, colorScheme: .light) {
                     let attachment = NSTextAttachment()
                     attachment.image = entry.image
                     attachment.bounds = CGRect(x: 0, y: entry.baselineOffset,

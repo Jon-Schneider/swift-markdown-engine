@@ -33,7 +33,8 @@ enum MarkdownASTStyler {
         caretLocation: Int = -1,
         wikiLinkIDProvider: @escaping (NSRange) -> String? = { _ in nil },
         scopedRanges: [NSRange]? = nil,
-        configuration: MarkdownEditorConfiguration = .default
+        configuration: MarkdownEditorConfiguration = .default,
+        colorScheme: MarkdownColorScheme = .light
     ) -> [StyledRange] {
         let baseFont = PlatformFont(name: fontName, size: fontSize) ?? .systemFont(ofSize: fontSize)
         let baseLineHeight = ceil(baseFont.ascender - baseFont.descender + baseFont.leading)
@@ -60,11 +61,12 @@ enum MarkdownASTStyler {
             baseLineHeight: baseLineHeight,
             baseParagraphSpacing: baseParagraphSpacing,
             codeFont: codeFont,
-            codeBackground: configuration.services.syntaxHighlighter.backgroundColor(),
+            codeBackground: configuration.services.syntaxHighlighter.backgroundColor(for: colorScheme),
             codeParagraphStyle: codePara,
             inlineMarkerFont: PlatformFont(name: fontName, size: hiddenSize) ?? .systemFont(ofSize: hiddenSize),
             caret: caretLocation,
             config: configuration,
+            colorScheme: colorScheme,
             wikiLinkID: wikiLinkIDProvider,
             scopedRanges: scopedRanges
         )
@@ -244,6 +246,7 @@ enum MarkdownASTStyler {
         let inlineMarkerFont: PlatformFont
         let caret: Int
         let config: MarkdownEditorConfiguration
+        let colorScheme: MarkdownColorScheme
         let wikiLinkID: (NSRange) -> String?
         let scopedRanges: [NSRange]?
 
@@ -376,7 +379,7 @@ enum MarkdownASTStyler {
         attrs.append((parts.codeRange, [.spellingState: 0]))
         let codeContent = ctx.ns.substring(with: parts.content)
         if !codeContent.isEmpty,
-           let highlighted = ctx.config.services.syntaxHighlighter.highlight(code: codeContent, language: parts.language) {
+           let highlighted = ctx.config.services.syntaxHighlighter.highlight(code: codeContent, language: parts.language, colorScheme: ctx.colorScheme) {
             highlighted.enumerateAttributes(in: NSRange(location: 0, length: highlighted.length)) { a, r, _ in
                 guard let fg = a[.foregroundColor] else { return }
                 attrs.append((NSRange(location: parts.content.location + r.location, length: r.length), [.foregroundColor: fg]))

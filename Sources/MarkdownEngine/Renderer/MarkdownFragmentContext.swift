@@ -31,6 +31,9 @@ protocol MarkdownFragmentContext: AnyObject {
     var selectedDocumentRanges: [NSRange] { get }
     /// Backing/display scale used to pixel-snap fills and checkbox boxes.
     var displayScale: CGFloat { get }
+    /// Light/dark scheme used to resolve the code-block background the fragment
+    /// compares against (kept in sync with the scheme the styler rendered under).
+    var colorScheme: MarkdownColorScheme { get }
 }
 
 #if os(macOS)
@@ -45,6 +48,10 @@ extension NativeTextView: MarkdownFragmentContext {
     /// Matches the historical `window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0`.
     var displayScale: CGFloat {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+    }
+
+    var colorScheme: MarkdownColorScheme {
+        MarkdownColorScheme.resolved(from: effectiveAppearance)
     }
 }
 #endif

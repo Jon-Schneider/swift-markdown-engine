@@ -290,7 +290,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     private func isCodeBlockBackgroundColor(_ color: PlatformColor) -> Bool {
         let highlighter = renderingContext?.configuration.services.syntaxHighlighter
             ?? PlainTextSyntaxHighlighter()
-        let currentBg = highlighter.backgroundColor()
+        let currentBg = highlighter.backgroundColor(for: renderingContext?.colorScheme ?? .light)
         guard let colorRGB = color.rgbComponents,
               let currentBgRGB = currentBg.rgbComponents else { return false }
         let tolerance: CGFloat = 0.03
