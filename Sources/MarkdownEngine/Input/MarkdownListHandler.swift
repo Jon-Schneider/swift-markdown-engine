@@ -8,14 +8,26 @@
 // Makes list editing feel natural by continuing items, handling indentation,
 // and applying spacing/alignment that keeps lists easy to read.
 //
-// `MarkdownLists` is split by platform: the pure parsing helpers (regexes,
-// `indentLevel`, `blockquoteContinuedPaste`) are cross-platform and used by the
-// shared styler; the `NSTextView`-driven edit methods are macOS-only (gated).
+// `MarkdownLists` is split by platform: the pure parsing/decision helpers
+// (regexes, `indentLevel`, `blockquoteContinuedPaste`, `computeListInsertion`)
+// are cross-platform and used by the shared styler and the iOS input path; the
+// `NSTextView`-driven apply methods are macOS-only (gated).
 #if canImport(UIKit)
 import UIKit
 #else
 import AppKit
 #endif
+
+/// Decision returned by `MarkdownLists.computeListInsertion` — what should happen
+/// to a pending text insertion. Platform adapters apply it to their text view.
+enum ListInsertionDecision: Equatable {
+    /// Let the system insert the replacement string normally.
+    case allowDefault
+    /// Swallow the input; perform no edit (e.g. Tab at max nesting depth).
+    case block
+    /// Replace `range` with `text` and place the caret at `caret`.
+    case replace(range: NSRange, text: String, caret: Int)
+}
 
 struct MarkdownLists {
     #if os(macOS)
@@ -57,25 +69,22 @@ struct MarkdownLists {
         return tabCount + (spaceCount / 2)
     }
 
-    #if os(macOS)
-    /// Remove the current line's leading marker and put the caret at line start (exit empty block on Enter).
-    private static func removeLinePrefixAndExit(
-        textView: NSTextView,
+    /// Decision that removes the current line's leading marker and parks the caret at
+    /// line start (exit an empty list/quote item on Enter). Pure — cross-platform.
+    private static func removeLinePrefixDecision(
+        currentText: String,
         currentLineRange: NSRange,
         prefixLength: Int
-    ) -> Bool {
+    ) -> ListInsertionDecision {
         let lineEnd = currentLineRange.location + currentLineRange.length
         let hasNewline = currentLineRange.length > 0
-            && (textView.string as NSString)
+            && (currentText as NSString)
                 .substring(with: NSRange(location: lineEnd - 1, length: 1)) == "\n"
         let maxBodyLen = hasNewline ? currentLineRange.length - 1 : currentLineRange.length
         let removalLength = min(prefixLength, maxBodyLen)
         let removalRange = NSRange(location: currentLineRange.location, length: removalLength)
-        performEdit(textView, replace: removalRange, with: "")
-        textView.setSelectedRange(NSRange(location: currentLineRange.location, length: 0))
-        return false
+        return .replace(range: removalRange, text: "", caret: currentLineRange.location)
     }
-    #endif
 
     /// Mirror Enter-key quote continuation for multi-line pastes: when `location`
     /// sits on a blockquote line, prefix every line after the first with that
@@ -99,49 +108,57 @@ struct MarkdownLists {
 
     // MARK: - Input Handling
 
-    #if os(macOS)
-    static func handleInsertion(textView: NSTextView, affectedCharRange: NSRange, replacementString: String?) -> Bool {
-        guard let replacementString = replacementString else { return true }
+    /// Pure, cross-platform list/blockquote/indent/auto-pair input logic. Given the
+    /// current document text and the pending edit, decides whether the system should
+    /// insert normally (`.allowDefault`), the input should be swallowed (`.block`),
+    /// or a specific replacement should be performed (`.replace`). Both the macOS
+    /// `handleInsertion` adapter and the iOS `UITextViewDelegate` drive this — the
+    /// caret in each `.replace` is explicit so both platforms land identically
+    /// (including the continuation cases, where macOS previously relied on the
+    /// natural post-replace caret = range start + inserted length).
+    static func computeListInsertion(
+        currentText: String,
+        affectedCharRange: NSRange,
+        replacementString: String?,
+        configuration: MarkdownEditorConfiguration
+    ) -> ListInsertionDecision {
+        guard let replacementString = replacementString else { return .allowDefault }
 
         // Fast path: skip the expensive isInsideCodeBlock scan for ordinary typing.
         if replacementString.count == 1,
            let ch = replacementString.first,
            ch != ">" && ch != "[" && ch != "(" && ch != "{" &&
            ch != "\t" && ch != " " && ch != "\n" {
-            return true
+            return .allowDefault
         }
 
-        let activeConfig = (textView as? NativeTextView)?.configuration ?? .default
-        let listsEnabled = activeConfig.lists.helpersEnabled
-        let autoClosePairsEnabled = activeConfig.lists.autoClosePairsEnabled
+        let listsEnabled = configuration.lists.helpersEnabled
+        let autoClosePairsEnabled = configuration.lists.autoClosePairsEnabled
 
-        func insertAutoPair(open openChar: String, close closeChar: String) -> Bool {
-            let insertionLocation = affectedCharRange.location
-            MarkdownLists.performEdit(textView, replace: affectedCharRange, with: "\(openChar)\(closeChar)")
-            textView.setSelectedRange(NSRange(location: insertionLocation + openChar.count, length: 0))
-            return false
+        func autoPair(open openChar: String, close closeChar: String) -> ListInsertionDecision {
+            .replace(range: affectedCharRange,
+                     text: "\(openChar)\(closeChar)",
+                     caret: affectedCharRange.location + openChar.count)
         }
 
-        let isInCodeBlock = textView.string.contains("`")
-            ? MarkdownDetection.isInsideCodeBlock(location: affectedCharRange.location, in: textView.string)
+        let isInCodeBlock = currentText.contains("`")
+            ? MarkdownDetection.isInsideCodeBlock(location: affectedCharRange.location, in: currentText)
             : false
 
         if replacementString == ">" && affectedCharRange.length == 0 && !isInCodeBlock {
             let insertionLocation = affectedCharRange.location
-            guard insertionLocation > 0 else { return true }
-            let nsText = textView.string as NSString
+            guard insertionLocation > 0 else { return .allowDefault }
+            let nsText = currentText as NSString
             let previousCharRange = NSRange(location: insertionLocation - 1, length: 1)
             let previousChar = nsText.substring(with: previousCharRange)
             if previousChar == "-" {
-                MarkdownLists.performEdit(textView, replace: previousCharRange, with: "→")
-                textView.setSelectedRange(NSRange(location: insertionLocation, length: 0))
-                return false
+                return .replace(range: previousCharRange, text: "→", caret: insertionLocation)
             }
         }
 
         // Autocomplete Obsidian-style node brackets and single square brackets
         if replacementString == "[" {
-            let nsText = textView.string as NSString
+            let nsText = currentText as NSString
             let insertionLocation = affectedCharRange.location
             if insertionLocation > 0 {
                 let prevChar = nsText.substring(with: NSRange(location: insertionLocation - 1, length: 1))
@@ -150,34 +167,29 @@ struct MarkdownLists {
                         && nsText.substring(with: NSRange(location: insertionLocation, length: 1)) == "]"
                     if hasAutoCloseBracket {
                         // Collapse auto-paired "[]" into "[[]]" without changing surrounding text.
-                        MarkdownLists.performEdit(
-                            textView,
-                            replace: NSRange(location: insertionLocation - 1, length: 2),
-                            with: "[[]]"
-                        )
+                        return .replace(range: NSRange(location: insertionLocation - 1, length: 2),
+                                        text: "[[]]", caret: insertionLocation + 1)
                     } else {
                         // If the char to the right is not "]" (e.g. newline), do not delete it.
-                        MarkdownLists.performEdit(textView, replace: affectedCharRange, with: "[]]")
+                        return .replace(range: affectedCharRange, text: "[]]", caret: insertionLocation + 1)
                     }
-                    textView.setSelectedRange(NSRange(location: insertionLocation + 1, length: 0))
-                    return false
                 }
             }
-            guard autoClosePairsEnabled else { return true }
-            return insertAutoPair(open: "[", close: "]")
+            guard autoClosePairsEnabled else { return .allowDefault }
+            return autoPair(open: "[", close: "]")
         }
 
         // Autocomplete parentheses / braces
         if replacementString == "(" || replacementString == "{" {
-            guard autoClosePairsEnabled else { return true }
+            guard autoClosePairsEnabled else { return .allowDefault }
             let closeChar = (replacementString == "(") ? ")" : "}"
-            return insertAutoPair(open: replacementString, close: closeChar)
+            return autoPair(open: replacementString, close: closeChar)
         }
 
         // TAB: indent list items (skip in code blocks)
         if replacementString == "\t" && !isInCodeBlock {
-            guard listsEnabled else { return true }
-            let nsText = textView.string as NSString
+            guard listsEnabled else { return .allowDefault }
+            let nsText = currentText as NSString
             let insertionLocation = affectedCharRange.location
             let safeLocTAB = min(affectedCharRange.location, nsText.length)
             let currentLineRange = nsText.lineRange(for: NSRange(location: safeLocTAB, length: 0))
@@ -187,29 +199,27 @@ struct MarkdownLists {
                     let ws = (currentLine as NSString).substring(with: wsMatch.range)
                     let level = MarkdownLists.indentLevel(from: ws)
                     if level >= MarkdownEditorConfiguration.default.lists.maximumNestingLevel {
-                        return false
+                        return .block
                     }
                 }
-                MarkdownLists.performEdit(textView, replace: NSRange(location: currentLineRange.location, length: 0), with: "\t")
-                textView.setSelectedRange(NSRange(location: insertionLocation + 1, length: 0))
-                return false
+                return .replace(range: NSRange(location: currentLineRange.location, length: 0),
+                                text: "\t", caret: insertionLocation + 1)
             }
             if MarkdownLists.dashNoSpaceRegex.firstMatch(in: currentLine, range: NSRange(location: 0, length: currentLine.utf16.count)) != nil {
                 if let wsMatch = MarkdownLists.leadingWhitespaceRegex.firstMatch(in: currentLine, range: NSRange(location: 0, length: currentLine.utf16.count)) {
                     let ws = (currentLine as NSString).substring(with: wsMatch.range)
                     let level = MarkdownLists.indentLevel(from: ws)
-                    if level >= MarkdownEditorConfiguration.default.lists.maximumNestingLevel { return false }
+                    if level >= MarkdownEditorConfiguration.default.lists.maximumNestingLevel { return .block }
                 }
-                MarkdownLists.performEdit(textView, replace: NSRange(location: currentLineRange.location, length: 0), with: "\t")
-                textView.setSelectedRange(NSRange(location: insertionLocation + 1, length: 0))
-                return false
+                return .replace(range: NSRange(location: currentLineRange.location, length: 0),
+                                text: "\t", caret: insertionLocation + 1)
             }
-            return true
+            return .allowDefault
         }
 
         // ENTER: list continuation/outdent
         if replacementString == "\n" {
-            let nsText = textView.string as NSString
+            let nsText = currentText as NSString
             let safeLocENTER = min(affectedCharRange.location, nsText.length)
             let currentLineRange = nsText.lineRange(for: NSRange(location: safeLocENTER, length: 0))
             let currentLine = nsText.substring(with: currentLineRange).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -229,15 +239,12 @@ struct MarkdownLists {
 
                 if openingCount.isMultiple(of: 2) && cursorAtLineEnd && !hasClosingAfter {
                     let insertionLocation = affectedCharRange.location
-                    let completion = "\n\n```"
-                    MarkdownLists.performEdit(textView, replace: affectedCharRange, with: completion)
-                    textView.setSelectedRange(NSRange(location: insertionLocation + 1, length: 0))
-                    return false
+                    return .replace(range: affectedCharRange, text: "\n\n```", caret: insertionLocation + 1)
                 }
             }
 
             // Skip list / blockquote continuation in code blocks.
-            guard listsEnabled && !isInCodeBlock else { return true }
+            guard listsEnabled && !isInCodeBlock else { return .allowDefault }
 
             // Blockquote continuation: `> foo` → `\n> `, `>>>` stays `>>>`, empty marker → exit.
             let quoteLine = nsText.substring(with: currentLineRange)
@@ -255,14 +262,15 @@ struct MarkdownLists {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
                 if contentText.isEmpty {
-                    return removeLinePrefixAndExit(
-                        textView: textView,
+                    return removeLinePrefixDecision(
+                        currentText: currentText,
                         currentLineRange: currentLineRange,
                         prefixLength: prefixLength
                     )
                 }
-                MarkdownLists.performEdit(textView, replace: affectedCharRange, with: "\n" + ws + markers + " ")
-                return false
+                let insertText = "\n" + ws + markers + " "
+                return .replace(range: affectedCharRange, text: insertText,
+                                caret: affectedCharRange.location + (insertText as NSString).length)
             }
 
             let listLine = nsText.substring(with: currentLineRange)
@@ -272,8 +280,8 @@ struct MarkdownLists {
                 let contentRangeLocal = NSRange(location: contentStart, length: contentLength)
                 let contentText = (listLine as NSString).substring(with: contentRangeLocal).trimmingCharacters(in: .whitespacesAndNewlines)
                 if contentText.isEmpty {
-                    return removeLinePrefixAndExit(
-                        textView: textView,
+                    return removeLinePrefixDecision(
+                        currentText: currentText,
                         currentLineRange: currentLineRange,
                         prefixLength: match.range.location + match.range.length
                     )
@@ -304,12 +312,36 @@ struct MarkdownLists {
                         newListItem = "\n" + leadingWhitespace + bulletChar + " "
                     }
                 }
-                MarkdownLists.performEdit(textView, replace: affectedCharRange, with: newListItem)
-                return false
+                return .replace(range: affectedCharRange, text: newListItem,
+                                caret: affectedCharRange.location + (newListItem as NSString).length)
             }
         }
 
-        return true
+        return .allowDefault
+    }
+
+    #if os(macOS)
+    /// macOS adapter: resolve the cross-platform decision and apply it to an
+    /// `NSTextView`. Behavior-identical to the pre-extraction inline logic — the
+    /// `.replace` caret matches what `performEdit`'s `replaceCharacters` produced
+    /// (and the auto-pair / collapse cases keep their explicit caret).
+    static func handleInsertion(textView: NSTextView, affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        let config = (textView as? NativeTextView)?.configuration ?? .default
+        switch computeListInsertion(
+            currentText: textView.string,
+            affectedCharRange: affectedCharRange,
+            replacementString: replacementString,
+            configuration: config
+        ) {
+        case .allowDefault:
+            return true
+        case .block:
+            return false
+        case .replace(let range, let text, let caret):
+            performEdit(textView, replace: range, with: text)
+            textView.setSelectedRange(NSRange(location: caret, length: 0))
+            return false
+        }
     }
     #endif
 }
