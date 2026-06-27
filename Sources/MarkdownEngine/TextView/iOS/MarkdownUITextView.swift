@@ -36,6 +36,7 @@ public final class MarkdownUITextView: UITextView {
     private var markdownLayoutDelegate: MarkdownLayoutManagerDelegate?
 
     private var lastInterfaceStyle: UIUserInterfaceStyle = .unspecified
+    private var lastContentSizeCategory: UIContentSizeCategory = .unspecified
     /// Suppresses delegate re-entrancy while we mutate storage / set text ourselves.
     private var isApplyingProgrammaticEdit = false
     /// Active token set from the last restyle — selection changes only restyle when it shifts.
@@ -68,7 +69,10 @@ public final class MarkdownUITextView: UITextView {
         isSelectable = true
         backgroundColor = .clear
         textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        adjustsFontForContentSizeCategory = true
+        // Dynamic Type is applied manually by scaling the base size via UIFontMetrics
+        // in `restyleInPlace` (our fonts aren't metrics-tracking), so the system's own
+        // auto-adjust would double-count — leave it off.
+        adjustsFontForContentSizeCategory = false
         autocorrectionType = .no            // marked-text/autocorrect lifecycle is a later pass
         smartDashesType = .no
         smartQuotesType = .no
@@ -103,6 +107,13 @@ public final class MarkdownUITextView: UITextView {
 
     // MARK: - Styling
 
+    /// Base body size scaled for the current Dynamic Type setting. All derived sizes
+    /// (headings, code, checkbox metrics) are computed relative to it by the styler,
+    /// so scaling the base propagates everywhere.
+    private func scaledFontSize() -> CGFloat {
+        UIFontMetrics(forTextStyle: .body).scaledValue(for: fontSize, compatibleWith: traitCollection)
+    }
+
     private func tokens(for display: String) -> [MarkdownToken] {
         if let cache = tokenCache, cache.text == display { return cache.tokens }
         let parsed = MarkdownTokenizer.parseTokensViaAST(in: display)
@@ -117,9 +128,11 @@ public final class MarkdownUITextView: UITextView {
         let display = textStorage.string
         let ns = display as NSString
         let fullRange = NSRange(location: 0, length: ns.length)
+        let effectiveFontSize = scaledFontSize()
+        lastContentSizeCategory = traitCollection.preferredContentSizeCategory
 
         let (resolvedBaseFont, paragraph) = TextStylingService.makeBaseFontAndStyle(
-            fontName: fontName, fontSize: fontSize, layoutBridge: layoutBridge, configuration: configuration
+            fontName: fontName, fontSize: effectiveFontSize, layoutBridge: layoutBridge, configuration: configuration
         )
         baseFont = resolvedBaseFont
         let baseAttributes = TextStylingService.makeBaseTypingAttributes(
@@ -134,7 +147,7 @@ public final class MarkdownUITextView: UITextView {
         lastActiveTokens = active
 
         let styled = MarkdownStyler.styleAttributes(
-            text: display, fontName: fontName, fontSize: fontSize, layoutBridge: layoutBridge,
+            text: display, fontName: fontName, fontSize: effectiveFontSize, layoutBridge: layoutBridge,
             caretLocation: selectedRange.location, activeTokenIndices: active,
             precomputedTokens: parsed,
             colorScheme: MarkdownColorScheme.resolved(from: traitCollection),
@@ -153,7 +166,12 @@ public final class MarkdownUITextView: UITextView {
 
     public override func traitCollectionDidChange(_ previous: UITraitCollection?) {
         super.traitCollectionDidChange(previous)
-        if traitCollection.userInterfaceStyle != lastInterfaceStyle, lastRenderedSource != nil {
+        guard lastRenderedSource != nil else { return }
+        // Re-style on a light/dark flip (themed colors) or a Dynamic Type change
+        // (rescaled fonts). restyleInPlace re-reads both from the trait collection.
+        let styleChanged = traitCollection.userInterfaceStyle != lastInterfaceStyle
+        let sizeChanged = traitCollection.preferredContentSizeCategory != lastContentSizeCategory
+        if styleChanged || sizeChanged {
             lastInterfaceStyle = traitCollection.userInterfaceStyle
             restyleInPlace()
         }
