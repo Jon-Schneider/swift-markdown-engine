@@ -62,9 +62,18 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
     // MARK: - FB15131180
 
+    #if os(macOS)
     /// Maps to TextKit-2's private `extraLineFragmentAttributes` selector so we can pin the trailing extra-line metrics to body font; otherwise a trailing heading paragraph inflates `usageBoundsForTextContainer` by ~30pt when the caret enters it. Pattern from STTextView.
+    ///
+    /// **macOS-only by design.** This overrides a PRIVATE Apple selector. Shipping it
+    /// in an embeddable iOS *library* risks an App Store private-API rejection
+    /// (ITMS-90338-class static-analysis flag). The trailing heading-metrics inflation
+    /// it fixes is a macOS-observed symptom; on iOS we accept the minor
+    /// trailing-line-spacing degradation at document end rather than ship a private
+    /// selector. (Tracked: revisit with a public-API trailing-metrics fix if needed.)
     @objc(extraLineFragmentAttributes)
     dynamic var stExtraLineFragmentAttributes: NSDictionary?
+    #endif
 
     // MARK: - Rendering surface
 
@@ -584,7 +593,9 @@ final class MarkdownLayoutManagerDelegate: NSObject, NSTextLayoutManagerDelegate
     ) -> NSTextLayoutFragment {
         let fragment = MarkdownTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
         fragment.renderingContext = context
+        #if os(macOS)
         // Seed body font + paragraphStyle so the trailing fragment doesn't inherit heading metrics (FB15131180).
+        // macOS-only: the backing `extraLineFragmentAttributes` override is a private selector (see above).
         if let context {
             let baseFont = context.baseFont
             let para = NSMutableParagraphStyle()
@@ -598,6 +609,7 @@ final class MarkdownLayoutManagerDelegate: NSObject, NSTextLayoutManagerDelegate
                 NSAttributedString.Key.paragraphStyle: para
             ])
         }
+        #endif
         return fragment
     }
 }
