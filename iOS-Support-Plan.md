@@ -176,6 +176,20 @@ The single scariest unknown, isolated so it fails fast on day one rather than in
 >
 > **Verifiability caveat:** the spike lives in `Spike/` and is **gitignored by design** (throwaway), so this result is not reproducible from the committed tree and no PNG/CI log is checked in. The ✅ rests on the recorded run above, not a committed artifact. The durable CI gate is the **iOS test scheme** in Phase 2's verification — that, not the spike, is what keeps the port honest over time.
 
+> **ADDENDUM — real `UITextView(usingTextLayoutManager:)` spike (the off-screen gap, now closed for the clipping question):**
+> The Phase 0.5 result above used a *bare* `NSTextLayoutManager` + manual `draw(at:in:)`, so it was — as the plan flagged — structurally unable to test `renderingSurfaceBounds` clipping. A follow-up spike (`Spike/FlipSpike/Sources/FlipSpike/UITextViewSpike.swift` + `Tests/.../UITextViewSpikeTests.swift`, run via `xcodebuild test -scheme FlipSpike -destination 'platform=iOS Simulator,…'`) closes that gap by hosting a custom `NSTextLayoutFragment` inside a **real `UITextView(usingTextLayoutManager: true)`** (installed through `textView.textLayoutManager?.delegate`) and rendering the **view's own draw path**.
+>
+> **What it PROVED (PNG-verified, iPhone 17 Pro / iOS 26.5):**
+> - The custom fragment installs into a real `UITextView` via the layout-manager delegate, and the **view's draw cycle invokes the fragment's `draw(at:in:)`** — no manual enumerate loop.
+> - **`renderingSurfaceBounds` clipping is real on iOS.** Control pass (returning `super.renderingSurfaceBounds`): a full-container-width code background is **clipped to the text's used width**, and a left-gutter blockquote bar **disappears entirely**.
+> - **Production's expansion defeats the clip.** With the surface expanded the way `MarkdownTextLayoutFragment.renderingSurfaceBounds` does (reach `-layoutFragmentFrame.origin.x`, span full container width), both the full-width background **and** the gutter bar render correctly. So the production override is *load-bearing on iOS*, and it works.
+> - The y-down/`UIGraphicsPushContext` convention from Phase 0.5 also holds inside the real view (full-width fill and gutter bar land upright in their own line bands).
+>
+> **What it did NOT prove (still open):**
+> - **Headless render path, not on-screen present.** A hostless `xctest` has no render server, so `drawHierarchy(afterScreenUpdates:)` returns blank; the spike captures via `CALayer.render(in:)`, which drives the view's `drawRect`/fragment draws synchronously (so it *does* exercise the view's clipping — the point) but is not a present-to-screen + `simctl`/MCP screenshot. A true on-screen capture is still a Phase 2 nicety.
+> - **iOS 26.5 only** — same floor caveat as Phase 0.5; the separate iOS-16 re-run item still stands.
+> - **Still a self-contained probe fragment**, not the production helpers — `selectedTextRange`/injected-config/`UIScreen.scale`/UIColor-color-space remain Phase 1.
+
 ### Phase 1 — iOS renderer adaptation (medium risk)
 
 - **`Renderer/MarkdownTextLayoutFragment.swift`**: wrap each helper's draw body in the cross-platform context helper (`UIGraphicsPushContext` on iOS, the existing flipped `NSGraphicsContext` on macOS) and swap `NSBezierPath` → `PlatformBezierPath`. **The spike proved only that the coordinate convention survives** — the helpers themselves still need real per-platform work before they compile or behave on iOS:
@@ -249,7 +263,7 @@ Anything still gated after MVP must appear in this table — a gate with no back
 - [ ] `Package.swift` floor set to `.iOS(.v16)`.
 - [x] **Phase 0.5 spike: Path A (coordinate/flip) passed** — off-screen render on iPhone 17 Pro / iOS 26.5; `UIGraphicsPushContext` + unchanged macOS math renders upright, no flip transform. *(verified 2026-06-26 — scope-limited; see the gaps below)*
 - [ ] **Re-run the spike on an iOS 16 simulator** (the floor; 26.5 ≠ 16) before treating the coordinate thesis as proven for the minimum target.
-- [ ] **Spike the real `UITextView(usingTextLayoutManager:)` path** — the current spike is off-screen and never exercised `renderingSurfaceBounds` clipping.
+- [x] **Spike the real `UITextView(usingTextLayoutManager:)` path** — done. A custom `NSTextLayoutFragment` installed via `UITextView.textLayoutManager?.delegate`, rendered through the *view's own* draw path, **PNG-verified** on iPhone 17 Pro / iOS 26.5: `renderingSurfaceBounds` clipping is **real** (control pass clips both a full-width background and a left-gutter bar), and production's surface expansion defeats it exactly as intended. *(verified 2026-06-26 — iOS 26.5 only; see Phase 0.5 addendum for scope/caveats)*
 - [ ] Helper-level port done: `selectedRanges`→`selectedTextRange`, injected config/theme (no `NativeTextView` cast), `UIScreen.scale` pixel-snap, UIColor color-space — in bullet/checkbox/code-bg helpers.
 - [ ] Real **SwiftMath→`UIImage`** LaTeX round-trip renders upright on iOS (the spike used a hand-built oracle, not SwiftMath).
 - [ ] **App Store private-API assessment** for `extraLineFragmentAttributes` complete; fallback path decided.
