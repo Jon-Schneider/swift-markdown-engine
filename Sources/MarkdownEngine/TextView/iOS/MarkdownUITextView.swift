@@ -152,6 +152,33 @@ public final class MarkdownUITextView: UITextView {
         )
     }
 
+    // MARK: - Undoable edits
+
+    private func uiTextRange(for nsRange: NSRange) -> UITextRange? {
+        guard let start = position(from: beginningOfDocument, offset: nsRange.location),
+              let end = position(from: start, offset: nsRange.length) else { return nil }
+        return textRange(from: start, to: end)
+    }
+
+    /// Apply a programmatic replacement through `UITextInput` so the system's undo
+    /// manager records it. Direct `textStorage` mutation would leave the undo stack's
+    /// recorded ranges pointing at stale offsets — a later undo can then replay against
+    /// a shifted document and raise `NSRangeException`. Restyles once afterward.
+    private func applyUndoableEdit(replacing nsRange: NSRange, with string: String, finalSelection: NSRange?) {
+        guard let range = uiTextRange(for: nsRange) else { return }
+        isApplyingProgrammaticEdit = true
+        replace(range, withText: string)
+        // `replace` parks the caret at the end of the inserted text; restore the
+        // intended selection BEFORE restyling so the styler resolves marker
+        // reveal/hide against the right caret (e.g. a checkbox toggle must not leave
+        // the caret inside the box, which would suppress the rendered glyph).
+        if let finalSelection, let selRange = uiTextRange(for: finalSelection) {
+            selectedTextRange = selRange
+        }
+        isApplyingProgrammaticEdit = false
+        restyleInPlace()
+    }
+
     // MARK: - Styling
 
     /// Base body size scaled for the current Dynamic Type setting. All derived sizes
@@ -238,6 +265,9 @@ public final class MarkdownUITextView: UITextView {
     @discardableResult
     func toggleCheckbox(at point: CGPoint) -> Bool {
         guard let layoutBridge else { return false }
+        // The boundingRect hit-test needs current layout (a prior edit may have left
+        // it dirty), otherwise the checkbox's rect comes back empty and we miss it.
+        if let tlm = textLayoutManager { tlm.ensureLayout(for: tlm.documentRange) }
         let containerPoint = CGPoint(x: point.x - textContainerInset.left,
                                      y: point.y - textContainerInset.top)
 
@@ -257,12 +287,9 @@ public final class MarkdownUITextView: UITextView {
         guard nsText.substring(with: effectiveRange).range(of: #"\[[ xX]\]"#, options: .regularExpression) != nil else { return false }
 
         let replacement = hitIsChecked ? "[ ]" : "[x]"
-        isApplyingProgrammaticEdit = true
-        textStorage.beginEditing()
-        textStorage.replaceCharacters(in: effectiveRange, with: replacement)
-        textStorage.endEditing()
-        isApplyingProgrammaticEdit = false
-        restyleInPlace()   // re-parses the flipped source and re-applies .taskCheckbox
+        // Length-preserving ([ ]<->[x]) → the existing selection offsets stay valid.
+        // Keep the caret where it was so the toggled box keeps rendering as a glyph.
+        applyUndoableEdit(replacing: effectiveRange, with: replacement, finalSelection: selectedRange)
         return true
     }
 
@@ -302,13 +329,8 @@ extension MarkdownUITextView: UITextViewDelegate {
         case .block:
             return false
         case .replace(let replaceRange, let replaceText, let caret):
-            isApplyingProgrammaticEdit = true
-            textStorage.beginEditing()
-            textStorage.replaceCharacters(in: replaceRange, with: replaceText)
-            textStorage.endEditing()
-            selectedRange = NSRange(location: caret, length: 0)
-            isApplyingProgrammaticEdit = false
-            restyleInPlace()
+            applyUndoableEdit(replacing: replaceRange, with: replaceText,
+                              finalSelection: NSRange(location: caret, length: 0))
             return false
         }
     }
