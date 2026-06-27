@@ -31,6 +31,12 @@ public final class MarkdownUITextView: UITextView {
     /// re-renders only on a genuine external change, never wiping in-place edits).
     public private(set) var lastRenderedSource: String?
 
+    /// Called when the user's edits change the document, with the text in STORAGE
+    /// form (wiki-links re-encoded to `[[Name|id]]`). Lets the SwiftUI host persist
+    /// edits — without it, edits would live only inside the view and be lost.
+    public var onTextChange: ((String) -> Void)?
+    private var wikiLinkMetadata: [WikiLinkService.RangeKey: WikiLinkService.LinkMetadata] = [:]
+
     // Retained TextKit-2 stack pieces (the container/layout-manager back-refs are weak).
     private let contentStorage: NSTextContentStorage
     private var markdownLayoutDelegate: MarkdownLayoutManagerDelegate?
@@ -129,11 +135,26 @@ public final class MarkdownUITextView: UITextView {
     public func render(markdown storageText: String) {
         lastRenderedSource = storageText
         applyTextContainerInset()            // configuration may have changed with the text
-        let display = WikiLinkService.makeDisplayState(from: storageText).display
+        let displayState = WikiLinkService.makeDisplayState(from: storageText)
+        wikiLinkMetadata = displayState.metadata
         isApplyingProgrammaticEdit = true
-        text = display                       // plain text; restyleInPlace adds the styling
+        text = displayState.display          // plain text; restyleInPlace adds the styling
         isApplyingProgrammaticEdit = false
         restyleInPlace()
+    }
+
+    /// Convert the current (display-form) text back to storage form and notify the
+    /// host via `onTextChange` if it changed. `makeStorageState` is a pass-through
+    /// when the document has no wiki-links. Updates `lastRenderedSource` so the
+    /// wrapper's `updateUIView` doesn't re-render (and reset the caret) on the echo.
+    private func emitStorageTextIfChanged() {
+        let storageState = WikiLinkService.makeStorageState(
+            from: textStorage.string, existingMetadata: wikiLinkMetadata, textStorage: textStorage
+        )
+        wikiLinkMetadata = storageState.metadata
+        guard storageState.storage != lastRenderedSource else { return }
+        lastRenderedSource = storageState.storage
+        onTextChange?(storageState.storage)
     }
 
     /// Re-apply configuration-derived state (insets + styling) without changing the
@@ -177,6 +198,7 @@ public final class MarkdownUITextView: UITextView {
         }
         isApplyingProgrammaticEdit = false
         restyleInPlace()
+        emitStorageTextIfChanged()
     }
 
     // MARK: - Styling
@@ -338,6 +360,7 @@ extension MarkdownUITextView: UITextViewDelegate {
     public func textViewDidChange(_ textView: UITextView) {
         if isApplyingProgrammaticEdit { return }
         restyleInPlace()
+        emitStorageTextIfChanged()
     }
 
     public func textViewDidChangeSelection(_ textView: UITextView) {

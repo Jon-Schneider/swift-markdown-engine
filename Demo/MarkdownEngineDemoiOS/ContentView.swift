@@ -17,6 +17,8 @@ import MarkdownEngineLatex
 #endif
 
 struct ContentView: View {
+    @State private var text = sampleMarkdown
+
     private var configuration: MarkdownEditorConfiguration {
         var config = MarkdownEditorConfiguration.default
         config.textInsets = TextInsets(horizontal: 16, vertical: 12)
@@ -30,15 +32,17 @@ struct ContentView: View {
     }
 
     var body: some View {
-        MarkdownUITextViewWrapper(text: sampleMarkdown, configuration: configuration)
-            .ignoresSafeArea(edges: .bottom)
+        MarkdownUITextViewWrapper(text: text, configuration: configuration) { edited in
+            text = edited   // write-back: edits round-trip into the model
+        }
+        .ignoresSafeArea(edges: .bottom)
     }
 }
 
 private let sampleMarkdown = """
 # MarkdownEngine on iOS
 
-A **read-only** render through the cross-platform TextKit-2 fragment ported in Phase 1.
+An **editable** Markdown view on the cross-platform TextKit-2 fragment. Tap to type — lists continue, checkboxes toggle, and edits write back to the model.
 
 ## Lists & checkboxes
 - First bullet
