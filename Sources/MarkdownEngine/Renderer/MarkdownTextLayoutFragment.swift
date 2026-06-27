@@ -345,7 +345,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                 return
             }
             let boundsVal = ts.attribute(.latexBounds, at: attrRange.location, effectiveRange: nil) as? NSValue
-            let imageBounds = boundsVal?.rectValue ?? .zero
+            let imageBounds = boundsVal?.cgRectValue ?? .zero
             let blockOffsetY = ts.attribute(.latexBlockOffsetY, at: attrRange.location, effectiveRange: nil) as? CGFloat
             if let rect = blockImageDrawRect(attrRange: attrRange, imageBounds: imageBounds, blockOffsetY: blockOffsetY, point: point) {
                 rects.append(rect)
@@ -369,7 +369,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                 }
 
                 let boundsVal = ts.attribute(.latexBounds, at: attrRange.location, effectiveRange: nil) as? NSValue
-                let imageBounds = boundsVal?.rectValue ?? CGRect(origin: .zero, size: image.size)
+                let imageBounds = boundsVal?.cgRectValue ?? CGRect(origin: .zero, size: image.size)
                 let isBlock = ts.attribute(.latexIsBlock, at: attrRange.location, effectiveRange: nil) as? Bool ?? false
                 let blockOffsetY = ts.attribute(.latexBlockOffsetY, at: attrRange.location, effectiveRange: nil) as? CGFloat
 

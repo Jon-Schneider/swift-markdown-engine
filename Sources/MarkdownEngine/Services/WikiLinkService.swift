@@ -200,7 +200,9 @@ public enum WikiLinkService {
         return result
     }
 
+    #if os(macOS)
     /// Resolve a clicked link's id from the caret's `.wikiLinkID` attribute, else its display string.
+    /// macOS-only: takes an `NSTextView` and is driven from the (gated) AppKit click path.
     public static func resolveIdentifier(link: Any, textView: NSTextView, at charIndex: Int) -> String? {
         if let idAttr = textView.textStorage?.attribute(.wikiLinkID, at: charIndex, effectiveRange: nil) as? String {
             return idAttr
@@ -210,6 +212,7 @@ public enum WikiLinkService {
         }
         return nil
     }
+    #endif
 
     /// Split a storage fragment `[[Name|<id>]]` into its display form and the opaque id.
     public static func displayFragmentAndID(from storageFragment: String) -> (display: String, id: String?) {

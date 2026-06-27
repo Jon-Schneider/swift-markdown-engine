@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextViewCoordinator+Notifications.swift
 //  MarkdownEngine
@@ -38,3 +39,5 @@ extension NativeTextViewCoordinator {
         restyleTextView(tv, paragraphCandidates: [fullRange])
     }
 }
+
+#endif

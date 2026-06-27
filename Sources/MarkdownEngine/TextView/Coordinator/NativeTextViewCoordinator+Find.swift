@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextViewCoordinator+Find.swift
 //  MarkdownEngine
@@ -155,3 +156,5 @@ extension NativeTextViewCoordinator {
         }
     }
 }
+
+#endif

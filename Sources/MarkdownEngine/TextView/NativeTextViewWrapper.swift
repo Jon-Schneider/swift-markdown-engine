@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextViewWrapper.swift
 //  MarkdownEngine
@@ -612,3 +613,5 @@ private extension NativeTextViewWrapper {
         )
     }
 }
+
+#endif

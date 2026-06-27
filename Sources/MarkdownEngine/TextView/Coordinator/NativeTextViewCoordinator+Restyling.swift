@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextViewCoordinator+Restyling.swift
 //  MarkdownEngine
@@ -300,3 +301,5 @@ extension NativeTextViewCoordinator {
         textView.setSelectedRange(clampedCaret)
     }
 }
+
+#endif

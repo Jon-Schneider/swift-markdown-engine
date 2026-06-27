@@ -7,7 +7,11 @@
 
 // Applies base text styling and refreshes only changed sections so editing
 // stays smooth while Markdown formatting updates.
+#if canImport(UIKit)
+import UIKit
+#else
 import AppKit
+#endif
 import Foundation
 
 struct TextStylingService {
@@ -45,6 +49,9 @@ struct TextStylingService {
         return (baseFont, paragraph)
     }
 
+    #if os(macOS)
+    /// Incremental restyle of an `NSTextView`'s storage (macOS edit path). The iOS
+    /// read-only view styles via `MarkdownStyler.styleAttributes` directly instead.
     static func restyle(
         textView: NSTextView,
         layoutBridge: LayoutBridge?,
@@ -117,6 +124,7 @@ struct TextStylingService {
         textView.setNeedsDisplay(textView.visibleRect)
         (textView as? NativeTextView)?.ensureVisibleLayout()
     }
+    #endif
 
     private static func normalize(_ candidates: [NSRange]) -> [NSRange] {
         var result: [NSRange] = []

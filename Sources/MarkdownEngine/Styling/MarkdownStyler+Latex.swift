@@ -103,7 +103,7 @@ extension MarkdownStyler {
                         let firstChar = ctx.nsText.substring(with: firstCharRange)
                         attrs.append((firstCharRange, [
                             .latexImage: entry.image,
-                            .latexBounds: NSValue(rect: imageBounds),
+                            .latexBounds: NSValue(cgRect: imageBounds),
                             .foregroundColor: PlatformColor.clear,
                             .font: ctx.latexMarkerFont,
                             .kern: entry.size.width - HeadingHelpers.textWidth(firstChar, font: ctx.latexMarkerFont)

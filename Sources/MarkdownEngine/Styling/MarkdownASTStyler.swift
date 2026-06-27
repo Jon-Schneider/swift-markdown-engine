@@ -277,7 +277,7 @@ enum MarkdownASTStyler {
             let multiplier = ctx.config.headings.fontMultiplier(for: level)
             let headingBase = PlatformFont(name: ctx.fontName, size: ctx.baseFont.pointSize * multiplier)
                 ?? .systemFont(ofSize: ctx.baseFont.pointSize * multiplier)
-            let headingFont = adding(.bold, to: headingBase)
+            let headingFont = adding(.boldTrait, to: headingBase)
             let lineHeight = ceil(headingFont.ascender - headingFont.descender + headingFont.leading) + 1
             let headingPara = NSMutableParagraphStyle()
             headingPara.minimumLineHeight = lineHeight
@@ -569,15 +569,15 @@ enum MarkdownASTStyler {
 
     private static func traits(for kind: EmphasisKind) -> PlatformFontDescriptor.SymbolicTraits {
         switch kind {
-        case .italic: return .italic
-        case .bold: return .bold
-        case .boldItalic: return [.bold, .italic]
+        case .italic: return .italicTrait
+        case .bold: return .boldTrait
+        case .boldItalic: return [.boldTrait, .italicTrait]
         }
     }
 
     private static func adding(_ extra: PlatformFontDescriptor.SymbolicTraits, to font: PlatformFont) -> PlatformFont {
         let merged = font.fontDescriptor.symbolicTraits.union(extra)
-        return PlatformFont(descriptor: font.fontDescriptor.withSymbolicTraits(merged), size: font.pointSize) ?? font
+        return PlatformFont(descriptor: font.fontDescriptor.withSymbolicTraitsCompat(merged), size: font.pointSize) ?? font
     }
 
     private static func content(of markers: [NSRange]) -> NSRange {

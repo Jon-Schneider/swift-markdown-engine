@@ -97,7 +97,11 @@ enum MarkdownStyler {
         result += styleInlineLatex(ctx)
         result += styleImageEmbeds(ctx)
         result += styleImageLinks(ctx)
+        #if os(macOS)
+        // Table rendering composites to NSImage (MarkdownStyler+Tables, macOS-only).
+        // iOS renders tables in a later Phase 2 pass.
         result += styleTables(ctx)
+        #endif
         return result
     }
 }
@@ -196,7 +200,7 @@ extension MarkdownStyler {
             attrs.append((paraRange, [.paragraphStyle: para]))
             attrs.append((token.range, [
                 .latexImage: image,
-                .latexBounds: NSValue(rect: imageBounds),
+                .latexBounds: NSValue(cgRect: imageBounds),
                 .latexIsBlock: true,
                 .latexBlockOffsetY: baseLineHeight + imageGap
             ]))
@@ -265,7 +269,7 @@ extension MarkdownStyler {
         let anchorChar = ctx.nsText.substring(with: anchorRange)
         var anchorAttrs: [NSAttributedString.Key: Any] = [
             .latexImage: image,
-            .latexBounds: NSValue(rect: imageBounds),
+            .latexBounds: NSValue(cgRect: imageBounds),
             .latexIsBlock: true,
             .foregroundColor: PlatformColor.clear,
             .font: ctx.latexMarkerFont,

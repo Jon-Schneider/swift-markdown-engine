@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextView+DragSelectBoost.swift
 //  MarkdownEngine
@@ -57,3 +58,5 @@ extension NativeTextView {
         (scrollView as? ClampedScrollView)?.clampToInsets()
     }
 }
+
+#endif

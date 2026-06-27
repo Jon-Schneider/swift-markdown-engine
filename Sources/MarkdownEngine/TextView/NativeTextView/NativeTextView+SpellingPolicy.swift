@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextView+SpellingPolicy.swift
 //  MarkdownEngine
@@ -37,3 +38,5 @@ extension NativeTextView {
         super.setSpellingState(value, range: charRange)
     }
 }
+
+#endif

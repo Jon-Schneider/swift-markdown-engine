@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextViewCoordinator.swift
 //  MarkdownEngine
@@ -309,3 +310,5 @@ extension NSTextView {
     }
 }
 
+
+#endif

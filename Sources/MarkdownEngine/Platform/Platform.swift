@@ -109,3 +109,67 @@ extension MarkdownColorScheme {
     }
 }
 #endif
+
+#if canImport(UIKit)
+extension MarkdownColorScheme {
+    /// Resolve the scheme from a UIKit trait collection (mirror of the macOS
+    /// `NSAppearance` resolver). The view-adapter boundary supplies this on iOS.
+    static func resolved(from traits: UITraitCollection) -> MarkdownColorScheme {
+        traits.userInterfaceStyle == .dark ? .dark : .light
+    }
+}
+
+extension NSAttributedString.Key {
+    /// AppKit defines `.spellingState` (NSSpellChecker); UIKit does not. The shared
+    /// styler marks spelling-disabled ranges with it. Provide an inert iOS twin (same
+    /// raw value) so that code compiles cross-platform; the read-only iOS view does no
+    /// spell checking, so the attribute is simply unused there.
+    static let spellingState = NSAttributedString.Key("NSSpellingState")
+}
+#endif
+
+// MARK: - Cross-platform font descriptor traits
+//
+// AppKit spells the bold/italic symbolic traits `.bold`/`.italic`; UIKit spells
+// them `.traitBold`/`.traitItalic`, and `withSymbolicTraits(_:)` returns an
+// optional on UIKit but not on AppKit. These twins let shared styling code name
+// one symbol.
+extension PlatformFontDescriptor.SymbolicTraits {
+    static var boldTrait: PlatformFontDescriptor.SymbolicTraits {
+        #if canImport(UIKit)
+        return .traitBold
+        #else
+        return .bold
+        #endif
+    }
+    static var italicTrait: PlatformFontDescriptor.SymbolicTraits {
+        #if canImport(UIKit)
+        return .traitItalic
+        #else
+        return .italic
+        #endif
+    }
+}
+
+extension PlatformFontDescriptor {
+    /// Non-optional across platforms (UIKit's `withSymbolicTraits` is optional —
+    /// fall back to `self` when the trait combination can't be represented).
+    func withSymbolicTraitsCompat(_ traits: PlatformFontDescriptor.SymbolicTraits) -> PlatformFontDescriptor {
+        #if canImport(UIKit)
+        return withSymbolicTraits(traits) ?? self
+        #else
+        return withSymbolicTraits(traits)
+        #endif
+    }
+}
+
+#if os(macOS)
+extension NSValue {
+    /// UIKit names the rect-valued `NSValue` APIs `init(cgRect:)` / `cgRectValue`;
+    /// AppKit names them `init(rect:)` / `rectValue` (`NSRect == CGRect`). Provide
+    /// the UIKit-spelled twins on macOS so shared code (styler + layout fragment)
+    /// can box/read rects with one spelling on both platforms.
+    convenience init(cgRect: CGRect) { self.init(rect: cgRect) }
+    var cgRectValue: CGRect { rectValue }
+}
+#endif

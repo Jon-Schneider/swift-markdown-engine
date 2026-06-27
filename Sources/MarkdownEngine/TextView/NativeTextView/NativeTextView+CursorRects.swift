@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextView+CursorRects.swift
 //  MarkdownEngine
@@ -59,3 +60,5 @@ extension NativeTextView {
         return lineString.attribute(.link, at: idx, effectiveRange: nil) != nil
     }
 }
+
+#endif

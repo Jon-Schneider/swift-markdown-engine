@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextViewCoordinator+InlineSelection.swift
 //  MarkdownEngine
@@ -115,3 +116,5 @@ extension NativeTextViewCoordinator {
         isImageEmbedActive = false
     }
 }
+
+#endif

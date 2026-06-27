@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  MarkdownInputHandler.swift
 //  MarkdownEngine
@@ -111,3 +112,5 @@ enum MarkdownInputHandler {
         return false
     }
 }
+
+#endif

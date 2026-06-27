@@ -7,9 +7,18 @@
 
 // Makes list editing feel natural by continuing items, handling indentation,
 // and applying spacing/alignment that keeps lists easy to read.
+//
+// `MarkdownLists` is split by platform: the pure parsing helpers (regexes,
+// `indentLevel`, `blockquoteContinuedPaste`) are cross-platform and used by the
+// shared styler; the `NSTextView`-driven edit methods are macOS-only (gated).
+#if canImport(UIKit)
+import UIKit
+#else
 import AppKit
+#endif
 
 struct MarkdownLists {
+    #if os(macOS)
     static func performEdit(_ textView: NSTextView, replace range: NSRange, with string: String) {
         let ns = textView.string as NSString
         let loc = min(range.location, ns.length)
@@ -26,6 +35,7 @@ struct MarkdownLists {
         textView.textStorage?.replaceCharacters(in: safeRange, with: string)
         textView.didChangeText()
     }
+    #endif
 
     // Markers: `-`/`*`/`+` (raw Markdown) + legacy `•` (rendered, never typed).
     static let listRegex = try! NSRegularExpression(
@@ -47,6 +57,7 @@ struct MarkdownLists {
         return tabCount + (spaceCount / 2)
     }
 
+    #if os(macOS)
     /// Remove the current line's leading marker and put the caret at line start (exit empty block on Enter).
     private static func removeLinePrefixAndExit(
         textView: NSTextView,
@@ -64,6 +75,7 @@ struct MarkdownLists {
         textView.setSelectedRange(NSRange(location: currentLineRange.location, length: 0))
         return false
     }
+    #endif
 
     /// Mirror Enter-key quote continuation for multi-line pastes: when `location`
     /// sits on a blockquote line, prefix every line after the first with that
@@ -87,6 +99,7 @@ struct MarkdownLists {
 
     // MARK: - Input Handling
 
+    #if os(macOS)
     static func handleInsertion(textView: NSTextView, affectedCharRange: NSRange, replacementString: String?) -> Bool {
         guard let replacementString = replacementString else { return true }
 
@@ -298,4 +311,5 @@ struct MarkdownLists {
 
         return true
     }
+    #endif
 }

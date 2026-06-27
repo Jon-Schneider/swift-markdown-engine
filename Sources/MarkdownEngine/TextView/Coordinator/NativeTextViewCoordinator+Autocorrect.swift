@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextViewCoordinator+Autocorrect.swift
 //  MarkdownEngine
@@ -99,3 +100,5 @@ extension NativeTextViewCoordinator {
         }
     }
 }
+
+#endif

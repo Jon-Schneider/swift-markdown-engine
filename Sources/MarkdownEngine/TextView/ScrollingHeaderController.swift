@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  ScrollingHeaderController.swift
 //  MarkdownEngine
@@ -269,3 +270,5 @@ final class ScrollingHeaderController {
         if instant { container.layoutSubtreeIfNeeded() }
     }
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextViewCoordinator+CodeBlocks.swift
 //  MarkdownEngine
@@ -55,3 +56,5 @@ extension NativeTextViewCoordinator {
         onCodeBlockSelectionChange?(selections)
     }
 }
+
+#endif

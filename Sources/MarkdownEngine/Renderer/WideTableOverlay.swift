@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  WideTableOverlay.swift
 //  MarkdownEngine
@@ -308,3 +309,5 @@ extension NativeTextView {
         wideTableOverlays.removeAll()
     }
 }
+
+#endif

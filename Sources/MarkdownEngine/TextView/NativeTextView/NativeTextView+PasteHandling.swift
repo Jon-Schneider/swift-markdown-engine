@@ -1,3 +1,4 @@
+#if os(macOS)
 //
 //  NativeTextView+PasteHandling.swift
 //  MarkdownEngine
@@ -185,3 +186,5 @@ extension NativeTextView {
             .replacingOccurrences(of: "&nbsp;", with: " ")
     }
 }
+
+#endif

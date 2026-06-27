@@ -8,7 +8,8 @@
 //  hugs the bottom edge of the visible viewport while typing.
 //
 
-import AppKit
+// Pure CGFloat geometry — cross-platform (no AppKit/UIKit symbols), so it stays
+// available on iOS for its consumer's overscroll math and its own tests.
 import Foundation
 
 struct BottomOverscrollPolicy {
