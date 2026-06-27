@@ -53,6 +53,20 @@ public final class MarkdownUITextView: UITextView {
     /// Token cache keyed by exact text, so caret moves don't re-parse an unchanged document.
     private var tokenCache: (text: String, tokens: [MarkdownToken])?
 
+    // MARK: Incremental (paragraph-scoped) restyle state
+    /// Post-edit range of the change captured in `shouldChangeTextIn`, consumed by
+    /// `textViewDidChange` to scope the restyle to the edited paragraph(s).
+    private var pendingEditedRange: NSRange?
+    /// Active-token set *before* the pending edit — so a token whose active state flips
+    /// across the edit (e.g. the caret leaving a `**bold**` span) restyles both states.
+    private var pendingPreEditActiveTokens: Set<Int>?
+    /// Caret location at the last restyle; the paragraph the caret *left* needs restyling
+    /// too (to re-hide markers it had revealed).
+    private var previousCaretLocation: Int?
+    /// ``` fence count at the last restyle. A change means a code block opened/closed,
+    /// which can re-tokenize large regions, so the edit path falls back to a full restyle.
+    private var previousBacktickCount = 0
+
     // MARK: Wide-table horizontal-scroll overlays (see MarkdownTableScrollView.swift)
     /// Live overlay scroll views, keyed by the table's content `sourceID`.
     var tableScrollOverlays: [Int: MarkdownTableScrollView] = [:]
@@ -279,8 +293,70 @@ public final class MarkdownUITextView: UITextView {
         }
         textStorage.endEditing()
 
+        // Resync the incremental-restyle bookkeeping so the next scoped pass measures
+        // against this fully-styled state.
+        previousBacktickCount = ParagraphRestyleScoping.backtickFenceCount(in: display)
+        previousCaretLocation = selectedRange.location
+
         // Reconcile the wide-table scroll overlays against the freshly-styled storage
         // (creates / repositions / removes them to match the `.scrollableBlock*` attrs).
+        updateTableScrollOverlays()
+    }
+
+    /// Incremental restyle: re-style only `paragraphCandidates` (and their styled spans),
+    /// leaving the rest of the document's attributes untouched. This is the per-keystroke
+    /// path — full-document `restyleInPlace()` stays the fallback for loads / config /
+    /// trait / width changes. Mirrors the macOS `TextStylingService.restyle` apply loop.
+    private func restyleScoped(paragraphCandidates: [NSRange]) {
+        let display = textStorage.string
+        let ns = display as NSString
+        let paragraphs = ParagraphRestyleScoping.normalize(paragraphCandidates, documentLength: ns.length)
+        // No usable scope (e.g. empty document) → fall back to a full restyle.
+        guard !paragraphs.isEmpty else { restyleInPlace(); return }
+
+        let effectiveFontSize = scaledFontSize()
+        lastContentSizeCategory = traitCollection.preferredContentSizeCategory
+
+        let (resolvedBaseFont, paragraphStyle) = TextStylingService.makeBaseFontAndStyle(
+            fontName: fontName, fontSize: effectiveFontSize, layoutBridge: layoutBridge, configuration: configuration
+        )
+        baseFont = resolvedBaseFont
+        let baseAttributes = TextStylingService.makeBaseTypingAttributes(
+            font: resolvedBaseFont, paragraphStyle: paragraphStyle, theme: configuration.theme
+        )
+        typingAttributes = baseAttributes
+
+        let parsed = tokens(for: display)
+        let active = MarkdownDetection.computeActiveTokenIndices(
+            selectionRange: selectedRange, tokens: parsed, in: ns
+        )
+        lastActiveTokens = active
+
+        // `scopedRanges` lets the AST styler skip out-of-scope work; the image/table passes
+        // still run over all tokens but only get *applied* where they intersect a candidate.
+        let styled = MarkdownStyler.styleAttributes(
+            text: display, fontName: fontName, fontSize: effectiveFontSize, layoutBridge: layoutBridge,
+            caretLocation: selectedRange.location, activeTokenIndices: active,
+            precomputedTokens: parsed,
+            scopedRanges: paragraphs,
+            colorScheme: MarkdownColorScheme.resolved(from: traitCollection),
+            configuration: configuration
+        )
+
+        textStorage.beginEditing()
+        for paragraph in paragraphs {
+            // Reset the paragraph to base, then re-apply the styled spans clipped to it.
+            textStorage.setAttributes(baseAttributes, range: paragraph)
+            textStorage.removeAttribute(.link, range: paragraph)
+            for (range, attrs) in styled {
+                let clipped = NSIntersectionRange(range, paragraph)
+                guard clipped.length > 0 else { continue }
+                for (key, value) in attrs { textStorage.addAttribute(key, value: value, range: clipped) }
+            }
+        }
+        textStorage.endEditing()
+
+        previousBacktickCount = ParagraphRestyleScoping.backtickFenceCount(in: display)
         updateTableScrollOverlays()
     }
 
@@ -425,6 +501,17 @@ public final class MarkdownUITextView: UITextView {
         restyleInPlace()
     }
 
+    /// Force a paragraph-scoped restyle of the caret's paragraph (the realistic
+    /// per-keystroke cost for an edit that doesn't cross a block boundary). Internal for
+    /// iOS-simulator perf measurement against `restyleNowForTesting` (full document).
+    func restyleScopedNowForTesting(invalidatingCache: Bool = true) {
+        if invalidatingCache { tokenCache = nil }
+        let ns = textStorage.string as NSString
+        let caretLoc = min(selectedRange.location, ns.length)
+        let caretParagraph = ns.paragraphRange(for: NSRange(location: caretLoc, length: 0))
+        restyleScoped(paragraphCandidates: [caretParagraph])
+    }
+
     /// View-coordinate rect of the first task-checkbox glyph, if any. Internal for testing.
     func firstCheckboxBoundingRect() -> CGRect? {
         guard let layoutBridge else { return nil }
@@ -453,10 +540,19 @@ extension MarkdownUITextView: UITextViewDelegate {
             replacementString: text, configuration: configuration
         ) {
         case .allowDefault:
+            // The system will insert; record what changed so textViewDidChange can scope
+            // its restyle to the edited paragraph(s) instead of re-styling the whole doc.
+            pendingEditedRange = NSRange(location: range.location, length: (text as NSString).length)
+            pendingPreEditActiveTokens = lastActiveTokens
             return true
         case .block:
+            pendingEditedRange = nil
+            pendingPreEditActiveTokens = nil
             return false
         case .replace(let replaceRange, let replaceText, let caret):
+            // Programmatic edits restyle themselves (full) via applyUndoableEdit; no pending.
+            pendingEditedRange = nil
+            pendingPreEditActiveTokens = nil
             applyUndoableEdit(replacing: replaceRange, with: replaceText,
                               finalSelection: NSRange(location: caret, length: 0))
             return false
@@ -468,8 +564,44 @@ extension MarkdownUITextView: UITextViewDelegate {
         // Don't restyle/emit mid-composition — mutating attributes on the marked
         // range fights the IME. textViewDidChange fires again when it commits.
         if markedTextRange != nil { return }
-        restyleInPlace()
+        restyleForEdit()
         emitStorageTextIfChanged()
+    }
+
+    /// Restyle after an ordinary edit, scoped to the affected paragraphs. Falls back to a
+    /// full restyle when a ``` fence opened/closed (which can re-tokenize regions below).
+    private func restyleForEdit() {
+        let display = textStorage.string
+        let ns = display as NSString
+
+        // No captured edit range (IME commit, dictation — they bypass shouldChangeTextIn),
+        // or a ``` fence boundary changed (re-tokenizes large regions): the change's extent
+        // is unknown/large, so fall back to a full restyle rather than under-scope it.
+        let fenceChanged = ParagraphRestyleScoping.backtickFenceCount(in: display) != previousBacktickCount
+        guard let editedRange = pendingEditedRange, !fenceChanged else {
+            pendingEditedRange = nil
+            pendingPreEditActiveTokens = nil
+            restyleInPlace()
+            return
+        }
+        pendingEditedRange = nil
+
+        let caretLoc = min(selectedRange.location, ns.length)
+        let caretParagraph = ns.paragraphRange(for: NSRange(location: caretLoc, length: 0))
+        var candidates = ParagraphRestyleScoping.caretNeighborhood(in: ns, caretParagraph: caretParagraph)
+        candidates += ParagraphRestyleScoping.paragraphs(in: ns, intersecting: editedRange)
+
+        let parsed = tokens(for: display)
+        let current = MarkdownDetection.computeActiveTokenIndices(selectionRange: selectedRange, tokens: parsed, in: ns)
+        let preEdit = pendingPreEditActiveTokens ?? lastActiveTokens
+        pendingPreEditActiveTokens = nil
+        candidates += ParagraphRestyleScoping.renderedBlockParagraphs(in: ns, tokens: parsed)
+        candidates += ParagraphRestyleScoping.tokenRestyleParagraphs(
+            in: ns, tokens: parsed, currentActive: current, previousActive: preEdit
+        )
+
+        restyleScoped(paragraphCandidates: candidates)
+        previousCaretLocation = selectedRange.location
     }
 
     /// Append a "Format" submenu (Bold / Italic / Heading / Lists) to the edit menu.
@@ -490,12 +622,33 @@ extension MarkdownUITextView: UITextViewDelegate {
     public func textViewDidChangeSelection(_ textView: UITextView) {
         if isApplyingProgrammaticEdit { return }
         if markedTextRange != nil { return }   // selection churns during composition
-        // Reveal/hide the caret token's raw markers — restyle only when the active set shifts.
         let display = textStorage.string
-        let active = MarkdownDetection.computeActiveTokenIndices(
-            selectionRange: selectedRange, tokens: tokens(for: display), in: display as NSString
+        let ns = display as NSString
+        let parsed = tokens(for: display)
+        let current = MarkdownDetection.computeActiveTokenIndices(
+            selectionRange: selectedRange, tokens: parsed, in: ns
         )
-        if active != lastActiveTokens { restyleInPlace() }
+        let previous = lastActiveTokens
+        defer { previousCaretLocation = selectedRange.location }
+        // Reveal/hide the caret token's raw markers — restyle only when the active set shifts.
+        guard current != previous else { return }
+
+        // Scope to the paragraph the caret entered + the one it left + the tokens whose
+        // active state changed (so their markers reveal/hide), not the whole document.
+        let caretLoc = min(selectedRange.location, ns.length)
+        let caretParagraph = ns.paragraphRange(for: NSRange(location: caretLoc, length: 0))
+        var candidates: [NSRange] = [caretParagraph]
+        if caretParagraph.length == 0 && caretLoc > 0 {
+            candidates.append(ns.paragraphRange(for: NSRange(location: max(0, caretLoc - 1), length: 0)))
+        }
+        if let previousLoc = previousCaretLocation, previousLoc != caretLoc {
+            candidates.append(ns.paragraphRange(for: NSRange(location: min(previousLoc, ns.length), length: 0)))
+        }
+        candidates += ParagraphRestyleScoping.renderedBlockParagraphs(in: ns, tokens: parsed)
+        candidates += ParagraphRestyleScoping.tokenRestyleParagraphs(
+            in: ns, tokens: parsed, currentActive: current, previousActive: previous
+        )
+        restyleScoped(paragraphCandidates: candidates)
     }
 }
 
