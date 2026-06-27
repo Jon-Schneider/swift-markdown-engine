@@ -41,6 +41,9 @@ public final class MarkdownUITextView: UITextView {
     /// Called whenever the formatting active at the selection may have changed (caret move
     /// or edit), so a host toolbar can reflect it. Wired by `MarkdownEditorController`.
     var onSelectionStateChange: ((MarkdownSelectionState) -> Void)?
+    /// Called when the inline link under the caret changes (entered / left / edited), so the
+    /// host can show a link-edit affordance. Wired by `MarkdownEditorController`.
+    var onInlineLinkContextChange: ((InlineLinkContext?) -> Void)?
     /// Called when an image is pasted, with the image's PNG bytes. The host persists it
     /// however it likes and returns a path/URL to reference (or nil to decline and fall
     /// back to the default paste); the editor then inserts `![](returnedPath)`.
@@ -206,19 +209,93 @@ public final class MarkdownUITextView: UITextView {
         restyleInPlace()
     }
 
-    /// Compute and publish the current selection's formatting state (for a host toolbar).
-    /// Cheap — reuses the cached token parse for the bold/italic check.
-    private func publishSelectionState() {
-        guard let onSelectionStateChange else { return }
+    /// Publish the host-facing selection state (toolbar) + inline-link context (link editor)
+    /// for the current selection. Cheap — reuses the cached token parse.
+    private func publishHostState() {
+        guard onSelectionStateChange != nil || onInlineLinkContextChange != nil else { return }
         let display = textStorage.string
-        onSelectionStateChange(MarkdownFormatting.selectionState(
-            text: display, selection: selectedRange, tokens: tokens(for: display)
-        ))
+        publishHostState(display: display, tokens: tokens(for: display))
     }
 
-    /// Force-publish the selection state now (the controller calls this on attach so a
-    /// freshly-shown toolbar isn't stale).
-    func publishSelectionStateNow() { publishSelectionState() }
+    /// Same, reusing tokens the caller already parsed (avoids a second cache lookup).
+    private func publishHostState(display: String, tokens: [MarkdownToken]) {
+        onSelectionStateChange?(MarkdownFormatting.selectionState(
+            text: display, selection: selectedRange, tokens: tokens
+        ))
+        onInlineLinkContextChange?(inlineLinkContext(tokens: tokens, display: display))
+    }
+
+    /// Force-publish host state now (the controller calls this on attach so freshly-shown
+    /// host UI isn't stale).
+    func publishHostStateNow() { publishHostState() }
+
+    // MARK: - Inline links
+
+    /// Whether a zero-or-more-length selection sits within `range` (inclusive of the edges).
+    private func selectionEnclosed(by range: NSRange) -> Bool {
+        selectedRange.location >= range.location && NSMaxRange(selectedRange) <= NSMaxRange(range)
+    }
+
+    /// The inline-link context for the caret, or nil. (Markdown links for now; wiki-links
+    /// are a follow-up slice.)
+    private func inlineLinkContext(tokens: [MarkdownToken], display: String) -> InlineLinkContext? {
+        guard let token = tokens.first(where: { $0.kind == .link && selectionEnclosed(by: $0.range) }) else {
+            return nil
+        }
+        let ns = display as NSString
+        let source = ns.substring(with: token.range)
+        return InlineLinkContext(
+            kind: .markdownLink,
+            text: ns.substring(with: token.contentRange),
+            target: Self.markdownLinkURL(from: source) ?? "",
+            sourceRange: token.range,
+            anchorRect: caretAnchorRect()
+        )
+    }
+
+    /// Caret rect in view coordinates, for anchoring a host popover.
+    private func caretAnchorRect() -> CGRect {
+        guard let position = selectedTextRange?.start else { return .zero }
+        return caretRect(for: position)
+    }
+
+    /// Extract the URL from a `[text](url)` source (the run between the last `](` and the
+    /// trailing `)`), tolerant of brackets in the link text.
+    static func markdownLinkURL(from linkSource: String) -> String? {
+        guard linkSource.hasSuffix(")"),
+              let open = linkSource.range(of: "](", options: .backwards) else { return nil }
+        let urlStart = open.upperBound
+        let urlEnd = linkSource.index(before: linkSource.endIndex)
+        return urlStart <= urlEnd ? String(linkSource[urlStart..<urlEnd]) : ""
+    }
+
+    /// Insert `[text](url)` at the selection. A non-empty selection becomes the link text.
+    func insertMarkdownLink(text: String?, url: String) {
+        let ns = textStorage.string as NSString
+        let selection = selectedRange
+        let linkText: String
+        if selection.length > 0 {
+            linkText = ns.substring(with: selection)
+        } else if let text, !text.isEmpty {
+            linkText = text
+        } else {
+            linkText = url.isEmpty ? "link" : url
+        }
+        let markdown = "[\(linkText)](\(url))"
+        let caret = selection.location + (markdown as NSString).length
+        applyUndoableEdit(replacing: selection, with: markdown, finalSelection: NSRange(location: caret, length: 0))
+    }
+
+    /// Replace the markdown link the caret is in with `[text](url)`. No-op if not in a link.
+    func updateMarkdownLinkAtCaret(text: String, url: String) {
+        let display = textStorage.string
+        guard let token = tokens(for: display).first(where: { $0.kind == .link && selectionEnclosed(by: $0.range) }) else {
+            return
+        }
+        let markdown = "[\(text)](\(url))"
+        let caret = token.range.location + (markdown as NSString).length
+        applyUndoableEdit(replacing: token.range, with: markdown, finalSelection: NSRange(location: caret, length: 0))
+    }
 
     private func applyTextContainerInset() {
         let insets = configuration.textInsets
@@ -254,7 +331,7 @@ public final class MarkdownUITextView: UITextView {
         isApplyingProgrammaticEdit = false
         restyleInPlace()
         emitStorageTextIfChanged()
-        publishSelectionState()
+        publishHostState()
     }
 
     // MARK: - Styling
@@ -615,7 +692,7 @@ extension MarkdownUITextView: UITextViewDelegate {
         if markedTextRange != nil { return }
         restyleForEdit()
         emitStorageTextIfChanged()
-        publishSelectionState()
+        publishHostState()
     }
 
     /// Restyle after an ordinary edit, scoped to the affected paragraphs. Falls back to a
@@ -680,10 +757,11 @@ extension MarkdownUITextView: UITextViewDelegate {
         )
         let previous = lastActiveTokens
         defer { previousCaretLocation = selectedRange.location }
-        // Publish toolbar state on every selection change (formatting context can change —
-        // e.g. moving between a list line and a plain line — without the active-token set
-        // shifting), reusing the tokens already parsed above.
-        onSelectionStateChange?(MarkdownFormatting.selectionState(text: display, selection: selectedRange, tokens: parsed))
+        // Publish host state (toolbar + inline-link context) on every selection change
+        // (formatting context can change — e.g. moving between a list line and a plain line,
+        // or in/out of a link — without the active-token set shifting), reusing the tokens
+        // already parsed above.
+        publishHostState(display: display, tokens: parsed)
         // Reveal/hide the caret token's raw markers — restyle only when the active set shifts.
         guard current != previous else { return }
 

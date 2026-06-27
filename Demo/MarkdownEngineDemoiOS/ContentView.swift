@@ -53,9 +53,19 @@ struct ContentView: View {
 
             // Host-built formatting toolbar: its buttons reflect the cursor context
             // (controller.selectionState) and issue commands back to the editor.
-            FormatBar(state: controller.selectionState) { command in
-                controller.applyFormatting(command)
-            }
+            FormatBar(
+                state: controller.selectionState,
+                inLink: controller.inlineLinkContext != nil,
+                onCommand: { controller.applyFormatting($0) },
+                onLink: {
+                    // A real host would show a text/URL editor here; the demo inserts a sample.
+                    if controller.inlineLinkContext != nil {
+                        controller.updateLinkAtCaret(text: "edited", url: "https://edited.example.com")
+                    } else {
+                        controller.insertLink(text: "example", url: "https://example.com")
+                    }
+                }
+            )
         }
         .ignoresSafeArea(edges: .bottom)
     }
@@ -64,7 +74,9 @@ struct ContentView: View {
 /// A host-owned formatting bar driven entirely by the engine's published selection state.
 private struct FormatBar: View {
     let state: MarkdownSelectionState
+    let inLink: Bool
     let onCommand: (MarkdownFormattingCommand) -> Void
+    let onLink: () -> Void
 
     var body: some View {
         HStack(spacing: 4) {
@@ -76,6 +88,8 @@ private struct FormatBar: View {
             Divider().frame(height: 24)
             button("list.bullet", active: state.isBulletList) { onCommand(.bulletList) }
             button("list.number", active: state.isNumberedList) { onCommand(.numberedList) }
+            Divider().frame(height: 24)
+            button("link", active: inLink, action: onLink)
             Spacer()
         }
         .padding(.horizontal, 16)
@@ -134,6 +148,9 @@ A narrow table fits the column; a wide one scrolls horizontally.
 |----------|----------|:------:|:------------:|:-----:|:------:|:-----------------:|-------|
 | macOS    | TextKit 2 (AppKit) | 13 | HighlighterSwift | SwiftMath | ✓ | NSScrollView overlay | the original surface |
 | iOS      | TextKit 2 (UIKit) | 16 | HighlighterSwift | SwiftMath | ✓ | UIScrollView overlay | this port — **swipe the wide table sideways** |
+
+## Links
+A [markdown link](https://apple.com) renders as styled text; tap the link button while the caret is inside it.
 
 ## Blockquote
 > A quoted line in the left gutter,
