@@ -18,6 +18,7 @@ import MarkdownEngineLatex
 
 struct ContentView: View {
     @State private var text = sampleMarkdown
+    @StateObject private var controller = MarkdownEditorController()
 
     private var configuration: MarkdownEditorConfiguration {
         var config = MarkdownEditorConfiguration.default
@@ -32,10 +33,53 @@ struct ContentView: View {
     }
 
     var body: some View {
-        MarkdownUITextViewWrapper(text: text, configuration: configuration) { edited in
-            text = edited   // write-back: edits round-trip into the model
+        VStack(spacing: 0) {
+            MarkdownUITextViewWrapper(text: text, configuration: configuration) { edited in
+                text = edited   // write-back: edits round-trip into the model
+            }
+            .controller(controller)
+
+            // Host-built formatting toolbar: its buttons reflect the cursor context
+            // (controller.selectionState) and issue commands back to the editor.
+            FormatBar(state: controller.selectionState) { command in
+                controller.applyFormatting(command)
+            }
         }
         .ignoresSafeArea(edges: .bottom)
+    }
+}
+
+/// A host-owned formatting bar driven entirely by the engine's published selection state.
+private struct FormatBar: View {
+    let state: MarkdownSelectionState
+    let onCommand: (MarkdownFormattingCommand) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            button("bold", active: state.isBold) { onCommand(.bold) }
+            button("italic", active: state.isItalic) { onCommand(.italic) }
+            Divider().frame(height: 24)
+            button("number", active: state.headingLevel == 1) { onCommand(.heading(1)) }
+            button("textformat.size.smaller", active: state.headingLevel == 2) { onCommand(.heading(2)) }
+            Divider().frame(height: 24)
+            button("list.bullet", active: state.isBulletList) { onCommand(.bulletList) }
+            button("list.number", active: state.isNumberedList) { onCommand(.numberedList) }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.thinMaterial)
+    }
+
+    private func button(_ systemName: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .frame(width: 36, height: 32)
+                .background(active ? Color.accentColor.opacity(0.25) : .clear)
+                .foregroundStyle(active ? Color.accentColor : Color.primary)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
     }
 }
 

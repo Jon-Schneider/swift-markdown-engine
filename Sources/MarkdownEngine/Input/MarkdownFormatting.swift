@@ -29,6 +29,33 @@ struct FormattingEdit: Equatable {
     let selection: NSRange
 }
 
+/// The formatting active at the current selection, for a host formatting toolbar to
+/// reflect (the macOS editor posts this as selection-changed notifications; the iOS
+/// `MarkdownEditorController` publishes it). The host lights up Bold when `isBold`, shows
+/// the active heading level, etc.
+public struct MarkdownSelectionState: Equatable {
+    public var isBold: Bool
+    public var isItalic: Bool
+    /// 1...6 when the caret's line is a heading, else nil.
+    public var headingLevel: Int?
+    public var isBulletList: Bool
+    public var isNumberedList: Bool
+
+    public init(
+        isBold: Bool = false,
+        isItalic: Bool = false,
+        headingLevel: Int? = nil,
+        isBulletList: Bool = false,
+        isNumberedList: Bool = false
+    ) {
+        self.isBold = isBold
+        self.isItalic = isItalic
+        self.headingLevel = headingLevel
+        self.isBulletList = isBulletList
+        self.isNumberedList = isNumberedList
+    }
+}
+
 enum MarkdownFormatting {
 
     /// The edit that applying `command` to `selection` in `text` should produce.
@@ -63,6 +90,26 @@ enum MarkdownFormatting {
             return line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ")
                 || line.hasPrefix("\t• ") || line.hasPrefix("1. ")
         }
+    }
+
+    /// The active formatting at `selection`, for a host toolbar. Uses `tokens` (the view's
+    /// already-parsed cache) for the bold/italic check so it doesn't re-tokenize on every
+    /// caret move; heading/list are cheap line-prefix checks.
+    static func selectionState(text: String, selection: NSRange, tokens: [MarkdownToken]) -> MarkdownSelectionState {
+        let ns = text as NSString
+        let isBold = tokens.contains { ($0.kind == .bold || $0.kind == .boldItalic) && enclosesSelection($0.range, selection) }
+        let isItalic = tokens.contains { ($0.kind == .italic || $0.kind == .boldItalic) && enclosesSelection($0.range, selection) }
+
+        let line = ns.substring(with: ns.lineRange(for: selection))
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let headingLevel = (1...6).first { trimmed.hasPrefix(String(repeating: "#", count: $0) + " ") }
+        let isBulletList = line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") || line.hasPrefix("\t• ")
+        let isNumberedList = line.range(of: #"^\d+\. "#, options: .regularExpression) != nil
+
+        return MarkdownSelectionState(
+            isBold: isBold, isItalic: isItalic, headingLevel: headingLevel,
+            isBulletList: isBulletList, isNumberedList: isNumberedList
+        )
     }
 
     // MARK: - Emphasis (bold / italic)

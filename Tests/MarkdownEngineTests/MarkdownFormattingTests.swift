@@ -102,4 +102,42 @@ struct MarkdownFormattingTests {
         #expect(MarkdownFormatting.isActive(.heading(1), text: "# foo", selection: NSRange(location: 0, length: 0)))
         #expect(MarkdownFormatting.isActive(.bulletList, text: "- foo", selection: NSRange(location: 0, length: 0)))
     }
+
+    // MARK: - Selection state (toolbar sync)
+
+    private func state(_ text: String, _ selection: NSRange) -> MarkdownSelectionState {
+        MarkdownFormatting.selectionState(
+            text: text, selection: selection,
+            tokens: MarkdownTokenizer.parseTokensViaAST(in: text)
+        )
+    }
+
+    @Test("Selection state flags bold and italic from the enclosing token")
+    func selectionStateEmphasis() {
+        #expect(state("a **b** c", NSRange(location: 4, length: 0)).isBold)
+        #expect(state("a *b* c", NSRange(location: 3, length: 0)).isItalic)
+        let plain = state("plain text", NSRange(location: 2, length: 0))
+        #expect(!plain.isBold && !plain.isItalic && plain.headingLevel == nil)
+    }
+
+    @Test("Bold-italic span flags both bold and italic")
+    func selectionStateBoldItalic() {
+        let s = state("***x***", NSRange(location: 4, length: 0))
+        #expect(s.isBold && s.isItalic)
+    }
+
+    @Test("Selection state reports the caret line's heading level")
+    func selectionStateHeading() {
+        #expect(state("# Title", NSRange(location: 3, length: 0)).headingLevel == 1)
+        #expect(state("### Deep", NSRange(location: 5, length: 0)).headingLevel == 3)
+        #expect(state("body", NSRange(location: 1, length: 0)).headingLevel == nil)
+    }
+
+    @Test("Selection state distinguishes bullet vs numbered list lines")
+    func selectionStateLists() {
+        #expect(state("- item", NSRange(location: 3, length: 0)).isBulletList)
+        #expect(!state("- item", NSRange(location: 3, length: 0)).isNumberedList)
+        #expect(state("1. item", NSRange(location: 4, length: 0)).isNumberedList)
+        #expect(!state("1. item", NSRange(location: 4, length: 0)).isBulletList)
+    }
 }

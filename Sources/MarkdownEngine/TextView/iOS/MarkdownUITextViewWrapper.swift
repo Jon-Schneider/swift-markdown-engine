@@ -22,6 +22,10 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
     /// Called when the user taps a link (markdown link / auto-detected URL / wiki-link).
     public var onLinkTap: ((URL) -> Void)?
 
+    /// Optional controller for selection-state observation + formatting commands, bound via
+    /// the `.controller(_:)` modifier (see `MarkdownEditorController`).
+    var boundController: MarkdownEditorController?
+
     public init(
         text: String,
         configuration: MarkdownEditorConfiguration = .default,
@@ -39,6 +43,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         view.onTextChange = onTextChange
         view.onLinkTap = onLinkTap
         view.render(markdown: text)
+        boundController?.attach(view)
         return view
     }
 
@@ -46,6 +51,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         view.configuration = configuration
         view.onTextChange = onTextChange   // capture the latest closure each SwiftUI pass
         view.onLinkTap = onLinkTap
+        boundController?.attach(view)
         if view.lastRenderedSource != text {
             // Source changed from outside → full reload.
             view.render(markdown: text)

@@ -38,6 +38,9 @@ public final class MarkdownUITextView: UITextView {
     /// Called when the user taps a link (markdown link, auto-detected URL, or
     /// wiki-link whose id parses as a URL). Lets the host open/navigate it.
     public var onLinkTap: ((URL) -> Void)?
+    /// Called whenever the formatting active at the selection may have changed (caret move
+    /// or edit), so a host toolbar can reflect it. Wired by `MarkdownEditorController`.
+    var onSelectionStateChange: ((MarkdownSelectionState) -> Void)?
     private var wikiLinkMetadata: [WikiLinkService.RangeKey: WikiLinkService.LinkMetadata] = [:]
 
     // Retained TextKit-2 stack pieces (the container/layout-manager back-refs are weak).
@@ -199,6 +202,20 @@ public final class MarkdownUITextView: UITextView {
         restyleInPlace()
     }
 
+    /// Compute and publish the current selection's formatting state (for a host toolbar).
+    /// Cheap — reuses the cached token parse for the bold/italic check.
+    private func publishSelectionState() {
+        guard let onSelectionStateChange else { return }
+        let display = textStorage.string
+        onSelectionStateChange(MarkdownFormatting.selectionState(
+            text: display, selection: selectedRange, tokens: tokens(for: display)
+        ))
+    }
+
+    /// Force-publish the selection state now (the controller calls this on attach so a
+    /// freshly-shown toolbar isn't stale).
+    func publishSelectionStateNow() { publishSelectionState() }
+
     private func applyTextContainerInset() {
         let insets = configuration.textInsets
         textContainerInset = UIEdgeInsets(
@@ -233,6 +250,7 @@ public final class MarkdownUITextView: UITextView {
         isApplyingProgrammaticEdit = false
         restyleInPlace()
         emitStorageTextIfChanged()
+        publishSelectionState()
     }
 
     // MARK: - Styling
@@ -566,6 +584,7 @@ extension MarkdownUITextView: UITextViewDelegate {
         if markedTextRange != nil { return }
         restyleForEdit()
         emitStorageTextIfChanged()
+        publishSelectionState()
     }
 
     /// Restyle after an ordinary edit, scoped to the affected paragraphs. Falls back to a
@@ -630,6 +649,10 @@ extension MarkdownUITextView: UITextViewDelegate {
         )
         let previous = lastActiveTokens
         defer { previousCaretLocation = selectedRange.location }
+        // Publish toolbar state on every selection change (formatting context can change —
+        // e.g. moving between a list line and a plain line — without the active-token set
+        // shifting), reusing the tokens already parsed above.
+        onSelectionStateChange?(MarkdownFormatting.selectionState(text: display, selection: selectedRange, tokens: parsed))
         // Reveal/hide the caret token's raw markers — restyle only when the active set shifts.
         guard current != previous else { return }
 
