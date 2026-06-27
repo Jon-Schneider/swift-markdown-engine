@@ -19,20 +19,25 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
     /// Persist this back into your model; without it, in-place edits are not propagated
     /// (and would be discarded the next time `text` changes from outside).
     public var onTextChange: ((String) -> Void)?
+    /// Called when the user taps a link (markdown link / auto-detected URL / wiki-link).
+    public var onLinkTap: ((URL) -> Void)?
 
     public init(
         text: String,
         configuration: MarkdownEditorConfiguration = .default,
-        onTextChange: ((String) -> Void)? = nil
+        onTextChange: ((String) -> Void)? = nil,
+        onLinkTap: ((URL) -> Void)? = nil
     ) {
         self.text = text
         self.configuration = configuration
         self.onTextChange = onTextChange
+        self.onLinkTap = onLinkTap
     }
 
     public func makeUIView(context: Context) -> MarkdownUITextView {
         let view = MarkdownUITextView(configuration: configuration)
         view.onTextChange = onTextChange
+        view.onLinkTap = onLinkTap
         view.render(markdown: text)
         return view
     }
@@ -40,6 +45,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
     public func updateUIView(_ view: MarkdownUITextView, context: Context) {
         view.configuration = configuration
         view.onTextChange = onTextChange   // capture the latest closure each SwiftUI pass
+        view.onLinkTap = onLinkTap
         if view.lastRenderedSource != text {
             // Source changed from outside → full reload.
             view.render(markdown: text)

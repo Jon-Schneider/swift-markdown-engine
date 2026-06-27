@@ -35,6 +35,9 @@ public final class MarkdownUITextView: UITextView {
     /// form (wiki-links re-encoded to `[[Name|id]]`). Lets the SwiftUI host persist
     /// edits — without it, edits would live only inside the view and be lost.
     public var onTextChange: ((String) -> Void)?
+    /// Called when the user taps a link (markdown link, auto-detected URL, or
+    /// wiki-link whose id parses as a URL). Lets the host open/navigate it.
+    public var onLinkTap: ((URL) -> Void)?
     private var wikiLinkMetadata: [WikiLinkService.RangeKey: WikiLinkService.LinkMetadata] = [:]
 
     // Retained TextKit-2 stack pieces (the container/layout-manager back-refs are weak).
@@ -95,7 +98,7 @@ public final class MarkdownUITextView: UITextView {
         layoutManager.delegate = layoutDelegate
         layoutBridge = LayoutBridge(layoutManager)
 
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleCheckboxTap(_:)))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tap.delegate = self
         addGestureRecognizer(tap)
 
@@ -278,12 +281,55 @@ public final class MarkdownUITextView: UITextView {
         }
     }
 
+    // MARK: - Paste
+
+    /// Pasting multiple lines while the caret sits on a blockquote line prefixes the
+    /// continuation lines with that line's `>` markers, so the whole paste stays in
+    /// the quote (parity with the macOS editor). Plain pastes fall through to the system.
+    public override func paste(_ sender: Any?) {
+        guard isEditable, let pasted = UIPasteboard.general.string, pasted.contains("\n") else {
+            super.paste(sender)
+            return
+        }
+        let transformed = MarkdownLists.blockquoteContinuedPaste(pasted, at: selectedRange.location, in: text)
+        guard transformed != pasted else {
+            super.paste(sender)
+            return
+        }
+        let insertLocation = selectedRange.location
+        applyUndoableEdit(
+            replacing: selectedRange, with: transformed,
+            finalSelection: NSRange(location: insertLocation + (transformed as NSString).length, length: 0)
+        )
+    }
+
     // MARK: - Checkbox tap-toggle
 
-    @objc private func handleCheckboxTap(_ recognizer: UITapGestureRecognizer) {
+    @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
         // For a scroll view, `location(in: self)` is already in content coordinates
         // (bounds.origin == contentOffset).
-        toggleCheckbox(at: recognizer.location(in: self))
+        let point = recognizer.location(in: self)
+        if toggleCheckbox(at: point) { return }   // checkbox wins
+        handleLinkTap(at: point)
+    }
+
+    /// Open a `.link` at `point` (view coords) via `onLinkTap`. Makes links tappable
+    /// even while editing (a plain tap otherwise just places the caret).
+    private func handleLinkTap(at point: CGPoint) {
+        guard let onLinkTap, let layoutBridge else { return }
+        let containerPoint = CGPoint(x: point.x - textContainerInset.left,
+                                     y: point.y - textContainerInset.top)
+        var fraction: CGFloat = 0
+        let index = layoutBridge.characterIndex(
+            for: containerPoint, in: textContainer, fractionOfDistanceBetweenInsertionPoints: &fraction
+        )
+        guard index != NSNotFound, index < textStorage.length,
+              let link = textStorage.attribute(.link, at: index, effectiveRange: nil) else { return }
+        if let url = link as? URL {
+            onLinkTap(url)
+        } else if let string = link as? String, let url = URL(string: string) {
+            onLinkTap(url)
+        }
     }
 
     /// Toggle a task checkbox if `point` (in view coordinates) lands on one,
