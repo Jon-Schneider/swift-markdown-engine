@@ -79,9 +79,14 @@ public final class MarkdownUITextView: UITextView {
         // in `restyleInPlace` (our fonts aren't metrics-tracking), so the system's own
         // auto-adjust would double-count — leave it off.
         adjustsFontForContentSizeCategory = false
-        autocorrectionType = .no            // marked-text/autocorrect lifecycle is a later pass
+        // Autocorrect (and its marked-text suggestion bar) is fine now that restyle
+        // is guarded against active marked text. But Markdown is plain text, so keep
+        // smart quotes/dashes/substitutions OFF — curly quotes and em-dashes would
+        // corrupt code, links, and `--`/`...` syntax.
+        autocorrectionType = .default
         smartDashesType = .no
         smartQuotesType = .no
+        smartInsertDeleteType = .no
         delegate = self
 
         let layoutDelegate = MarkdownLayoutManagerDelegate()
@@ -342,6 +347,9 @@ extension MarkdownUITextView: UITextViewDelegate {
 
     public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         if isApplyingProgrammaticEdit { return true }
+        // During IME composition (kana→kanji, Pinyin, dictation) the text is
+        // provisional — let the input system drive it; don't run list logic on it.
+        if markedTextRange != nil { return true }
         switch MarkdownLists.computeListInsertion(
             currentText: textView.text, affectedCharRange: range,
             replacementString: text, configuration: configuration
@@ -359,12 +367,16 @@ extension MarkdownUITextView: UITextViewDelegate {
 
     public func textViewDidChange(_ textView: UITextView) {
         if isApplyingProgrammaticEdit { return }
+        // Don't restyle/emit mid-composition — mutating attributes on the marked
+        // range fights the IME. textViewDidChange fires again when it commits.
+        if markedTextRange != nil { return }
         restyleInPlace()
         emitStorageTextIfChanged()
     }
 
     public func textViewDidChangeSelection(_ textView: UITextView) {
         if isApplyingProgrammaticEdit { return }
+        if markedTextRange != nil { return }   // selection churns during composition
         // Reveal/hide the caret token's raw markers — restyle only when the active set shifts.
         let display = textStorage.string
         let active = MarkdownDetection.computeActiveTokenIndices(
