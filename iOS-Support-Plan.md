@@ -257,10 +257,10 @@ Each MVP deferral maps to its re-enablement so the `#if os(macOS)` gates don't b
 |---|---|
 | `ScrollingHeaderController` | iOS scroll-away header (UIKit content-offset observation) |
 | `ClampedScrollView` + `NativeTextViewContainer` | iOS scroll clamping / overscroll if needed beyond system `UITextView` (the `BottomOverscrollPolicy` math is already cross-platform) |
-| `WideTableOverlay` | horizontally-scrollable wide tables on iOS |
+| ~~`WideTableOverlay`~~ | **DONE** — `MarkdownTableScrollView` (UIScrollView) ports it to iOS; wide tables scroll horizontally as a content-coordinate overlay subview, verified in the demo. |
 | `Coordinator+WritingTools` | iOS text-editing / Writing Tools surface |
 | `NativeTextView+CursorRects` / `+DragSelectBoost` / spelling-toggle UI | iPad pointer interactions + richer context menus |
-| `MarkdownStyler+Tables` (NSImage table compositor) | iOS table rendering (cross-platform image compositor, or a CoreText/UIKit renderer) |
+| ~~`MarkdownStyler+Tables` (NSImage table compositor)~~ | **DONE** — cross-platform compositor via `renderFlippedPlatformImage` (`UIGraphicsImageRenderer` on iOS); GFM tables (incl. inline bold + inline LaTeX in cells) render on iOS, verified in the demo. |
 | ~~`HighlighterSwiftBridge` / `SwiftMathBridge`~~ | **DONE** — both bridges ported to iOS (color-scheme threaded through `SyntaxHighlighter`/`LatexRenderer` + the fragment; off `NSApp`/`NSImage`/`DistributedNotificationCenter`). iOS syntax highlighting + LaTeX verified in the demo. |
 | `@objc(extraLineFragmentAttributes)` (FB15131180, gated off iOS) | a public-API trailing-metrics fix for iOS document-end spacing (only if the degradation proves visible) |
 | RTL gutter mirroring (bars/bullets hardcoded left) | mirror gutter-drawn blockquote bars + bullets under right-to-left layout |
