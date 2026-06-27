@@ -5,22 +5,23 @@
 //  Ready-made LatexRenderer conformance backed by SwiftMath.
 //
 
-import AppKit
 import Foundation
 import SwiftMath
 import MarkdownEngine
+#if canImport(UIKit)
+import UIKit
+#else
+import AppKit
+#endif
 
 /// A drop-in ``LatexRenderer`` backed by [SwiftMath].
 ///
 /// Renders both block (`$$ … $$`) and inline (`$ … $`) LaTeX strings into
-/// `NSImage`s using the Latin Modern math font. Results are cached per
-/// (latex, font size, appearance, theme color fingerprint) so repeated
-/// renders are free.
+/// `PlatformImage`s using the Latin Modern math font. Results are cached per
+/// (latex, font size, scheme, theme color fingerprint).
 ///
-/// Light/dark appearance is taken from the host editor's window
-/// effective appearance, not from `NSApp.effectiveAppearance`, so apps
-/// that force a light window when the system is in dark mode still get
-/// correctly-tinted formulas.
+/// Light/dark is taken from the host window's effective appearance on macOS, and
+/// from the engine-supplied `colorScheme` on iOS (there is no `NSApp` to probe).
 ///
 /// [SwiftMath]: https://github.com/mgriebling/SwiftMath
 public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
@@ -33,7 +34,7 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
     }
 
     private struct CacheEntry {
-        let image: NSImage
+        let image: PlatformImage
         let size: CGSize
         let baselineOffset: CGFloat
     }
@@ -70,8 +71,15 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
         let normalizedLatex = latex.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedLatex.isEmpty else { return nil }
 
+        #if os(macOS)
+        // macOS keeps its window-appearance source (matches the engine's scheme,
+        // which is derived from the same effectiveAppearance).
         let appearance = NSApp.keyWindow?.effectiveAppearance ?? NSApp.effectiveAppearance
         let isDarkMode = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        #else
+        let isDarkMode = colorScheme == .dark
+        #endif
+
         let textColor = isDarkMode ? theme.latexDarkModeText : theme.latexLightModeText
         let key = CacheKey(
             latex: normalizedLatex,
@@ -109,17 +117,24 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
 
     // MARK: - Private
 
-    /// Fold an `NSColor` to a 24-bit fingerprint that's good enough to
+    /// Fold a `PlatformColor` to a 24-bit fingerprint that's good enough to
     /// bust the cache when the theme changes the LaTeX text color.
-    private static func colorFingerprint(_ color: NSColor) -> UInt32 {
+    private static func colorFingerprint(_ color: PlatformColor) -> UInt32 {
+        var rc: CGFloat = 0, gc: CGFloat = 0, bc: CGFloat = 0
+        #if os(macOS)
         guard let rgb = color.usingColorSpace(.deviceRGB) else { return 0 }
-        let r = UInt32(max(0, min(255, Int(rgb.redComponent * 255))))
-        let g = UInt32(max(0, min(255, Int(rgb.greenComponent * 255))))
-        let b = UInt32(max(0, min(255, Int(rgb.blueComponent * 255))))
+        rc = rgb.redComponent; gc = rgb.greenComponent; bc = rgb.blueComponent
+        #else
+        var ac: CGFloat = 0
+        guard color.getRed(&rc, green: &gc, blue: &bc, alpha: &ac) else { return 0 }
+        #endif
+        let r = UInt32(max(0, min(255, Int(rc * 255))))
+        let g = UInt32(max(0, min(255, Int(gc * 255))))
+        let b = UInt32(max(0, min(255, Int(bc * 255))))
         return (r << 16) | (g << 8) | b
     }
 
-    private func renderLatex(_ latex: String, fontSize: CGFloat, textColor: NSColor) -> CacheEntry? {
+    private func renderLatex(_ latex: String, fontSize: CGFloat, textColor: PlatformColor) -> CacheEntry? {
         let mathLabel = MTMathUILabel()
         mathLabel.latex = latex
         mathLabel.fontSize = fontSize
@@ -132,13 +147,12 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
             mathLabel.font = mathFont
         }
 
-        mathLabel.layoutSubtreeIfNeeded()
+        forceLayout(mathLabel)
 
         guard let displayList = mathLabel.displayList else { return nil }
 
         // SwiftMath skips unsupported glyphs (e.g. emoji/raw Greek), which can yield
-        // zero-sized output. Bail instead of trying to render a 0x0 image — lockFocus
-        // (used internally by NSImage drawing) crashes on zero dimensions.
+        // zero-sized output. Bail instead of trying to render a 0x0 image.
         let exactWidth = displayList.width
         let exactHeight = displayList.ascent + displayList.descent
         guard exactWidth > 0, exactHeight > 0 else { return nil }
@@ -153,8 +167,7 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
         let rightSlack = ceil(fontSize)
         let probeWidth = ceil(exactWidth) + rightSlack
 
-        guard let probeRep = renderLabelToRep(mathLabel, size: CGSize(width: probeWidth, height: canvasHeight)),
-              let probeCG = probeRep.cgImage else {
+        guard let probeCG = renderProbeCGImage(mathLabel, size: CGSize(width: probeWidth, height: canvasHeight)) else {
             return nil
         }
 
@@ -162,7 +175,7 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
         let finalWidth = max(ceil(exactWidth), ceil(inkRight))
         let finalSize = CGSize(width: finalWidth, height: canvasHeight)
 
-        // Crop to the measured width (full height kept); points→pixels via the rep,
+        // Crop to the measured width (full height kept); points→pixels via the probe,
         // so this is correct at any backing scale.
         let pxPerPoint = CGFloat(probeCG.width) / probeWidth
         let cropPx = min(probeCG.width, Int((finalWidth * pxPerPoint).rounded()))
@@ -171,11 +184,7 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
             return nil
         }
 
-        let finalRep = NSBitmapImageRep(cgImage: croppedCG)
-        finalRep.size = finalSize
-        let image = NSImage(size: finalSize)
-        image.addRepresentation(finalRep)
-
+        let image = makeImage(from: croppedCG, pointSize: finalSize, pxPerPoint: pxPerPoint)
         return CacheEntry(
             image: image,
             size: finalSize,
@@ -183,17 +192,46 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
         )
     }
 
-    private func renderLabelToRep(_ label: MTMathUILabel, size: CGSize) -> NSBitmapImageRep? {
-        // `bitmapImageRepForCachingDisplay` + `cacheDisplay(in:to:)` is the
-        // documented way to snapshot an NSView that isn't in a window. Setting
-        // `wantsLayer = true` and `layer.render(in:)` snapshots the (empty)
-        // backing layer instead of triggering MTMathUILabel's `draw(_:)`.
-        label.frame = CGRect(origin: .zero, size: size)
-        label.layoutSubtreeIfNeeded()
+    // MARK: - Platform rendering
 
+    private func forceLayout(_ label: MTMathUILabel) {
+        #if canImport(UIKit)
+        label.setNeedsLayout()
+        label.layoutIfNeeded()
+        #else
+        label.layoutSubtreeIfNeeded()
+        #endif
+    }
+
+    /// Render `label` into a CGImage at `size` (points) and the platform's backing scale.
+    private func renderProbeCGImage(_ label: MTMathUILabel, size: CGSize) -> CGImage? {
+        label.frame = CGRect(origin: .zero, size: size)
+        forceLayout(label)
+        #if canImport(UIKit)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { ctx in
+            label.layer.render(in: ctx.cgContext)
+        }
+        return image.cgImage
+        #else
+        // `bitmapImageRepForCachingDisplay` + `cacheDisplay(in:to:)` is the
+        // documented way to snapshot an NSView that isn't in a window.
         guard let rep = label.bitmapImageRepForCachingDisplay(in: label.bounds) else { return nil }
         label.cacheDisplay(in: label.bounds, to: rep)
-        return rep
+        return rep.cgImage
+        #endif
+    }
+
+    private func makeImage(from cgImage: CGImage, pointSize: CGSize, pxPerPoint: CGFloat) -> PlatformImage {
+        #if canImport(UIKit)
+        return UIImage(cgImage: cgImage, scale: max(1, pxPerPoint), orientation: .up)
+        #else
+        let rep = NSBitmapImageRep(cgImage: cgImage)
+        rep.size = pointSize
+        let image = NSImage(size: pointSize)
+        image.addRepresentation(rep)
+        return image
+        #endif
     }
 
     /// Right-most x (in points) containing non-transparent ink, or `nil` if empty —

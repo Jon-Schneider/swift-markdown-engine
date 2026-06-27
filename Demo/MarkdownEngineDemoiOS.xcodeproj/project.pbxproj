@@ -11,6 +11,7 @@
 		2A2B3C0000000000000005BB /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A2B3C0000000000000005AA /* ContentView.swift */; };
 		2A2B3C0000000000000007CC /* MarkdownEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 2A2B3C0000000000000007BB /* MarkdownEngine */; };
 		2A2B3C0000000000000008CC /* MarkdownEngineCodeBlocks in Frameworks */ = {isa = PBXBuildFile; productRef = 2A2B3C0000000000000008BB /* MarkdownEngineCodeBlocks */; };
+		2A2B3C0000000000000009CC /* MarkdownEngineLatex in Frameworks */ = {isa = PBXBuildFile; productRef = 2A2B3C0000000000000009BB /* MarkdownEngineLatex */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,6 +27,7 @@
 			files = (
 				2A2B3C0000000000000007CC /* MarkdownEngine in Frameworks */,
 				2A2B3C0000000000000008CC /* MarkdownEngineCodeBlocks in Frameworks */,
+				2A2B3C0000000000000009CC /* MarkdownEngineLatex in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -76,6 +78,7 @@
 			packageProductDependencies = (
 				2A2B3C0000000000000007BB /* MarkdownEngine */,
 				2A2B3C0000000000000008BB /* MarkdownEngineCodeBlocks */,
+				2A2B3C0000000000000009BB /* MarkdownEngineLatex */,
 			);
 			productName = MarkdownEngineDemoiOS;
 			productReference = 2A2B3C0000000000000003DD /* MarkdownEngineDemoiOS.app */;
@@ -314,6 +317,10 @@
 		2A2B3C0000000000000008BB /* MarkdownEngineCodeBlocks */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MarkdownEngineCodeBlocks;
+		};
+		2A2B3C0000000000000009BB /* MarkdownEngineLatex */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MarkdownEngineLatex;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

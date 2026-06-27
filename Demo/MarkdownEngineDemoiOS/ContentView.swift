@@ -12,12 +12,18 @@ import MarkdownEngine
 #if canImport(MarkdownEngineCodeBlocks)
 import MarkdownEngineCodeBlocks
 #endif
+#if canImport(MarkdownEngineLatex)
+import MarkdownEngineLatex
+#endif
 
 struct ContentView: View {
     private var configuration: MarkdownEditorConfiguration {
         var config = MarkdownEditorConfiguration.default
         #if canImport(MarkdownEngineCodeBlocks)
         config.services.syntaxHighlighter = HighlighterSwiftBridge()
+        #endif
+        #if canImport(MarkdownEngineLatex)
+        config.services.latex = SwiftMathBridge()
         #endif
         return config
     }
@@ -48,6 +54,11 @@ func greet(_ name: String) -> String {
 }
 print(greet("iOS"))
 ```
+
+## Math (LaTeX)
+Inline math like $E = mc^2$ flows with the text, and block math centers:
+
+$$\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}$$
 
 ## Blockquote
 > A quoted line in the left gutter,
