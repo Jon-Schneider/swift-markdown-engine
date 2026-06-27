@@ -79,8 +79,9 @@ extension MarkdownStyler {
                 colorScheme: ctx.colorScheme
             )
             let imageBounds = CGRect(x: 0, y: 0, width: image.size.width, height: image.size.height)
-#if os(macOS)
-            // Wide tables → scrollable mode (NSScrollView overlay); narrow → collapsed.
+            // Wide tables → scrollable mode (a scroll-view overlay owns the visual and
+            // provides horizontal scrolling: `WideTableOverlay` (NSScrollView) on macOS,
+            // `MarkdownTableScrollView` (UIScrollView) on iOS); narrow → collapsed.
             let containerWidth = effectiveContainerWidth(for: ctx)
             let isWide = image.size.width > containerWidth + 0.5
             let computedSourceID = stableTableSourceID(
@@ -94,13 +95,6 @@ extension MarkdownStyler {
                     sourceID: computedSourceID
                 )
                 : .collapsedSource(markerTexts: [])
-#else
-            // iOS: the horizontal-scroll overlay (NSScrollView-backed `WideTableOverlay`)
-            // isn't ported yet, so render every table collapsed — wide ones simply size to
-            // their full width. Horizontal scrolling for wide tables is a Phase 4 follow-up.
-            _ = occurrenceIndex
-            let mode: RenderedStandaloneBlockMode = .collapsedSource(markerTexts: [])
-#endif
             _ = appendRenderedStandaloneBlock(
                 for: token,
                 rawContent: source,

@@ -53,6 +53,18 @@ public final class MarkdownUITextView: UITextView {
     /// Token cache keyed by exact text, so caret moves don't re-parse an unchanged document.
     private var tokenCache: (text: String, tokens: [MarkdownToken])?
 
+    // MARK: Wide-table horizontal-scroll overlays (see MarkdownTableScrollView.swift)
+    /// Live overlay scroll views, keyed by the table's content `sourceID`.
+    var tableScrollOverlays: [Int: MarkdownTableScrollView] = [:]
+    /// Per-`sourceID` horizontal scroll offset, persisted across restyles so a table
+    /// keeps its scroll position when the document re-styles around it.
+    var tableHorizontalScrollOffsets: [Int: CGFloat] = [:]
+    /// Coalesces overlay reconciles to one per runloop tick (mirrors the macOS path).
+    var pendingTableScrollOverlayUpdate = false
+    /// Last laid-out width; a change means a rotation/resize, which re-styles so each
+    /// table's reserved display width (baked at style time) tracks the new container.
+    private var lastLayoutWidth: CGFloat = -1
+
     public init(
         configuration: MarkdownEditorConfiguration = .default,
         fontName: String = "SF Pro",
@@ -266,6 +278,23 @@ public final class MarkdownUITextView: UITextView {
             for (key, value) in attrs { textStorage.addAttribute(key, value: value, range: clipped) }
         }
         textStorage.endEditing()
+
+        // Reconcile the wide-table scroll overlays against the freshly-styled storage
+        // (creates / repositions / removes them to match the `.scrollableBlock*` attrs).
+        updateTableScrollOverlays()
+    }
+
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        // Width only changes on rotation / multitasking resize (vertical scrolling moves
+        // bounds.origin, not bounds.size), so this guard keeps per-frame scroll layout cheap.
+        guard bounds.width != lastLayoutWidth else { return }
+        lastLayoutWidth = bounds.width
+        // The first real width (and any later change) must re-style: the initial render
+        // may have run pre-layout with a fallback container width, and a table's reserved
+        // display width / wide-vs-narrow classification depends on the true width.
+        // restyleInPlace() ends by reconciling overlays.
+        if lastRenderedSource != nil { restyleInPlace() }
     }
 
     public override func traitCollectionDidChange(_ previous: UITraitCollection?) {

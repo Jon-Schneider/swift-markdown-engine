@@ -66,11 +66,18 @@ Inline math like $E = mc^2$ flows with the text, and block math centers:
 $$\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}$$
 
 ## Tables
+A narrow table fits the column; a wide one scrolls horizontally.
+
 | Feature   | Status | Notes            |
 |-----------|:------:|------------------|
 | Lists     |   ✓    | continue on ⏎    |
 | Checkboxes|   ✓    | tap to toggle    |
 | **Tables**|   ✓    | rendered as $E=mc^2$ |
+
+| Platform | Renderer | Min OS | Highlighting | LaTeX | Tables | Horizontal scroll | Notes |
+|----------|----------|:------:|:------------:|:-----:|:------:|:-----------------:|-------|
+| macOS    | TextKit 2 (AppKit) | 13 | HighlighterSwift | SwiftMath | ✓ | NSScrollView overlay | the original surface |
+| iOS      | TextKit 2 (UIKit) | 16 | HighlighterSwift | SwiftMath | ✓ | UIScrollView overlay | this port — **swipe the wide table sideways** |
 
 ## Blockquote
 > A quoted line in the left gutter,
