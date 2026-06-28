@@ -246,6 +246,25 @@ struct SeamlessInputTests {
         // Sanity: the same `# ` not wrapped in a fence DOES unwrap.
         #expect(backspace("# x", at: 2) == .replace(range: NSRange(location: 0, length: 2), text: "", caret: 0))
     }
+
+    // MARK: - Block LaTeX / tables are opaque too
+
+    @Test("Backspace after a `# ` inside a `$$…$$` block is a normal delete")
+    func headingLineInsideBlockLatexIsLiteral() {
+        // The `# x` is LaTeX source, not a heading — must NOT unwrap.
+        let text = "$$\n# x\n$$"
+        let caret = (("$$\n# ") as NSString).length   // just after `# ` on line 2
+        #expect(backspace(text, at: caret) == .allowDefault)
+    }
+
+    // MARK: - Tab-indented blockquote (parser parity)
+
+    @Test("Backspace at a tab-indented quote's content start unwraps the whole marker")
+    func tabIndentedBlockquoteUnwraps() {
+        // `\t> hi` — `BlockParser.isBlockquote` accepts the leading tab, so the
+        // hidden marker is `\t> ` and content starts at index 3.
+        #expect(backspace("\t> hi", at: 3) == .replace(range: NSRange(location: 0, length: 3), text: "", caret: 0))
+    }
 }
 
 /// In seamless mode the marker characters are rendered/hidden by the styler, so

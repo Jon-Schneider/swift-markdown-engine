@@ -468,6 +468,15 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             context.coordinator.activeTokenIndices = active
             context.coordinator.previousActiveTokenIndices = active
         }
+        // The backspace-unwrap flag changes independently of `visibility` (the
+        // demo toggles it while already in `.seamless`), so it needs its own sync
+        // to the text view + coordinator — otherwise the macOS Backspace handler,
+        // which reads the coordinator's configuration, keeps the stale value. No
+        // restyle needed: the flag affects only Backspace behavior, not rendering.
+        if textView.configuration.markers.seamlessBackspaceUnwrap != configuration.markers.seamlessBackspaceUnwrap {
+            textView.configuration.markers.seamlessBackspaceUnwrap = configuration.markers.seamlessBackspaceUnwrap
+            context.coordinator.configuration.markers.seamlessBackspaceUnwrap = configuration.markers.seamlessBackspaceUnwrap
+        }
         // Reading column centers by POSITION (container subview), so the text inset is constant.
         let desiredTextInset = NSSize(
             width: configuration.textInsets.horizontal,

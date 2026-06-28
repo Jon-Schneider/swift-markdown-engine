@@ -41,6 +41,18 @@ enum MarkdownSeamlessInput {
     /// length (= content start) is used.
     static let headingPrefixRegex = try! NSRegularExpression(pattern: #"^[ \t]*(#{1,6}) +"#)
 
+    /// Blockquote prefix, kept in lockstep with `BlockParser.isBlockquote`, which
+    /// allows up to three leading *spaces or tabs* before the `>` run. The shared
+    /// ``MarkdownLists/blockquoteRegex`` only tolerates leading spaces (it drives
+    /// list-indent math), so seamless detection uses its own pattern — otherwise a
+    /// tab-indented quote (`\t> x`) gets its marker hidden by the styler while
+    /// backspace/caret/copy fail to recognize the hidden prefix. The `>` run +
+    /// trailing whitespace semantics match the shared regex; only the indent class
+    /// differs (`[ \t]{0,3}` vs `{0,3}` spaces).
+    static let blockquotePrefixRegex = try! NSRegularExpression(
+        pattern: #"^[ \t]{0,3}(>+(?:[ \t]+>+)*)[ \t]*"#
+    )
+
     /// Decide what Backspace should do in seamless mode.
     ///
     /// Fires only for a collapsed caret (`selection.length == 0`) that sits
@@ -88,6 +100,11 @@ enum MarkdownSeamlessInput {
 
         if let contentStart = blockContentStart(line: line, lineNSLen: lineNSLen, lineStart: lineStart),
            caret == contentStart {
+            // A heading/quote/list-looking line that actually lives inside an
+            // opaque block-LaTeX (`$$…$$`) or table is literal content, not a
+            // Markdown marker — never unwrap it. (Fenced code is already excluded
+            // above.) Parsed lazily, only now that a prefix has matched.
+            guard !isInLatexOrTable(ns: ns, location: caret) else { return .allowDefault }
             return unwrap(from: lineStart, toContentStart: contentStart)
         }
 
@@ -118,8 +135,9 @@ enum MarkdownSeamlessInput {
     private static func blockContentStart(line: String, lineNSLen: Int, lineStart: Int) -> Int? {
         let fullRange = NSRange(location: 0, length: lineNSLen)
 
-        // Blockquote: `> `, `>> `, `  > `… — always hidden.
-        if let m = MarkdownLists.blockquoteRegex.firstMatch(in: line, range: fullRange),
+        // Blockquote: `> `, `>> `, `  > `, `\t> `… — always hidden. Tab-tolerant to
+        // match `BlockParser.isBlockquote` (see `blockquotePrefixRegex`).
+        if let m = blockquotePrefixRegex.firstMatch(in: line, range: fullRange),
            m.range.length > 0 {
             return lineStart + NSMaxRange(m.range)
         }
@@ -237,16 +255,20 @@ enum MarkdownSeamlessInput {
         let ns = text as NSString
         var ranges: [NSRange] = []
 
-        // Code-block ranges (opaque) — their interior lines are literal code, so
-        // a `# x` / `- y` line inside one is NOT a block marker.
         let blocks = DocumentAST.parse(text)
-        let codeRanges: [NSRange] = blocks.compactMap {
-            if case .codeBlock(let r) = $0 { return r } else { return nil }
+        // Opaque-block ranges (fenced code + block LaTeX + tables) — their interior
+        // lines are literal content, so a `# x` / `- y` line inside one is NOT a
+        // block marker and must not be stripped.
+        let opaqueRanges: [NSRange] = blocks.compactMap {
+            switch $0 {
+            case .codeBlock(let r), .blockLatex(let r), .table(let r): return r
+            default: return nil
+            }
         }
-        func inCode(_ loc: Int) -> Bool { codeRanges.contains { NSLocationInRange(loc, $0) } }
+        func inOpaqueBlock(_ loc: Int) -> Bool { opaqueRanges.contains { NSLocationInRange(loc, $0) } }
 
         // Block leading markers (`> `, `# `, unordered/checkbox `- `…), per line,
-        // skipping any line that lies inside a fenced code block.
+        // skipping any line that lies inside an opaque rendered block.
         var i = 0
         while i < ns.length {
             let lineRange = ns.lineRange(for: NSRange(location: i, length: 0))
@@ -255,7 +277,7 @@ enum MarkdownSeamlessInput {
                 let last = ns.character(at: lineRange.location + lineLen - 1)
                 if last == 0x0A || last == 0x0D { lineLen -= 1 }
             }
-            if !inCode(lineRange.location) {
+            if !inOpaqueBlock(lineRange.location) {
                 let line = ns.substring(with: NSRange(location: lineRange.location, length: lineLen))
                 if let contentStart = blockContentStart(
                     line: line, lineNSLen: (line as NSString).length, lineStart: lineRange.location
@@ -368,6 +390,25 @@ enum MarkdownSeamlessInput {
         return fences % 2 == 1
     }
 
+    /// True if `location` lies inside a block-LaTeX (`$$…$$`) or GFM table block —
+    /// opaque rendered content whose interior lines are NOT Markdown, so block
+    /// marker heuristics must not fire there. Costs one structural parse, so
+    /// callers invoke it *lazily*, only once a block-marker prefix has already
+    /// matched at the caret — keeping the common per-keystroke path parse-free.
+    /// (Fenced code is handled separately by the cheaper ``isInFencedCode``, which
+    /// every caller runs first.)
+    private static func isInLatexOrTable(ns: NSString, location: Int) -> Bool {
+        for block in DocumentAST.parse(ns as String) {
+            switch block {
+            case .blockLatex(let r), .table(let r):
+                if NSLocationInRange(location, r) { return true }
+            default:
+                break
+            }
+        }
+        return false
+    }
+
     /// Whether `line` is a ```` ``` ```` fence delimiter (≤3 spaces indent then
     /// ≥3 backticks).
     private static func lineIsFenceDelimiter(_ ns: NSString, _ line: NSRange) -> Bool {
@@ -395,6 +436,10 @@ enum MarkdownSeamlessInput {
             line: lineText, lineNSLen: (lineText as NSString).length, lineStart: line.location
         ), contentStart > line.location else { return nil }
         guard proposed >= line.location, proposed < contentStart else { return nil }
+        // A marker-looking line inside opaque block LaTeX / a table is literal, not
+        // a hidden marker — don't snap the caret out of it. (Fenced code already
+        // excluded by `normalizedCaret`.) Parsed lazily, only after a prefix match.
+        guard !isInLatexOrTable(ns: ns, location: proposed) else { return nil }
 
         // A single leftward step out of the content escapes to the previous line
         // (rather than bouncing back to content start). On the first line there's
