@@ -187,6 +187,29 @@ public struct TextInsets: Sendable {
 
 // MARK: - Marker visibility
 
+/// When Markdown syntax markers (`>`, `#`, `**`, `` ` ``, `[ ]( )`, …) are
+/// revealed versus hidden. This is the single cross-platform "seamless mode"
+/// switch — it is applied uniformly to *all* markers (there are deliberately
+/// no per-element flags, which would produce an inconsistent editor).
+///
+/// - `revealOnEdit`: the historical live-preview behavior. A marker is hidden
+///   until the caret enters its element, then revealed (muted) so the raw
+///   Markdown can be edited, and re-hidden when the caret leaves.
+/// - `seamless`: true WYSIWYG. Markers are *always* hidden — even on the line
+///   the caret is on — so the user never sees raw Markdown. The marker
+///   characters still live in the text buffer (Markdown remains the storage
+///   format); they are just never drawn. Pair this with the seamless input
+///   handling (backspace-to-unwrap, caret-skip) so editing over the now-
+///   invisible characters still feels native.
+/// - `revealAll`: a power-user / debugging escape hatch that reveals every
+///   marker everywhere, regardless of the caret. Intended as the "show raw
+///   Markdown" toggle target when the editor is otherwise in `seamless`.
+public enum MarkerVisibility: Sendable, Hashable, CaseIterable {
+    case revealOnEdit
+    case seamless
+    case revealAll
+}
+
 /// How Markdown syntax markers (e.g. `**`, `*`, `$`) are visualized when
 /// the cursor is not inside the corresponding token.
 ///
@@ -204,18 +227,26 @@ public struct MarkerStyle: Sendable {
     /// Alpha applied to non-focused find matches when in-document search
     /// highlights are visible. The focused match is drawn at full opacity.
     public var findMatchHighlightAlpha: CGFloat
+    /// When syntax markers are revealed vs. hidden. Defaults to the historical
+    /// `revealOnEdit` so existing embedders are unaffected; set to `.seamless`
+    /// for the always-hidden WYSIWYG editing surface.
+    public var visibility: MarkerVisibility
 
     public init(
         hiddenMarkerFontSize: CGFloat = 0.1,
         inlineCodeMarkerAlpha: CGFloat = 0.5,
-        findMatchHighlightAlpha: CGFloat = 0.65
+        findMatchHighlightAlpha: CGFloat = 0.65,
+        visibility: MarkerVisibility = .revealOnEdit
     ) {
         self.hiddenMarkerFontSize = hiddenMarkerFontSize
         self.inlineCodeMarkerAlpha = inlineCodeMarkerAlpha
         self.findMatchHighlightAlpha = findMatchHighlightAlpha
+        self.visibility = visibility
     }
 
     public static let `default` = MarkerStyle()
+    /// Always-hidden markers (true WYSIWYG / seamless editing).
+    public static let seamless = MarkerStyle(visibility: .seamless)
 }
 
 // MARK: - Code blocks

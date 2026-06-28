@@ -430,6 +430,44 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             (nsView as? ClampedScrollView)?.clampToInsets()
             nsView.invalidateIntrinsicContentSize()
         }
+        // Seamless toggle: a runtime marker-visibility change (reveal-on-edit ⇄
+        // seamless ⇄ reveal-all, e.g. a "show raw Markdown" switch) must reach
+        // the text view + coordinator and restyle immediately to take effect.
+        if textView.configuration.markers.visibility != configuration.markers.visibility {
+            textView.configuration.markers.visibility = configuration.markers.visibility
+            context.coordinator.configuration.markers.visibility = configuration.markers.visibility
+            // Entering seamless with a collapsed caret already inside a now-hidden
+            // marker would otherwise leave the next keystroke landing before it
+            // (breaking the block) — pull the caret to the visible content first.
+            if configuration.markers.visibility == .seamless {
+                let sel = textView.selectedRange()
+                if sel.length == 0 {
+                    let snapped = MarkdownSeamlessInput.normalizedCaret(
+                        text: textView.string, proposed: sel.location,
+                        previous: sel.location, configuration: configuration
+                    )
+                    if snapped != sel.location {
+                        textView.setSelectedRange(NSRange(location: snapped, length: 0))
+                    }
+                }
+            }
+            let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
+            if fullRange.length > 0 {
+                context.coordinator.restyleParagraphs([fullRange], in: textView)
+            }
+            // Recompute active tokens for the NEW mode and sync the history, so
+            // the next click doesn't diff against a stale set (e.g. switching to
+            // `.revealAll` would otherwise make every rendered token look "newly
+            // active" and jump the selection into one).
+            let toks = MarkdownTokenizer.parseTokensViaAST(in: textView.string)
+            let active = MarkdownDetection.computeActiveTokenIndices(
+                selectionRange: textView.selectedRange(), tokens: toks,
+                in: textView.string as NSString, suppressed: !textView.isEditable,
+                markerVisibility: configuration.markers.visibility
+            )
+            context.coordinator.activeTokenIndices = active
+            context.coordinator.previousActiveTokenIndices = active
+        }
         // Reading column centers by POSITION (container subview), so the text inset is constant.
         let desiredTextInset = NSSize(
             width: configuration.textInsets.horizontal,

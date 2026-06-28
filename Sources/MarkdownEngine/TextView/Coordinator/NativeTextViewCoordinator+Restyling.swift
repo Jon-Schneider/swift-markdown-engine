@@ -54,7 +54,8 @@ extension NativeTextViewCoordinator {
             selectionRange: textView.selectedRange(),
             tokens: tokens,
             in: nsDisplay,
-            suppressed: !textView.isEditable
+            suppressed: !textView.isEditable,
+            markerVisibility: configuration.markers.visibility
         )
 
         let ranges = MarkdownStyler.styleAttributes(
@@ -237,7 +238,8 @@ extension NativeTextViewCoordinator {
             selectionRange: textView.selectedRange(),
             tokens: tokens,
             in: nsText,
-            suppressed: !textView.isEditable
+            suppressed: !textView.isEditable,
+            markerVisibility: configuration.markers.visibility
         )
         restyleTextView(textView, paragraphCandidates: paragraphs, tokens: tokens)
     }

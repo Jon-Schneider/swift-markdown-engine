@@ -73,6 +73,9 @@ public final class MarkdownUITextView: UITextView {
     /// Caret location at the last restyle; the paragraph the caret *left* needs restyling
     /// too (to re-hide markers it had revealed).
     private var previousCaretLocation: Int?
+    /// Reentrancy guard: snapping the caret out of a hidden marker sets
+    /// `selectedRange`, which re-enters `textViewDidChangeSelection`.
+    private var isSnappingSeamlessCaret = false
     /// ``` fence count at the last restyle. A change means a code block opened/closed,
     /// which can re-tokenize large regions, so the edit path falls back to a full restyle.
     private var previousBacktickCount = 0
@@ -214,6 +217,23 @@ public final class MarkdownUITextView: UITextView {
     /// new theme or syntax highlighter) so the displayed attributes don't go stale.
     public func reapplyConfiguration() {
         applyTextContainerInset()
+        // Entering seamless (e.g. a runtime toggle) with the caret already inside
+        // a now-hidden marker must pull it to the visible content, else the next
+        // keystroke lands before the marker and breaks the block. Idempotent and
+        // line-scoped, so it's safe to run on every config apply.
+        if configuration.markers.visibility == .seamless, selectedRange.length == 0,
+           !isSnappingSeamlessCaret {
+            let proposed = selectedRange.location
+            let snapped = MarkdownSeamlessInput.normalizedCaret(
+                text: textStorage.string, proposed: proposed,
+                previous: proposed, configuration: configuration
+            )
+            if snapped != proposed {
+                isSnappingSeamlessCaret = true
+                selectedRange = NSRange(location: snapped, length: 0)
+                isSnappingSeamlessCaret = false
+            }
+        }
         restyleInPlace()
     }
 
@@ -379,7 +399,8 @@ public final class MarkdownUITextView: UITextView {
 
         let parsed = tokens(for: display)
         let active = MarkdownDetection.computeActiveTokenIndices(
-            selectionRange: selectedRange, tokens: parsed, in: ns
+            selectionRange: selectedRange, tokens: parsed, in: ns,
+            markerVisibility: configuration.markers.visibility
         )
         lastActiveTokens = active
 
@@ -435,7 +456,8 @@ public final class MarkdownUITextView: UITextView {
 
         let parsed = tokens(for: display)
         let active = MarkdownDetection.computeActiveTokenIndices(
-            selectionRange: selectedRange, tokens: parsed, in: ns
+            selectionRange: selectedRange, tokens: parsed, in: ns,
+            markerVisibility: configuration.markers.visibility
         )
         lastActiveTokens = active
 
@@ -523,6 +545,29 @@ public final class MarkdownUITextView: UITextView {
             replacing: selectedRange, with: transformed,
             finalSelection: NSRange(location: insertLocation + (transformed as NSString).length, length: 0)
         )
+    }
+
+    public override func copy(_ sender: Any?) {
+        guard configuration.markers.visibility == .seamless, selectedRange.length > 0 else {
+            super.copy(sender)
+            return
+        }
+        UIPasteboard.general.string = MarkdownSeamlessInput.visibleText(
+            of: selectedRange, in: text, configuration: configuration
+        )
+    }
+
+    public override func cut(_ sender: Any?) {
+        let range = selectedRange
+        guard configuration.markers.visibility == .seamless, range.length > 0 else {
+            super.cut(sender)
+            return
+        }
+        UIPasteboard.general.string = MarkdownSeamlessInput.visibleText(
+            of: range, in: text, configuration: configuration
+        )
+        applyUndoableEdit(replacing: range, with: "",
+                          finalSelection: NSRange(location: range.location, length: 0))
     }
 
     /// Hand `imageData` to the host's `onPasteImage`; if it returns a reference, insert
@@ -675,6 +720,23 @@ extension MarkdownUITextView: UITextViewDelegate {
             pendingPreEditActiveTokens = nil
             return true
         }
+        // Seamless mode: Backspace at an element's content start unwraps the
+        // whole hidden marker in one edit. A backspace arrives as a single-char
+        // deletion (`text` empty, `range.length == 1`) with no active selection.
+        if configuration.markers.visibility == .seamless,
+           text.isEmpty, range.length == 1, selectedRange.length == 0 {
+            let caret = NSRange(location: NSMaxRange(range), length: 0)
+            if case .replace(let replaceRange, let replaceText, let unwrapCaret) =
+                MarkdownSeamlessInput.backspace(
+                    currentText: textView.text, selection: caret, configuration: configuration
+                ) {
+                pendingEditedRange = nil
+                pendingPreEditActiveTokens = nil
+                applyUndoableEdit(replacing: replaceRange, with: replaceText,
+                                  finalSelection: NSRange(location: unwrapCaret, length: 0))
+                return false
+            }
+        }
         switch MarkdownLists.computeListInsertion(
             currentText: textView.text, affectedCharRange: range,
             replacementString: text, configuration: configuration
@@ -733,7 +795,7 @@ extension MarkdownUITextView: UITextViewDelegate {
         candidates += ParagraphRestyleScoping.paragraphs(in: ns, intersecting: editedRange)
 
         let parsed = tokens(for: display)
-        let current = MarkdownDetection.computeActiveTokenIndices(selectionRange: selectedRange, tokens: parsed, in: ns)
+        let current = MarkdownDetection.computeActiveTokenIndices(selectionRange: selectedRange, tokens: parsed, in: ns, markerVisibility: configuration.markers.visibility)
         let preEdit = pendingPreEditActiveTokens ?? lastActiveTokens
         pendingPreEditActiveTokens = nil
         candidates += ParagraphRestyleScoping.renderedBlockParagraphs(in: ns, tokens: parsed)
@@ -763,11 +825,32 @@ extension MarkdownUITextView: UITextViewDelegate {
     public func textViewDidChangeSelection(_ textView: UITextView) {
         if isApplyingProgrammaticEdit { return }
         if markedTextRange != nil { return }   // selection churns during composition
+        // Seamless: pull a collapsed caret out of a hidden block marker's dead
+        // zone so it rests at the visible content (not before/inside `> `/`# `).
+        // Character motion itself stays native (grapheme-correct); this only
+        // post-adjusts, and inspects just the caret's line (no document parse).
+        if !isSnappingSeamlessCaret,
+           configuration.markers.visibility == .seamless,
+           selectedRange.length == 0 {
+            let proposed = selectedRange.location
+            let snapped = MarkdownSeamlessInput.normalizedCaret(
+                text: textStorage.string, proposed: proposed,
+                previous: previousCaretLocation ?? proposed, configuration: configuration
+            )
+            if snapped != proposed {
+                isSnappingSeamlessCaret = true
+                selectedRange = NSRange(location: snapped, length: 0)
+                isSnappingSeamlessCaret = false
+                previousCaretLocation = snapped
+                return
+            }
+        }
         let display = textStorage.string
         let ns = display as NSString
         let parsed = tokens(for: display)
         let current = MarkdownDetection.computeActiveTokenIndices(
-            selectionRange: selectedRange, tokens: parsed, in: ns
+            selectionRange: selectedRange, tokens: parsed, in: ns,
+            markerVisibility: configuration.markers.visibility
         )
         let previous = lastActiveTokens
         defer { previousCaretLocation = selectedRange.location }

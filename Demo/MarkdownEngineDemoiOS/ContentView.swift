@@ -19,10 +19,14 @@ import MarkdownEngineLatex
 struct ContentView: View {
     @State private var text = sampleMarkdown
     @StateObject private var controller = MarkdownEditorController()
+    /// Seamless-editing mode (live toggle). `.seamless` hides every Markdown
+    /// marker; `.revealAll` is the "show raw Markdown" escape hatch.
+    @State private var markerVisibility: MarkerVisibility = .revealOnEdit
 
     private var configuration: MarkdownEditorConfiguration {
         var config = MarkdownEditorConfiguration.default
         config.textInsets = TextInsets(horizontal: 16, vertical: 12)
+        config.markers.visibility = markerVisibility
         #if canImport(MarkdownEngineCodeBlocks)
         config.services.syntaxHighlighter = HighlighterSwiftBridge()
         #endif
@@ -34,6 +38,16 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Live seamless-mode switch (reveal-on-edit / seamless / reveal raw).
+            Picker("Markers", selection: $markerVisibility) {
+                Text("Reveal on edit").tag(MarkerVisibility.revealOnEdit)
+                Text("Seamless").tag(MarkerVisibility.seamless)
+                Text("Reveal raw").tag(MarkerVisibility.revealAll)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
             MarkdownUITextViewWrapper(
                 text: text,
                 configuration: configuration,

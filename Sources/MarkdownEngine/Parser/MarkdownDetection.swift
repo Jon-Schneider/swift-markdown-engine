@@ -17,10 +17,19 @@ enum MarkdownDetection {
         selectionRange: NSRange,
         tokens: [MarkdownToken],
         in text: NSString,
-        suppressed: Bool = false
+        suppressed: Bool = false,
+        markerVisibility: MarkerVisibility
     ) -> Set<Int> {
         // Read-only mode (no caret) hides all tokens regardless of any trailing selection.
         if suppressed { return [] }
+        // Seamless: rendered blocks (LaTeX, images, tables) never reveal their
+        // source, even with the caret on them. Reveal-all: every block reveals
+        // its source (the "show raw Markdown" escape hatch).
+        switch markerVisibility {
+        case .seamless:  return []
+        case .revealAll: return Set(tokens.indices)
+        case .revealOnEdit: break
+        }
         var indices: Set<Int> = []
         let caretLocation = selectionRange.location
         for (index, token) in tokens.enumerated() {

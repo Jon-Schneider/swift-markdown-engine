@@ -23,6 +23,10 @@ struct ContentView: View {
     @State private var text: String = sampleMarkdown
     @State private var showHeader = false
     @State private var headerExpanded = true
+    /// Seamless-editing mode. Switching this at runtime restyles immediately —
+    /// `.seamless` hides every Markdown marker (true WYSIWYG); `.revealAll` is
+    /// the "show raw Markdown" escape hatch.
+    @State private var markerVisibility: MarkerVisibility = .revealOnEdit
 
     var body: some View {
         NativeTextViewWrapper(
@@ -34,6 +38,16 @@ struct ContentView: View {
         )
         .toolbar {
             ToolbarItemGroup {
+                // Markers: live switch between the historical reveal-on-edit
+                // surface, the always-hidden seamless surface, and the raw
+                // "reveal everything" escape hatch.
+                Picker("Markers", selection: $markerVisibility) {
+                    Text("Reveal on edit").tag(MarkerVisibility.revealOnEdit)
+                    Text("Seamless").tag(MarkerVisibility.seamless)
+                    Text("Reveal raw").tag(MarkerVisibility.revealAll)
+                }
+                .pickerStyle(.segmented)
+
                 // Scroll-away header: an embedder-supplied SwiftUI view hosted
                 // above the body that scrolls with it. "Expanded" animates
                 // between the full content height and `headerCollapsedHeight`
@@ -77,6 +91,7 @@ struct ContentView: View {
     /// so you can see exactly what each one adds.
     private var configuration: MarkdownEditorConfiguration {
         var config = MarkdownEditorConfiguration.default
+        config.markers.visibility = markerVisibility
 
         #if canImport(MarkdownEngineCodeBlocks)
         // Syntax highlighting for fenced code blocks. Auto-switches between

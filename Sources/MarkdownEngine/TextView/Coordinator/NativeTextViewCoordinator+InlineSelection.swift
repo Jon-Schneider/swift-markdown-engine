@@ -97,6 +97,21 @@ extension NativeTextViewCoordinator {
     // MARK: - Image Embed Activation
 
     func filterImageEmbedActiveTokens(parsed: ParsedDocument, text: NSString, selectionLocation: Int) {
+        switch configuration.markers.visibility {
+        case .revealAll:
+            // Every token (incl. embeds) is already active — reveal all source.
+            return
+        case .seamless:
+            // Seamless never reveals an embed's `![[…]]` source, even with the
+            // caret inside it; keep every embed index inactive.
+            for (idx, token) in parsed.tokens.enumerated() where token.kind == .imageEmbed {
+                activeTokenIndices.remove(idx)
+            }
+            return
+        case .revealOnEdit:
+            break
+        }
+
         let activeImageEmbedIndex = imageEmbedToken(
             at: selectionLocation,
             parsed: parsed,

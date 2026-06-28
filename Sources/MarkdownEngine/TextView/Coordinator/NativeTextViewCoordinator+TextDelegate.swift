@@ -153,7 +153,8 @@ extension NativeTextViewCoordinator {
             selectionRange: safeSelRange,
             tokens: tokens,
             in: fullText,
-            suppressed: !tv.isEditable
+            suppressed: !tv.isEditable,
+            markerVisibility: configuration.markers.visibility
         )
         filterImageEmbedActiveTokens(parsed: parsed, text: fullText, selectionLocation: safeSelRange.location)
         updateAutocorrectSettings(
@@ -206,6 +207,11 @@ extension NativeTextViewCoordinator {
             onInlineSelectionChange?(nil)
             return
         }
+        // Seamless: pull the caret out of a hidden block marker before any
+        // restyle/state work. If it moved, the re-entrant selection change runs
+        // the rest, so bail here.
+        if normalizeSeamlessCaret(tv, selection: selRange) { return }
+
         updateSelectionStates(tv)
         let selLoc = selRange.location
 
@@ -217,7 +223,7 @@ extension NativeTextViewCoordinator {
         let nsText = tv.string as NSString
 
         let prevActive = activeTokenIndices
-        activeTokenIndices = MarkdownDetection.computeActiveTokenIndices(selectionRange: selRange, tokens: tokens, in: nsText, suppressed: !tv.isEditable)
+        activeTokenIndices = MarkdownDetection.computeActiveTokenIndices(selectionRange: selRange, tokens: tokens, in: nsText, suppressed: !tv.isEditable, markerVisibility: configuration.markers.visibility)
         filterImageEmbedActiveTokens(parsed: parsed, text: nsText, selectionLocation: selRange.location)
         updateAutocorrectSettings(
             tv,
@@ -291,8 +297,14 @@ extension NativeTextViewCoordinator {
             restyleTextView(tv, paragraphCandidates: paragraphCandidates, tokens: tokens)
         }
 
-        // Auto-select content when clicking (mouse) into a rendered (previously inactive) latex or image embed
-        if selRange.length == 0,
+        // Auto-select content when clicking (mouse) into a rendered (previously inactive) latex or image embed.
+        // This is a reveal-on-edit affordance only: in seamless the source is
+        // never revealed, and in reveal-all *every* token is "active", so the
+        // `newlyActive` diff would spuriously jump the selection into an
+        // unrelated rendered token (e.g. on the first click after a rebuild when
+        // `previousActiveTokenIndices` is still empty).
+        if configuration.markers.visibility == .revealOnEdit,
+           selRange.length == 0,
            let eventType = currentEventType,
            eventType == .leftMouseUp || eventType == .leftMouseDown {
             let newlyActive = activeTokenIndices.subtracting(previousActiveTokenIndices)
@@ -394,7 +406,8 @@ extension NativeTextViewCoordinator {
             selectionRange: textView.selectedRange(),
             tokens: parsed.tokens,
             in: textView.string as NSString,
-            suppressed: !textView.isEditable
+            suppressed: !textView.isEditable,
+            markerVisibility: configuration.markers.visibility
         )
 
         // Block LaTeX auto-wrap: insert newlines to keep $$ on its own line
@@ -423,7 +436,55 @@ extension NativeTextViewCoordinator {
         if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
             return handleBacktab(textView)
         }
+        if commandSelector == #selector(NSResponder.deleteBackward(_:)),
+           handleSeamlessBackspace(textView) {
+            return true
+        }
         return false
+    }
+
+    /// Seamless mode: after the system performs a (grapheme-correct) caret move,
+    /// nudge a collapsed caret out of a hidden block marker's dead zone so it
+    /// rests at the visible content rather than before/inside the `> `/`# `/`- `.
+    /// Returns true when it adjusted the selection (the resulting selection
+    /// change re-runs the rest of the handler). Driven from
+    /// `textViewDidChangeSelection`, so character motion stays native.
+    @discardableResult
+    private func normalizeSeamlessCaret(_ tv: NSTextView, selection: NSRange) -> Bool {
+        let config = (tv as? NativeTextView)?.configuration ?? configuration
+        guard config.markers.visibility == .seamless, selection.length == 0, !isSnappingSeamlessCaret
+        else { return false }
+        let snapped = MarkdownSeamlessInput.normalizedCaret(
+            text: tv.string, proposed: selection.location,
+            previous: previousCaretLocation ?? selection.location, configuration: config
+        )
+        guard snapped != selection.location else { return false }
+        isSnappingSeamlessCaret = true
+        tv.setSelectedRange(NSRange(location: snapped, length: 0))
+        isSnappingSeamlessCaret = false
+        previousCaretLocation = snapped
+        return true
+    }
+
+    /// Seamless mode: Backspace at the start of an element's content removes the
+    /// whole hidden marker (unwrap) in one edit instead of nibbling invisible
+    /// characters. Returns `true` when it handled the keystroke.
+    private func handleSeamlessBackspace(_ textView: NSTextView) -> Bool {
+        let config = (textView as? NativeTextView)?.configuration ?? configuration
+        guard config.markers.visibility == .seamless else { return false }
+        switch MarkdownSeamlessInput.backspace(
+            currentText: textView.string,
+            selection: textView.selectedRange(),
+            configuration: config
+        ) {
+        case .allowDefault:
+            return false
+        case .replace(let range, let text, let caret):
+            if MarkdownLists.performEdit(textView, replace: range, with: text) {
+                textView.setSelectedRange(NSRange(location: caret, length: 0))
+            }
+            return true
+        }
     }
 
     public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {

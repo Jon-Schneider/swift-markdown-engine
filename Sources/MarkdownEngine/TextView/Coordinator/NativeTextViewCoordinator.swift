@@ -87,6 +87,9 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var pendingEditedRange: NSRange? = nil
     var pendingPreEditActiveTokenIndices: Set<Int>? = nil
     var previousCaretLocation: Int? = nil
+    /// Reentrancy guard while seamless caret normalization sets the selection
+    /// (which re-enters `textViewDidChangeSelection`).
+    var isSnappingSeamlessCaret = false
     /// Drag-select suppressed a restyle; replayed on the next non-drag selection change.
     var needsRestyleAfterDrag = false
 

@@ -139,8 +139,8 @@ enum MarkdownASTStyler {
             guard last == 0x0A || last == 0x0D else { break }
             hr.length -= 1
         }
-        guard hr.length > 0,
-              !(NSLocationInRange(ctx.caret, hr) || ctx.caret == NSMaxRange(hr)) else { return }
+        let editing = NSLocationInRange(ctx.caret, hr) || ctx.caret == NSMaxRange(hr)
+        guard hr.length > 0, ctx.showsDecoration(editing: editing) else { return }
         attrs.append((hr, [.foregroundColor: PlatformColor.clear, .thematicBreak: true]))
         attrs.append((hr, [.paragraphStyle: NSMutableParagraphStyle()]))
     }
@@ -184,7 +184,8 @@ enum MarkdownASTStyler {
         // 2. Marker decoration (suppressed while the caret edits the syntax).
         if let box = item.checkbox {
             let syntax = NSRange(location: item.marker.location, length: NSMaxRange(box) - item.marker.location)
-            if NSLocationInRange(ctx.caret, syntax) || ctx.caret == NSMaxRange(box) { return }
+            let editing = NSLocationInRange(ctx.caret, syntax) || ctx.caret == NSMaxRange(box)
+            guard ctx.showsDecoration(editing: editing) else { return }
             let spacer = NSRange(location: NSMaxRange(item.marker), length: box.location - NSMaxRange(item.marker))
             attrs.append((item.marker, [.foregroundColor: PlatformColor.clear]))
             if spacer.length > 0 { attrs.append((spacer, [.foregroundColor: PlatformColor.clear])) }
@@ -198,7 +199,7 @@ enum MarkdownASTStyler {
         } else if !item.ordered {
             let syntax = NSRange(location: item.marker.location,
                                  length: item.contentRange.location - item.marker.location)
-            if NSLocationInRange(ctx.caret, syntax) { return }
+            guard ctx.showsDecoration(editing: NSLocationInRange(ctx.caret, syntax)) else { return }
             attrs.append((item.marker, [.bulletMarker: true, .foregroundColor: PlatformColor.clear]))
         }
     }
@@ -256,6 +257,43 @@ enum MarkdownASTStyler {
             guard range.length > 0, caret == NSMaxRange(range) else { return false }
             let last = ns.character(at: caret - 1)
             return last != 0x0A && last != 0x0D
+        }
+
+        /// Whether a syntax marker should be drawn (revealed), honoring the
+        /// configured visibility mode. In `.seamless` markers are never
+        /// revealed; in `.revealAll` always; in `.revealOnEdit` it follows the
+        /// caret (`isActive`) exactly as before.
+        func revealMarker(_ range: NSRange) -> Bool {
+            switch config.markers.visibility {
+            case .seamless:     return false
+            case .revealAll:    return true
+            case .revealOnEdit: return isActive(range)
+            }
+        }
+
+        /// Whether a caret-driven *block decoration* (thematic-break rule, list
+        /// bullet, task checkbox) should be drawn. These branches show the
+        /// decoration when the caret is *not* editing the raw syntax; seamless
+        /// always decorates, reveal-all never does.
+        func showsDecoration(editing: Bool) -> Bool {
+            switch config.markers.visibility {
+            case .seamless:     return true
+            case .revealAll:    return false
+            case .revealOnEdit: return !editing
+            }
+        }
+
+        /// In seamless mode hidden markers must collapse to ~zero width so caret
+        /// geometry has no invisible gaps. Reveal-on-edit keeps its historical
+        /// tiny-font hide (no kern) so existing rendering stays pixel-identical.
+        var collapsesHiddenMarkers: Bool { config.markers.visibility == .seamless }
+
+        /// Attributes for a hidden block marker (`>`, code fence). Clear + tiny
+        /// font always; additionally kerned to zero advance in seamless mode.
+        var hiddenBlockMarkerAttrs: [NSAttributedString.Key: Any] {
+            var a: [NSAttributedString.Key: Any] = [.foregroundColor: PlatformColor.clear, .font: inlineMarkerFont]
+            if collapsesHiddenMarkers { a[.kern] = -inlineMarkerFont.pointSize }
+            return a
         }
         var theme: MarkdownEditorTheme { config.theme }
         var text: String { ns as String }
@@ -360,10 +398,10 @@ enum MarkdownASTStyler {
             if contentRange.length > 0 {
                 attrs.append((contentRange, [.foregroundColor: ctx.theme.mutedText]))
             }
-            if ctx.isActive(tokenRange) {
+            if ctx.revealMarker(tokenRange) {
                 attrs.append((markerRange, [.foregroundColor: ctx.theme.mutedText]))
             } else {
-                attrs.append((markerRange, [.foregroundColor: PlatformColor.clear, .font: ctx.inlineMarkerFont]))
+                attrs.append((markerRange, ctx.hiddenBlockMarkerAttrs))
             }
             // Whole line, not just the first char, so each soft-wrapped visual line
             attrs.append((tokenRange, [.blockquoteLevel: level]))
@@ -386,7 +424,7 @@ enum MarkdownASTStyler {
             }
         }
         // Use the whole block range (not codeRange): an incomplete fence collapses codeRange to the ```.
-        let markerAttrs: [NSAttributedString.Key: Any] = ctx.isActive(range)
+        let markerAttrs: [NSAttributedString.Key: Any] = ctx.revealMarker(range)
             ? [.foregroundColor: ctx.theme.mutedText, .font: ctx.codeFont]
             : [.foregroundColor: PlatformColor.clear, .font: ctx.codeFont]   // hiddenMarkerFont == codeFont
         attrs.append((parts.openFence, markerAttrs))
@@ -443,10 +481,14 @@ enum MarkdownASTStyler {
                 attrs.append((contentRange, [.font: ctx.codeFont, .backgroundColor: ctx.codeBackground]))
                 // Suppress spell-check underlines on inline `code` spans (markers + content).
                 attrs.append((range, [.spellingState: 0]))
-                let markerAttrs: [NSAttributedString.Key: Any] = ctx.isActive(range)
+                let revealCodeMarkers = ctx.revealMarker(range)
+                var markerAttrs: [NSAttributedString.Key: Any] = revealCodeMarkers
                     ? [.foregroundColor: ctx.theme.mutedText, .font: ctx.codeFont]
                     : [.foregroundColor: ctx.theme.mutedText.withAlphaComponent(ctx.config.markers.inlineCodeMarkerAlpha),
                        .font: ctx.inlineMarkerFont]
+                if !revealCodeMarkers && ctx.collapsesHiddenMarkers {
+                    markerAttrs[.kern] = -ctx.inlineMarkerFont.pointSize
+                }
                 for marker in markers(of: range, content: contentRange) { attrs.append((marker, markerAttrs)) }
 
             case .link(let range, let textRange, let url, let markers, let children):
@@ -468,7 +510,7 @@ enum MarkdownASTStyler {
         attrs.append((range, [.spellingState: 0]))
         var urlString = ctx.ns.substring(with: urlRange)
         if !urlString.contains("://") { urlString = "https://\(urlString)" }
-        let isActive = ctx.isActive(range)
+        let isActive = ctx.revealMarker(range)
         if let url = URL(string: urlString) {
             if isActive {
                 attrs.append((textRange, [
@@ -494,7 +536,7 @@ enum MarkdownASTStyler {
         let linkID = ctx.wikiLinkID(range)
         var contentAttrs: [NSAttributedString.Key: Any] = [:]
         if let linkID { contentAttrs[.wikiLinkID] = linkID }
-        if !ctx.isActive(range) {
+        if !ctx.revealMarker(range) {
             // Resolve by the stable UUID when present 
             let exists = ctx.config.services.wikiLinks.resolve(displayName: linkID ?? nodeName, range: name)?.exists ?? false
             if exists {
@@ -514,7 +556,7 @@ enum MarkdownASTStyler {
         for block in blocks where ctx.inScope(block.range) {
             switch block {
             case .heading(_, let range, let markers, let inlines):
-                if !ctx.isActive(range) { shrink(markers, ctx: ctx, into: &attrs) }
+                if !ctx.revealMarker(range) { shrink(markers, ctx: ctx, into: &attrs) }
                 shrinkInlineMarkers(inlines, ctx: ctx, into: &attrs)
             case .paragraph(_, let inlines), .blockquote(_, let inlines):
                 shrinkInlineMarkers(inlines, ctx: ctx, into: &attrs)
@@ -532,15 +574,15 @@ enum MarkdownASTStyler {
         for node in nodes {
             switch node {
             case .emphasis(_, let range, let markers, let children):
-                let active = forceReveal || ctx.isActive(range)
+                let active = forceReveal || ctx.revealMarker(range)
                 if !active { shrink(markers, ctx: ctx, into: &attrs) }
                 shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
             case .strikethrough(let range, let markers, let children):
-                let active = forceReveal || ctx.isActive(range)
+                let active = forceReveal || ctx.revealMarker(range)
                 if !active { shrink(markers, ctx: ctx, into: &attrs) }
                 shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
             case .link(let range, _, _, let markers, let children):
-                let active = forceReveal || ctx.isActive(range)
+                let active = forceReveal || ctx.revealMarker(range)
                 if !active {
                     shrink(markers, ctx: ctx, into: &attrs)
                     if markers.count >= 4 {   // also hide the "(url)" run
@@ -551,11 +593,11 @@ enum MarkdownASTStyler {
                 }
                 shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
             case .wikiLink(let range, _, _, let markers):
-                if !(forceReveal || ctx.isActive(range)) { shrink(markers, ctx: ctx, into: &attrs) }
+                if !(forceReveal || ctx.revealMarker(range)) { shrink(markers, ctx: ctx, into: &attrs) }
             case .image(let range, _, _, let markers):
-                if !(forceReveal || ctx.isActive(range)) { shrink(markers, ctx: ctx, into: &attrs) }
+                if !(forceReveal || ctx.revealMarker(range)) { shrink(markers, ctx: ctx, into: &attrs) }
             case .escape(let range, _, let marker):
-                if !(forceReveal || ctx.isActive(range)) { shrink([marker], ctx: ctx, into: &attrs) }
+                if !(forceReveal || ctx.revealMarker(range)) { shrink([marker], ctx: ctx, into: &attrs) }
             case .text, .code, .imageEmbed, .inlineLatex:
                 break   // own marker handling / not shrunk
             }
