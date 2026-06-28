@@ -22,6 +22,8 @@ public enum MarkdownFormattingCommand: Equatable {
     case heading(Int)
     case bulletList
     case numberedList
+    case blockquote
+    case codeBlock
     /// Remove inline emphasis (bold / italic / strikethrough / inline-code) markers from
     /// the selection. A pure action, not a toggle — block-level prefixes (heading, list,
     /// blockquote) are cleared by toggling their own command off, not by this one.
@@ -48,6 +50,8 @@ public struct MarkdownSelectionState: Equatable {
     public var headingLevel: Int?
     public var isBulletList: Bool
     public var isNumberedList: Bool
+    public var isBlockquote: Bool
+    public var isCodeBlock: Bool
 
     public init(
         isBold: Bool = false,
@@ -56,7 +60,9 @@ public struct MarkdownSelectionState: Equatable {
         isInlineCode: Bool = false,
         headingLevel: Int? = nil,
         isBulletList: Bool = false,
-        isNumberedList: Bool = false
+        isNumberedList: Bool = false,
+        isBlockquote: Bool = false,
+        isCodeBlock: Bool = false
     ) {
         self.isBold = isBold
         self.isItalic = isItalic
@@ -65,6 +71,8 @@ public struct MarkdownSelectionState: Equatable {
         self.headingLevel = headingLevel
         self.isBulletList = isBulletList
         self.isNumberedList = isNumberedList
+        self.isBlockquote = isBlockquote
+        self.isCodeBlock = isCodeBlock
     }
 }
 
@@ -87,6 +95,10 @@ enum MarkdownFormatting {
             return listEdit(text: text, selection: selection, prefix: "- ")
         case .numberedList:
             return listEdit(text: text, selection: selection, prefix: "1. ")
+        case .blockquote:
+            return blockquoteEdit(text: text, selection: selection)
+        case .codeBlock:
+            return codeBlockEdit(text: text, selection: selection)
         case .clearFormatting:
             return clearFormattingEdit(text: text, selection: selection)
         }
@@ -116,6 +128,11 @@ enum MarkdownFormatting {
         case .numberedList:
             let line = ns.substring(with: ns.lineRange(for: selection))
             return line.range(of: #"^\d+\. "#, options: .regularExpression) != nil
+        case .blockquote:
+            let line = ns.substring(with: ns.lineRange(for: selection))
+            return isBlockquoteLine(line)
+        case .codeBlock:
+            return enclosingToken(text: text, selection: selection, kinds: [.codeBlock]) != nil
         }
     }
 
@@ -134,12 +151,15 @@ enum MarkdownFormatting {
         let headingLevel = (1...6).first { trimmed.hasPrefix(String(repeating: "#", count: $0) + " ") }
         let isBulletList = line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") || line.hasPrefix("\t• ")
         let isNumberedList = line.range(of: #"^\d+\. "#, options: .regularExpression) != nil
+        let isBlockquote = isBlockquoteLine(line)
+        let isCodeBlock = tokens.contains { $0.kind == .codeBlock && enclosesSelection($0.range, selection) }
 
         return MarkdownSelectionState(
             isBold: isBold, isItalic: isItalic,
             isStrikethrough: isStrikethrough, isInlineCode: isInlineCode,
             headingLevel: headingLevel,
-            isBulletList: isBulletList, isNumberedList: isNumberedList
+            isBulletList: isBulletList, isNumberedList: isNumberedList,
+            isBlockquote: isBlockquote, isCodeBlock: isCodeBlock
         )
     }
 
@@ -431,5 +451,83 @@ enum MarkdownFormatting {
             range: startLine, text: newLine,
             selection: NSRange(location: location, length: (content as NSString).length)
         )
+    }
+
+    // MARK: - Blockquote
+
+    /// One level of blockquote marker at a line start: up to 3 leading spaces/tabs, a `>`, and an
+    /// optional single following space/tab — matching the block tokenizer's marker scan
+    /// (`BlockLevelTokenizer`, legacy `^[ \t]{0,3}((?:>[ \t]?)+)`). Detection and the toggle both
+    /// use this so they agree with how the line actually renders (incl. indented/imported quotes).
+    private static let blockquoteMarkerPattern = #"^[ \t]{0,3}>[ \t]?"#
+
+    private static func isBlockquoteLine(_ line: String) -> Bool {
+        line.range(of: blockquoteMarkerPattern, options: .regularExpression) != nil
+    }
+
+    /// Toggle a `> ` prefix on the caret's line (single-line, matching the list/heading
+    /// convention). Toggling off removes ONE level of quoting (`>> x` → `> x`, `> x` → `x`,
+    /// `   > x` → `x`).
+    private static func blockquoteEdit(text: String, selection: NSRange) -> FormattingEdit {
+        let ns = text as NSString
+        let lineRange = ns.lineRange(for: selection)
+        let originalLine = ns.substring(with: lineRange)
+        let lineText = originalLine.trimmingCharacters(in: .newlines)
+        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
+
+        let newLine: String         // full replacement line (sans the preserved newline)
+        let visibleStart: Int       // where the non-marker text begins, to select like list/heading
+        let visibleText: String
+        if let marker = lineText.range(of: blockquoteMarkerPattern, options: .regularExpression) {
+            visibleText = String(lineText[marker.upperBound...])   // toggle off one level
+            newLine = visibleText
+            visibleStart = lineRange.location
+        } else {
+            visibleText = lineText                                 // apply
+            newLine = "> " + lineText
+            visibleStart = lineRange.location + 2
+        }
+        return FormattingEdit(
+            range: lineRange, text: newLine + suffix,
+            selection: NSRange(location: visibleStart, length: (visibleText as NSString).length)
+        )
+    }
+
+    // MARK: - Code block (fenced)
+
+    /// Wrap the selection's line(s) in a ``` fence, or unwrap when the caret is already inside a
+    /// fenced block. This engine's block tokenizer closes a fence on ANY line that starts with
+    /// three backticks (it ignores CommonMark's longer-fence rule), so a body that itself contains
+    /// a ``` line can't be fenced cleanly — `verifiedWrap` catches that and makes it a no-op rather
+    /// than emit a block that closes early.
+    private static func codeBlockEdit(text: String, selection: NSRange) -> FormattingEdit {
+        let ns = text as NSString
+
+        // Toggle off: caret inside an existing fenced block → replace the whole block with its
+        // code, dropping the newline that preceded the closing fence.
+        if let token = enclosingToken(text: text, selection: selection, kinds: [.codeBlock]) {
+            var inner = ns.substring(with: token.contentRange)
+            if inner.hasSuffix("\n") { inner.removeLast() }
+            return FormattingEdit(
+                range: token.range, text: inner,
+                selection: NSRange(location: token.range.location, length: (inner as NSString).length)
+            )
+        }
+
+        let lineRange = ns.lineRange(for: selection)
+        let block = ns.substring(with: lineRange)
+        let hasTrailingNewline = block.hasSuffix("\n")
+        let body = hasTrailingNewline ? String(block.dropLast()) : block
+        let trailingNewline = hasTrailingNewline ? "\n" : ""
+        let newText = "```\n" + body + "\n```" + trailingNewline
+        let location = lineRange.location + 4   // after "```\n"
+        let edit = FormattingEdit(
+            range: lineRange, text: newText,
+            selection: NSRange(location: location, length: (body as NSString).length)
+        )
+        // An empty body is an intentional empty-block insert (caret on the blank line) — the parser
+        // won't form a token over nothing, so skip verification there.
+        guard !body.isEmpty else { return edit }
+        return verifiedWrap(edit, formsKind: .codeBlock, in: text, selection: selection)
     }
 }

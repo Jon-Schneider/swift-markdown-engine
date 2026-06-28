@@ -273,6 +273,66 @@ struct MarkdownFormattingTests {
             == FormattingEdit(range: NSRange(location: 0, length: 3), text: "1. foo", selection: NSRange(location: 3, length: 3)))
     }
 
+    // MARK: - Blockquote
+
+    @Test("Blockquote adds a > prefix and selects the line text")
+    func blockquoteAddsPrefix() {
+        #expect(edit(.blockquote, "hi", NSRange(location: 0, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 2), text: "> hi", selection: NSRange(location: 2, length: 2)))
+    }
+
+    @Test("Blockquote toggles off one level of quoting")
+    func blockquoteTogglesOff() {
+        #expect(edit(.blockquote, "> hi", NSRange(location: 2, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 4), text: "hi", selection: NSRange(location: 0, length: 2)))
+        // Nested: removes only the outer level.
+        #expect(edit(.blockquote, ">> hi", NSRange(location: 3, length: 0)).text == "> hi")
+    }
+
+    @Test("Blockquote detection and toggle agree on an indented quote (matches the tokenizer)")
+    func blockquoteIndentedLineTogglesOff() {
+        // The block tokenizer accepts up to 3 leading spaces before `>`, so an indented quote both
+        // reports active AND toggles off (rather than getting double-quoted).
+        #expect(MarkdownFormatting.isActive(.blockquote, text: "   > hi", selection: NSRange(location: 5, length: 0)))
+        #expect(edit(.blockquote, "   > hi", NSRange(location: 5, length: 0)).text == "hi")
+    }
+
+    @Test("Blockquote preserves a non-final line's newline")
+    func blockquotePreservesNewline() {
+        let result = edit(.blockquote, "a\nb", NSRange(location: 0, length: 0))
+        #expect(result.range == NSRange(location: 0, length: 2))   // "a\n"
+        #expect(result.text == "> a\n")
+    }
+
+    // MARK: - Code block (fenced)
+
+    @Test("Code block wraps the line in a fence and selects the body")
+    func codeBlockWrapsLine() {
+        #expect(edit(.codeBlock, "foo", NSRange(location: 0, length: 3))
+            == FormattingEdit(range: NSRange(location: 0, length: 3), text: "```\nfoo\n```", selection: NSRange(location: 4, length: 3)))
+    }
+
+    @Test("Code block toggles off by unwrapping the fenced block")
+    func codeBlockTogglesOff() {
+        #expect(edit(.codeBlock, "```\ncode\n```", NSRange(location: 5, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 12), text: "code", selection: NSRange(location: 0, length: 4)))
+    }
+
+    @Test("Code block refuses a body that already contains a fence line (would close early)")
+    func codeBlockRefusesBodyWithFence() {
+        // This engine closes a fence on any line starting with ```, so a body containing a ```
+        // line can't be wrapped cleanly — verifiedWrap returns an identity no-op.
+        let selection = NSRange(location: 0, length: 7)
+        #expect(edit(.codeBlock, "a\n```\nb", selection)
+            == FormattingEdit(range: selection, text: "a\n```\nb", selection: selection))
+    }
+
+    @Test("Code block on an empty selection inserts an empty fenced block")
+    func codeBlockEmptyInsert() {
+        #expect(edit(.codeBlock, "", NSRange(location: 0, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 0), text: "```\n\n```", selection: NSRange(location: 4, length: 0)))
+    }
+
     // MARK: - Active state (menu on/off)
 
     @Test("isActive reflects the current formatting")
@@ -295,6 +355,14 @@ struct MarkdownFormattingTests {
         #expect(!MarkdownFormatting.isActive(.inlineCode, text: "foo", selection: NSRange(location: 0, length: 3)))
         // clearFormatting is an action, never an "on" state.
         #expect(!MarkdownFormatting.isActive(.clearFormatting, text: "**foo**", selection: NSRange(location: 2, length: 3)))
+    }
+
+    @Test("isActive reflects blockquote and code block")
+    func isActiveBlockquoteAndCodeBlock() {
+        #expect(MarkdownFormatting.isActive(.blockquote, text: "> q", selection: NSRange(location: 2, length: 0)))
+        #expect(!MarkdownFormatting.isActive(.blockquote, text: "q", selection: NSRange(location: 0, length: 0)))
+        #expect(MarkdownFormatting.isActive(.codeBlock, text: "```\nc\n```", selection: NSRange(location: 5, length: 0)))
+        #expect(!MarkdownFormatting.isActive(.codeBlock, text: "c", selection: NSRange(location: 0, length: 0)))
     }
 
     // MARK: - Selection state (toolbar sync)
@@ -342,4 +410,13 @@ struct MarkdownFormattingTests {
         #expect(state("1. item", NSRange(location: 4, length: 0)).isNumberedList)
         #expect(!state("1. item", NSRange(location: 4, length: 0)).isBulletList)
     }
+
+    @Test("Selection state flags blockquote and code-block lines")
+    func selectionStateBlockAndCode() {
+        #expect(state("> quoted", NSRange(location: 3, length: 0)).isBlockquote)
+        #expect(!state("plain", NSRange(location: 2, length: 0)).isBlockquote)
+        #expect(state("```\ncode\n```", NSRange(location: 5, length: 0)).isCodeBlock)
+        #expect(!state("code", NSRange(location: 2, length: 0)).isCodeBlock)
+    }
 }
+

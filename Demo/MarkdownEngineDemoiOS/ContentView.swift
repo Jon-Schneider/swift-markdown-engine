@@ -125,6 +125,9 @@ private struct FormatBar: View {
             button("list.bullet", active: state.isBulletList) { onCommand(.bulletList) }
             button("list.number", active: state.isNumberedList) { onCommand(.numberedList) }
             Divider().frame(height: 24)
+            button("text.quote", active: state.isBlockquote) { onCommand(.blockquote) }
+            button("curlybraces", active: state.isCodeBlock) { onCommand(.codeBlock) }
+            Divider().frame(height: 24)
             button("magnifyingglass", active: false, action: onFind)
             button("link", active: inLink, action: onLink)
             Spacer()

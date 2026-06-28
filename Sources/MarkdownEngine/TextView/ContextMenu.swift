@@ -62,7 +62,19 @@ extension NativeTextViewWrapper.Coordinator {
             listSubmenu.addItem(orderedItem)
             listItem.submenu = listSubmenu
             customMenu.insertItem(listItem, at: fontIndex + 2)
-            customMenu.insertItem(NSMenuItem.separator(), at: fontIndex + 3)
+
+            let blockItem = NSMenuItem(title: "Block", action: nil, keyEquivalent: "")
+            let blockSubmenu = NSMenu(title: "Block")
+            let quoteItem = NSMenuItem(title: "Quote", action: #selector(didMarkdownBlockquote(_:)), keyEquivalent: "")
+            quoteItem.target = self
+            blockSubmenu.addItem(quoteItem)
+            let codeBlockItem = NSMenuItem(title: "Code Block", action: #selector(didMarkdownCodeBlock(_:)), keyEquivalent: "")
+            codeBlockItem.target = self
+            blockSubmenu.addItem(codeBlockItem)
+            blockItem.submenu = blockSubmenu
+            customMenu.insertItem(blockItem, at: fontIndex + 3)
+
+            customMenu.insertItem(NSMenuItem.separator(), at: fontIndex + 4)
         }
 
         return customMenu
@@ -208,6 +220,14 @@ extension NativeTextViewWrapper.Coordinator {
         applyMarkdownCommand(.clearFormatting)
     }
 
+    @objc func didMarkdownBlockquote(_ sender: Any?) {
+        applyMarkdownCommand(.blockquote)
+    }
+
+    @objc func didMarkdownCodeBlock(_ sender: Any?) {
+        applyMarkdownCommand(.codeBlock)
+    }
+
     @objc func didMarkdownUnorderedList(_ sender: Any?) {
         applyList(prefix: "- ")
     }
@@ -312,6 +332,12 @@ extension NativeTextViewWrapper.Coordinator: NSMenuItemValidation {
             // Enabled only when the Clear Formatting edit would actually change something.
             let edit = MarkdownFormatting.edit(for: .clearFormatting, text: tv.string, selection: range)
             return nsText.substring(with: edit.range) != edit.text
+        case #selector(didMarkdownBlockquote(_:)):
+            menuItem.state = MarkdownFormatting.isActive(.blockquote, text: tv.string, selection: range) ? .on : .off
+            return true
+        case #selector(didMarkdownCodeBlock(_:)):
+            menuItem.state = MarkdownFormatting.isActive(.codeBlock, text: tv.string, selection: range) ? .on : .off
+            return true
         case #selector(didMarkdownHeading(_:)):
             return !isSelectionHeading(level: menuItem.tag, in: nsText, range: range)
         case #selector(didMarkdownUnorderedList(_:)),
