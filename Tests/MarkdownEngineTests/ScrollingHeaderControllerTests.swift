@@ -6,6 +6,10 @@
 //  height, and removal — headless (no window).
 //
 
+#if os(macOS)
+// macOS-only test (AppKit / NSView-centric). Guarded so the shared
+// MarkdownEngineTests target also compiles for the iOS simulator, where
+// UIKit-only suites (e.g. iOS checkbox/table verify-tests) run.
 import AppKit
 import SwiftUI
 import Testing
@@ -204,3 +208,4 @@ struct ScrollingHeaderControllerTests {
         #expect(stack.container.subviews.count == 1)   // text view only
     }
 }
+#endif

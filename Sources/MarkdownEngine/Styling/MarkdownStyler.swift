@@ -98,8 +98,10 @@ enum MarkdownStyler {
         result += styleImageEmbeds(ctx)
         result += styleImageLinks(ctx)
         // Table rendering composites the grid to a PlatformImage (MarkdownStyler+Tables);
-        // cross-platform as of the iOS tables port (wide-table horizontal scroll still
-        // macOS-only — see MarkdownStyler+Tables `styleTables`).
+        // cross-platform as of the iOS tables port. Wide-table horizontal scroll is
+        // wired on BOTH platforms: `WideTableOverlay` (NSScrollView) on macOS and
+        // `MarkdownTableScrollView` (UIScrollView) on iOS, both driven by the
+        // `.scrollableBlock*` attributes emitted here. (Verified on iOS — plan 2.3.)
         result += styleTables(ctx)
         return result
     }

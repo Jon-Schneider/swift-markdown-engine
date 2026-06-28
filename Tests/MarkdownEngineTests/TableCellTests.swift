@@ -7,6 +7,12 @@
 //  body text, including nested emphasis the old per-cell regexes could not do.
 //
 
+#if os(macOS)
+// Guarded macOS-only because this test's imports use AppKit font/image types
+// (NSFont/NSImage/NSApplication). The styler/parser logic it exercises is
+// cross-platform; the guard just lets the shared MarkdownEngineTests target
+// also compile for the iOS simulator (where the UIKit verify-suites run).
+// TODO: re-express on PlatformFont/PlatformImage to also run on iOS.
 import AppKit
 import Testing
 @testable import MarkdownEngine
@@ -79,3 +85,4 @@ struct TableCellTests {
         #expect(traits(s, "c").contains(.bold))
     }
 }
+#endif

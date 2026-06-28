@@ -6,6 +6,10 @@
 //  composition, and reading-column centering — headless (no window).
 //
 
+#if os(macOS)
+// macOS-only test (AppKit / NSView-centric). Guarded so the shared
+// MarkdownEngineTests target also compiles for the iOS simulator, where
+// UIKit-only suites (e.g. iOS checkbox/table verify-tests) run.
 import AppKit
 import Testing
 @testable import MarkdownEngine
@@ -155,3 +159,4 @@ struct NativeTextViewContainerTests {
         #expect(stack.textView.frame.origin.x == 0)
     }
 }
+#endif

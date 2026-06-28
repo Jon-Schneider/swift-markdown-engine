@@ -7,6 +7,10 @@
 //  while it was switched away. Headless.
 //
 
+#if os(macOS)
+// macOS-only test (AppKit / NSView-centric). Guarded so the shared
+// MarkdownEngineTests target also compiles for the iOS simulator, where
+// UIKit-only suites (e.g. iOS checkbox/table verify-tests) run.
 import AppKit
 import SwiftUI
 import Testing
@@ -65,3 +69,4 @@ struct PerDocumentUndoTests {
         #expect(c.invalidateUndoIfContentDiverged(for: "A", incomingText: "x") == false)
     }
 }
+#endif
