@@ -655,6 +655,28 @@ struct SeamlessFullLineElementTests {
             == .replace(range: NSRange(location: 0, length: 9), text: "x\n", caret: 0))
     }
 
+    @Test("Unwrapping an unterminated one-line fence keeps the body")
+    func backspaceUnwrapsUnterminatedSingleLine() {
+        // "```\nx" — no closing fence; the block runs to EOF, so the body is "x"
+        // and must NOT be dropped.
+        #expect(backspace("```\nx", at: 4)
+            == .replace(range: NSRange(location: 0, length: 5), text: "x", caret: 0))
+    }
+
+    @Test("Unwrapping an unterminated multi-line fence keeps every body line")
+    func backspaceUnwrapsUnterminatedMultiLine() {
+        // "```\na\nb" — last line "b" is body, not a close fence.
+        #expect(backspace("```\na\nb", at: 4)
+            == .replace(range: NSRange(location: 0, length: 7), text: "a\nb", caret: 0))
+    }
+
+    @Test("Unwrapping an empty terminated block yields an empty paragraph")
+    func backspaceUnwrapsEmptyBlock() {
+        // "```\n```" — open then close, no body → unwrap to "".
+        #expect(backspace("```\n```", at: 4)
+            == .replace(range: NSRange(location: 0, length: 7), text: "", caret: 0))
+    }
+
     @Test("Backspace in the middle of a code body is a normal delete")
     func backspaceMidBodyNative() {
         #expect(backspace("```\nx\n```", at: 5) == .allowDefault)

@@ -214,8 +214,13 @@ enum MarkdownSeamlessInput {
             let firstLine = ns.lineRange(for: NSRange(location: range.location, length: 0))
             let bodyStart = NSMaxRange(firstLine)
             guard caret == bodyStart else { continue }
-            let lastLine = ns.lineRange(for: NSRange(location: max(range.location, NSMaxRange(range) - 1), length: 0))
-            let bodyEnd = lastLine.location
+            // Exclude the closing fence line — but only if there *is* one. An
+            // unterminated fence (open ``` with no close) is a block through EOF
+            // per `BlockParser`, so its last line is body content, not a fence;
+            // dropping it would lose text.
+            let blockEnd = NSMaxRange(range)
+            let lastLine = ns.lineRange(for: NSRange(location: max(range.location, blockEnd - 1), length: 0))
+            let bodyEnd = lineIsFenceDelimiter(ns, lastLine) ? lastLine.location : blockEnd
             let body = bodyEnd > bodyStart
                 ? ns.substring(with: NSRange(location: bodyStart, length: bodyEnd - bodyStart))
                 : ""
