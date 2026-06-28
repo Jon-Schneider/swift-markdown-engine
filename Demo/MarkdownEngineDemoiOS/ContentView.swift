@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import UIKit
 import MarkdownEngine
 #if canImport(MarkdownEngineCodeBlocks)
 import MarkdownEngineCodeBlocks
@@ -31,6 +32,11 @@ struct ContentView: View {
         config.textInsets = TextInsets(horizontal: 16, vertical: 12)
         config.markers.visibility = markerVisibility
         config.markers.seamlessBackspaceUnwrap = backspaceUnwrap
+        // Resolve `![alt](url)` to a generated swatch so the sample's image
+        // renders (the default provider returns nil). Lets you see seamless's
+        // atomic image treatment: the image stays rendered, the raw source
+        // never appears, the caret skips it, and Backspace deletes it whole.
+        config.services.images = DemoImageProvider()
         #if canImport(MarkdownEngineCodeBlocks)
         config.services.syntaxHighlighter = HighlighterSwiftBridge()
         #endif
@@ -155,6 +161,11 @@ func greet(_ name: String) -> String {
 print(greet("iOS"))
 ```
 
+## Image
+A standalone image renders inline; in seamless mode the `![alt](url)` source is hidden and the image is treated as one atomic unit.
+
+![A sample image](demo://card)
+
 ## Math (LaTeX)
 Inline math like $E = mc^2$ flows with the text, and block math centers:
 
@@ -188,3 +199,33 @@ Some *italic*, some **bold**, and a bit of `inline code`.
 
 That horizontal rule above is drawn by the fragment too.
 """
+
+/// Resolves any `![alt](url)` to a generated gradient swatch so the demo can
+/// show real image rendering without bundling assets or hitting the network.
+/// A concrete named type (not a closure) per the engine's injection style.
+private struct DemoImageProvider: EmbeddedImageProvider {
+    func image(for reference: EmbeddedImageRequest) -> PlatformImage? {
+        let size = CGSize(width: 240, height: 140)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { ctx in
+            let cg = ctx.cgContext
+            let colors = [UIColor.systemIndigo.cgColor, UIColor.systemTeal.cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                         colors: colors, locations: [0, 1]) {
+                cg.drawLinearGradient(gradient, start: .zero,
+                                      end: CGPoint(x: size.width, y: size.height), options: [])
+            }
+            let label = "🖼 demo image" as NSString
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 20),
+                .foregroundColor: UIColor.white,
+            ]
+            let textSize = label.size(withAttributes: attrs)
+            label.draw(at: CGPoint(x: (size.width - textSize.width) / 2,
+                                   y: (size.height - textSize.height) / 2),
+                       withAttributes: attrs)
+        }
+    }
+
+    func fingerprint() -> AnyHashable { "demo-image-v1" }
+}
