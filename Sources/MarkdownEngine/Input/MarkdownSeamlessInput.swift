@@ -246,10 +246,19 @@ enum MarkdownSeamlessInput {
     /// the span (it's the block's first content, or the document start), it falls
     /// back to unwrapping the span — the safe, non-corrupting option there.
     private static func inlineBackspace(ns: NSString, caret: Int) -> SeamlessEditDecision? {
+        // O(1) pre-gate: an inline span's hidden opening marker always ends in one
+        // of `* _ ~ ` [ $`, so if the character left of the caret isn't one, no span
+        // starts here — skip the paragraph parse entirely (ordinary prose deletes).
+        guard caret > 0, isInlineOpenerChar(ns.character(at: caret - 1)) else { return nil }
         let paragraph = ns.paragraphRange(for: NSRange(location: caret, length: 0))
         guard paragraph.length > 0 else { return nil }
         let nodes = InlineParser.parse(ns, range: paragraph)
         guard let span = deepestSpan(in: nodes, contentStartingAt: caret, ns: ns) else { return nil }
+        // Inside an opaque block-LaTeX (`$$…$$`) or table the `**`/`` ` ``/`[]()`
+        // are literal AND drawn (the styler doesn't hide them there), so they are
+        // not zero-width — never delete "across" them. (Fenced code is already
+        // excluded by the caller.) Parsed lazily, only now that a span matched.
+        guard !isInLatexOrTable(ns: ns, location: caret) else { return nil }
 
         // Hidden marker ranges left of the caret, scoped to this paragraph + line:
         // the paragraph's inline markers, plus the current line's block marker
@@ -288,7 +297,14 @@ enum MarkdownSeamlessInput {
             return .replace(range: span.full, text: content, caret: span.full.location)
         }
         // Grapheme-safe delete of the visible character before the hidden run.
-        let prev = ns.rangeOfComposedCharacterSequence(at: scan - 1)
+        var prev = ns.rangeOfComposedCharacterSequence(at: scan - 1)
+        // `rangeOfComposedCharacterSequence` does not combine a CRLF line break, so
+        // a span at the start of a `\r\n` line would leave a stray `\r`. Extend a
+        // lone `\n` to include a preceding `\r` so the line-merge is clean.
+        if prev.length == 1, ns.character(at: prev.location) == 0x0A,
+           prev.location > 0, ns.character(at: prev.location - 1) == 0x0D {
+            prev = NSRange(location: prev.location - 1, length: 2)
+        }
         return .replace(range: prev, text: "", caret: prev.location)
     }
 
@@ -296,6 +312,12 @@ enum MarkdownSeamlessInput {
     /// (`![alt](url)` image or `![[target]]` embed), return the edit that
     /// removes the *whole* token — never a partial, source-corrupting delete.
     private static func atomicTokenDeletion(ns: NSString, caret: Int) -> SeamlessEditDecision? {
+        // O(1) pre-gate: an image / embed ends in `)` or `]`, so other deletes skip
+        // the parse. Inside an opaque block-LaTeX / table an `![a](u)` is literal,
+        // not a rendered token, so it must not be atomically deleted.
+        guard caret > 0 else { return nil }
+        let before = ns.character(at: caret - 1)
+        guard before == 0x29 || before == 0x5D else { return nil }   // ) ]
         let paragraph = ns.paragraphRange(for: NSRange(location: caret, length: 0))
         guard paragraph.length > 0 else { return nil }
         for node in InlineParser.parse(ns, range: paragraph) {
@@ -305,10 +327,22 @@ enum MarkdownSeamlessInput {
             default: continue
             }
             if caret == NSMaxRange(range) {
+                guard !isInLatexOrTable(ns: ns, location: caret) else { return nil }
                 return .replace(range: range, text: "", caret: range.location)
             }
         }
         return nil
+    }
+
+    /// Whether `c` is the last character of some inline span's hidden opening
+    /// marker — `*`, `_`, `~`, `` ` ``, `[` (link / wiki-link), or `$` (inline
+    /// LaTeX). Used as an O(1) gate so a span-start parse only runs when the caret
+    /// could actually sit just past an opening marker.
+    private static func isInlineOpenerChar(_ c: unichar) -> Bool {
+        switch c {
+        case 0x2A, 0x5F, 0x7E, 0x60, 0x5B, 0x24: return true   // * _ ~ ` [ $
+        default: return false
+        }
     }
 
     /// The full range + content range of the most deeply-nested unwrappable span

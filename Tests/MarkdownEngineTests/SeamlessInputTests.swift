@@ -229,6 +229,46 @@ struct SeamlessInputTests {
         #expect(backspace("# **b**", at: 4) == .replace(range: NSRange(location: 2, length: 5), text: "b", caret: 2))
     }
 
+    @Test("Adjacent spans: Backspace at the second deletes the space between them")
+    func adjacentSpansDeleteSeparator() {
+        // "**a** **b**" — caret before "b" (index 8) deletes the space at index 5.
+        #expect(backspace("**a** **b**", at: 8) == .replace(range: NSRange(location: 5, length: 1), text: "", caret: 5))
+    }
+
+    @Test("Link: Backspace at the link text start deletes the preceding char")
+    func linkStartDeletesPreviousChar() {
+        // "hi [t](u)" — caret before "t" (index 4) deletes the space at index 2.
+        #expect(backspace("hi [t](u)", at: 4) == .replace(range: NSRange(location: 2, length: 1), text: "", caret: 2))
+    }
+
+    @Test("Grapheme safety: an emoji before a span is deleted whole")
+    func emojiBeforeSpanDeletedWhole() {
+        // "😀**b**" — the emoji is a surrogate pair (indices 0…1); caret before "b"
+        // (index 4) removes the whole pair, never a half-surrogate.
+        #expect(backspace("😀**b**", at: 4) == .replace(range: NSRange(location: 0, length: 2), text: "", caret: 0))
+    }
+
+    @Test("CRLF: a span at the start of a CRLF line merges without a stray \\r")
+    func crlfSpanMerge() {
+        // "a\r\n**b**" — caret before "b" (index 5) deletes the whole "\r\n" cluster.
+        #expect(backspace("a\r\n**b**", at: 5) == .replace(range: NSRange(location: 1, length: 2), text: "", caret: 1))
+    }
+
+    // MARK: - Inline spans inside opaque blocks are literal (and drawn)
+
+    @Test("Backspace before bold inside a `$$…$$` block is a normal delete")
+    func inlineInsideBlockLatexIsLiteral() {
+        // "$$\n**x**\n$$" — inside block LaTeX the `**` is literal source, drawn (not
+        // hidden), so Backspace must be a native single-char delete, not a skip.
+        #expect(backspace("$$\n**x**\n$$", at: 5) == .allowDefault)
+    }
+
+    @Test("Backspace before bold inside a table cell is a normal delete")
+    func inlineInsideTableIsLiteral() {
+        // The `**x**` in a GFM table header cell is literal/drawn source.
+        #expect(backspace("| **x** | y |\n| --- | --- |", at: 4) == .allowDefault)
+    }
+
     // MARK: - Atomic rendered tokens
 
     @Test("Backspace at an image's trailing edge deletes the whole token")
