@@ -92,6 +92,20 @@ public final class MarkdownEditorController: ObservableObject {
     public func updateLinkAtCaret(text: String, url: String) {
         view?.updateMarkdownLinkAtCaret(text: text, url: url)
     }
+
+    /// Present the system find / find-and-replace UI (iOS 16+) over the editor —
+    /// wire to a toolbar "Find" button. On iPad with a hardware keyboard ⌘F also
+    /// opens it natively; iPhone needs this entry point. Replace is suppressed on a
+    /// read-only document.
+    ///
+    /// Platform note: iOS find is the SYSTEM `UIFindInteraction`, which the host
+    /// cannot drive and which posts nothing back. This differs from macOS, where
+    /// find is the host-driven bus contract (`findQuery`/`findResults`/…); those
+    /// `MarkdownEditorServices.bus` find notifications are macOS-only and are NOT
+    /// honored on iOS.
+    public func presentFind(showingReplace: Bool = true) {
+        view?.presentFind(showingReplace: showingReplace)
+    }
 }
 
 // MARK: - Wrapper binding hook

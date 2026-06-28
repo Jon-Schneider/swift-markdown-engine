@@ -129,6 +129,25 @@ public final class MarkdownUITextView: UITextView {
         smartDashesType = .no
         smartQuotesType = .no
         smartInsertDeleteType = .no
+        // System find/replace UI (iOS 16+). The built-in find runs a substring scan
+        // over `textStorage`, which holds DISPLAY text: in seamless mode the Markdown
+        // markers are still real characters but rendered zero-width *in place*, and
+        // wiki-links keep their `[[ ]]` brackets (only the `|id` is dropped from the
+        // buffer). Consequences:
+        //  - a SINGLE visible token highlights correctly — markers don't shift the
+        //    glyphs, so the highlight lands on the rendered text (verified live);
+        //  - KNOWN LIMITATION: a query that SPANS a hidden marker finds nothing
+        //    (e.g. "editable view" across `**editable** view`, or "See Page" across
+        //    `See [[Page]]`), because the marker chars sit between the words in the
+        //    haystack;
+        //  - KNOWN LIMITATION: a query INSIDE a hidden run (an inline link's
+        //    `](url)` tail, image/LaTeX source) matches a zero-width position →
+        //    invisible highlight.
+        // A correct fix needs a custom `UITextSearching` over marker-stripped text
+        // wired through a bespoke `UIFindInteraction` (UITextView's own
+        // `performTextSearch` is not `open`, so it can't be overridden). Deferred —
+        // see plan 2.2's downgrade note.
+        isFindInteractionEnabled = true
         delegate = self
 
         let layoutDelegate = MarkdownLayoutManagerDelegate()
@@ -173,6 +192,18 @@ public final class MarkdownUITextView: UITextView {
     @objc private func keyboardWillHide(_ note: Notification) {
         contentInset.bottom = 0
         verticalScrollIndicatorInsets.bottom = 0
+    }
+
+    // MARK: - Find / replace (system UI)
+
+    /// Present the system find (or find-and-replace) navigator over this editor
+    /// (iOS 16+ `UIFindInteraction`). The editor becomes first responder first so
+    /// the navigator attaches; on iPad with a hardware keyboard ⌘F also triggers it
+    /// natively. Hosts call this from a toolbar button (iPhone has no ⌘F).
+    public func presentFind(showingReplace: Bool) {
+        if !isFirstResponder { becomeFirstResponder() }
+        // Never offer Replace on a read-only document, even if the host asked for it.
+        findInteraction?.presentFindNavigator(showingReplace: showingReplace && isEditable)
     }
 
     // MARK: - Loading

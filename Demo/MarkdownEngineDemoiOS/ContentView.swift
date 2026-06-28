@@ -88,6 +88,7 @@ struct ContentView: View {
                 state: controller.selectionState,
                 inLink: controller.inlineLinkContext != nil,
                 onCommand: { controller.applyFormatting($0) },
+                onFind: { controller.presentFind(showingReplace: true) },
                 onLink: {
                     // A real host would show a text/URL editor here; the demo inserts a sample.
                     if controller.inlineLinkContext != nil {
@@ -107,6 +108,7 @@ private struct FormatBar: View {
     let state: MarkdownSelectionState
     let inLink: Bool
     let onCommand: (MarkdownFormattingCommand) -> Void
+    let onFind: () -> Void
     let onLink: () -> Void
 
     var body: some View {
@@ -120,6 +122,7 @@ private struct FormatBar: View {
             button("list.bullet", active: state.isBulletList) { onCommand(.bulletList) }
             button("list.number", active: state.isNumberedList) { onCommand(.numberedList) }
             Divider().frame(height: 24)
+            button("magnifyingglass", active: false, action: onFind)
             button("link", active: inLink, action: onLink)
             Spacer()
         }
