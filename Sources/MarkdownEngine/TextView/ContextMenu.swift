@@ -28,6 +28,16 @@ extension NativeTextViewWrapper.Coordinator {
             let italicItem = NSMenuItem(title: "Italic", action: #selector(didMarkdownItalic(_:)), keyEquivalent: "")
             italicItem.target = self
             formatSubmenu.addItem(italicItem)
+            let strikethroughItem = NSMenuItem(title: "Strikethrough", action: #selector(didMarkdownStrikethrough(_:)), keyEquivalent: "")
+            strikethroughItem.target = self
+            formatSubmenu.addItem(strikethroughItem)
+            let inlineCodeItem = NSMenuItem(title: "Inline Code", action: #selector(didMarkdownInlineCode(_:)), keyEquivalent: "")
+            inlineCodeItem.target = self
+            formatSubmenu.addItem(inlineCodeItem)
+            formatSubmenu.addItem(NSMenuItem.separator())
+            let clearItem = NSMenuItem(title: "Clear Formatting", action: #selector(didMarkdownClearFormatting(_:)), keyEquivalent: "")
+            clearItem.target = self
+            formatSubmenu.addItem(clearItem)
             formatItem.submenu = formatSubmenu
             customMenu.insertItem(formatItem, at: fontIndex)
 
@@ -168,6 +178,36 @@ extension NativeTextViewWrapper.Coordinator {
         }
     }
 
+    /// Apply a `MarkdownFormattingCommand` through the shared cross-platform core
+    /// (`MarkdownFormatting.edit`). The older bold/italic/heading/list handlers keep their
+    /// bespoke logic; newer commands route here so there's a single source of truth for them.
+    private func applyMarkdownCommand(_ command: MarkdownFormattingCommand) {
+        guard let tv = textView else { return }
+        let edit = MarkdownFormatting.edit(for: command, text: tv.string, selection: tv.selectedRange())
+        // A no-op edit (e.g. Clear Formatting with nothing to clear) replaces the selection
+        // with itself — harmless, but skip it so it doesn't litter the undo stack.
+        let current = (tv.string as NSString).substring(with: edit.range)
+        guard current != edit.text else { return }
+        if tv.shouldChangeText(in: edit.range, replacementString: edit.text) {
+            tv.replaceCharacters(in: edit.range, with: edit.text)
+            tv.didChangeText()
+            tv.setSelectedRange(edit.selection)
+            DispatchQueue.main.async { self.text = tv.string }
+        }
+    }
+
+    @objc func didMarkdownStrikethrough(_ sender: Any?) {
+        applyMarkdownCommand(.strikethrough)
+    }
+
+    @objc func didMarkdownInlineCode(_ sender: Any?) {
+        applyMarkdownCommand(.inlineCode)
+    }
+
+    @objc func didMarkdownClearFormatting(_ sender: Any?) {
+        applyMarkdownCommand(.clearFormatting)
+    }
+
     @objc func didMarkdownUnorderedList(_ sender: Any?) {
         applyList(prefix: "- ")
     }
@@ -262,6 +302,16 @@ extension NativeTextViewWrapper.Coordinator: NSMenuItemValidation {
         case #selector(didMarkdownItalic(_:)):
             menuItem.state = enclosingItalicToken(for: range, in: tv.string) != nil ? .on : .off
             return true
+        case #selector(didMarkdownStrikethrough(_:)):
+            menuItem.state = MarkdownFormatting.isActive(.strikethrough, text: tv.string, selection: range) ? .on : .off
+            return true
+        case #selector(didMarkdownInlineCode(_:)):
+            menuItem.state = MarkdownFormatting.isActive(.inlineCode, text: tv.string, selection: range) ? .on : .off
+            return true
+        case #selector(didMarkdownClearFormatting(_:)):
+            // Enabled only when the Clear Formatting edit would actually change something.
+            let edit = MarkdownFormatting.edit(for: .clearFormatting, text: tv.string, selection: range)
+            return nsText.substring(with: edit.range) != edit.text
         case #selector(didMarkdownHeading(_:)):
             return !isSelectionHeading(level: menuItem.tag, in: nsText, range: range)
         case #selector(didMarkdownUnorderedList(_:)),

@@ -115,6 +115,9 @@ private struct FormatBar: View {
         HStack(spacing: 4) {
             button("bold", active: state.isBold) { onCommand(.bold) }
             button("italic", active: state.isItalic) { onCommand(.italic) }
+            button("strikethrough", active: state.isStrikethrough) { onCommand(.strikethrough) }
+            button("chevron.left.forwardslash.chevron.right", active: state.isInlineCode) { onCommand(.inlineCode) }
+            button("textformat.size", active: false) { onCommand(.clearFormatting) }
             Divider().frame(height: 24)
             button("number", active: state.headingLevel == 1) { onCommand(.heading(1)) }
             button("textformat.size.smaller", active: state.headingLevel == 2) { onCommand(.heading(2)) }

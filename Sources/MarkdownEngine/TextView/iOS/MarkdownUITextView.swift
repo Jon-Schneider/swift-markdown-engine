@@ -632,7 +632,17 @@ public final class MarkdownUITextView: UITextView {
     /// Apply a formatting command to `range` via the undoable edit path.
     func applyFormatting(_ command: MarkdownFormattingCommand, in range: NSRange) {
         let edit = MarkdownFormatting.edit(for: command, text: text, selection: range)
+        // Skip an identity edit (e.g. Clear Formatting with nothing to clear) so it doesn't
+        // push a spurious undo step or force a redundant restyle. Mirrors the macOS guard.
+        if isIdentity(edit) { return }
         applyUndoableEdit(replacing: edit.range, with: edit.text, finalSelection: edit.selection)
+    }
+
+    /// Whether `edit` would replace a range with exactly its current contents (a no-op). Applied
+    /// to every command (not just the new ones): no command produces a text-identical edit that
+    /// only moves the caret, so a text-only comparison is sufficient and can't drop a real edit.
+    private func isIdentity(_ edit: FormattingEdit) -> Bool {
+        (text as NSString).substring(with: edit.range) == edit.text
     }
 
     fileprivate func formatAction(_ title: String, _ command: MarkdownFormattingCommand, _ range: NSRange) -> UIAction {
@@ -640,8 +650,14 @@ public final class MarkdownUITextView: UITextView {
         var attributes: UIMenuElement.Attributes = []
         var state: UIMenuElement.State = .off
         switch command {
-        case .bold, .italic:
+        case .bold, .italic, .strikethrough, .inlineCode:
             state = active ? .on : .off                       // toggleable
+        case .clearFormatting:
+            // A plain action (never "on"), disabled when there's nothing to clear — the edit
+            // would be an identity. Mirrors macOS `validateMenuItem` (ContextMenu.swift).
+            if isIdentity(MarkdownFormatting.edit(for: command, text: text, selection: range)) {
+                attributes.insert(.disabled)
+            }
         default:
             if active { attributes.insert(.disabled) }        // heading/list: disabled once applied (macOS parity)
         }
@@ -853,11 +869,14 @@ extension MarkdownUITextView: UITextViewDelegate {
         let format = UIMenu(title: "Format", image: UIImage(systemName: "textformat"), children: [
             formatAction("Bold", .bold, range),
             formatAction("Italic", .italic, range),
+            formatAction("Strikethrough", .strikethrough, range),
+            formatAction("Inline Code", .inlineCode, range),
             UIMenu(title: "Heading", children: (1...3).map { formatAction("H\($0)", .heading($0), range) }),
             UIMenu(title: "Lists", children: [
                 formatAction("Bullet", .bulletList, range),
                 formatAction("Numbered", .numberedList, range),
             ]),
+            formatAction("Clear Formatting", .clearFormatting, range),
         ])
         return UIMenu(children: suggestedActions + [format])
     }
