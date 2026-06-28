@@ -547,6 +547,15 @@ public final class MarkdownUITextView: UITextView {
         )
     }
 
+    // Seamless copy/cut place the *visible* text on the pasteboard (hidden markers
+    // stripped); outside seamless the system default copies the raw source.
+    //
+    // KNOWN RAW-SOURCE LEAK PATHS (intentionally NOT intercepted): only `copy`/`cut`
+    // are overridden, so other UIKit text-export paths still emit the raw buffer —
+    // drag-and-drop (`UITextDraggable` / `itemsForBeginning`), the Share sheet, and
+    // any host-driven `text`/`attributedText` read. Accepted scope boundary for the
+    // "copy visible text" item (drag/Share aren't "copy"); route them through
+    // `MarkdownSeamlessInput.visibleText` if a future requirement needs them covered.
     public override func copy(_ sender: Any?) {
         guard configuration.markers.visibility == .seamless, selectedRange.length > 0 else {
             super.copy(sender)

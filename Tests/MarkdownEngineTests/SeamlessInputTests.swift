@@ -538,6 +538,73 @@ struct SeamlessCopyTests {
         let text = "```\n# heading\n- item\n```"
         #expect(visible(text, whole(text)) == "# heading\n- item\n")
     }
+
+    // MARK: - 1.5: the copy contract is intentionally LOSSY
+    //
+    // Seamless copy yields *visible* text — markers are dropped, so the result is
+    // deliberately NOT round-trippable Markdown. These cases pin the lossy mapping
+    // explicitly (not a round-trip). Anyone needing fidelity copies from
+    // `.revealAll`, which yields the full source (see `revealAllCopiesFullSource`).
+
+    @Test("Link copy drops the URL — only the visible text survives")
+    func linkDropsURL() {
+        // The acceptance example: `[x](http://y)` → `x` (the `](http://y)` is gone).
+        #expect(visible("[x](http://y)", whole("[x](http://y)")) == "x")
+    }
+
+    @Test("An image copies as empty — its whole `![alt](url)` range is a hidden marker")
+    func imageCopiesEmpty() {
+        // The rendered image is atomic: the entire token is a marker, so the
+        // visible text it contributes is nothing.
+        #expect(visible("![alt](http://y/z.png)", whole("![alt](http://y/z.png)")) == "")
+    }
+
+    @Test("A checkbox item drops its list/checkbox structure — `- [ ] task` → `task`")
+    func checkboxDropsStructure() {
+        // The `- [ ] ` marker (and its rendered ☐ glyph) is not buffer-visible text.
+        #expect(visible("- [ ] task", whole("- [ ] task")) == "task")
+    }
+
+    @Test("Inline code drops its backticks — `` `code` `` → `code`")
+    func inlineCodeDropsTicks() {
+        #expect(visible("`code`", whole("`code`")) == "code")
+    }
+
+    @Test("Wiki-link drops its `[[ ]]` brackets — `[[Page]]` → `Page`")
+    func wikiLinkDropsBrackets() {
+        #expect(visible("[[Page]]", whole("[[Page]]")) == "Page")
+    }
+
+    @Test("Nested spans drop every marker pair — `**_x_**` → `x`")
+    func nestedSpansDropAllMarkers() {
+        #expect(visible("**_x_**", whole("**_x_**")) == "x")
+    }
+
+    @Test("Copy is not round-trippable: a link's visible text alone never reconstructs the source")
+    func lossyNotRoundTrippable() {
+        // Explicitly assert lossiness rather than a round-trip: the copied text is
+        // strictly shorter than the source and carries no URL, so re-parsing it
+        // cannot recover the link. This locks the 1.5 decision (no source-copy flag).
+        let source = "[x](http://y)"
+        let copied = visible(source, whole(source))
+        #expect(copied == "x")
+        #expect(copied != source)
+        #expect(!copied.contains("http://y"))
+    }
+
+    @Test("`visibleText` is a no-op outside seamless — markers survive for `.revealAll`")
+    func revealAllVisibleTextIsRawSubstring() {
+        // NOTE ON SCOPE: this pins `visibleText`'s contract (it strips ONLY in
+        // seamless; for any other visibility it returns the raw substring). That is
+        // defense-in-depth, NOT a test of the production `.revealAll` copy path:
+        // the copy override (`NativeTextView+SeamlessCopy`/`MarkdownUITextView`)
+        // never calls `visibleText` for `.revealAll` — it falls back to
+        // `super.copy()`, which copies the raw source. That responder fallback is a
+        // view-level path, verified by reading the override, not by this unit test.
+        let revealAll = MarkdownEditorConfiguration(markers: MarkerStyle(visibility: .revealAll))
+        let source = "> # [x](http://y) ![a](u) - [ ] t"
+        #expect(visible(source, whole(source), config: revealAll) == source)
+    }
 }
 
 @Suite("Seamless rendered-block visibility routing")

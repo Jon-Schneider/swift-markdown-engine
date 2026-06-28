@@ -8,6 +8,18 @@
 //  copy/cut is used unchanged, so the macOS editor's historical behavior (which
 //  copies the raw Markdown source) is preserved.
 //
+//  KNOWN RAW-SOURCE LEAK PATHS (intentionally NOT intercepted). Only `copy(_:)`
+//  and `cut(_:)` are overridden, so the visible-text contract applies to ⌘C/⌘X
+//  and the Copy/Cut menu items. Other AppKit text-export paths still emit the raw
+//  buffer (markers and all) because they bypass these methods:
+//    - drag-and-drop of the selection (NSDraggingSource / `writeSelection`),
+//    - the Services menu (`validRequestorForSendType` / `writeSelection`),
+//    - any host-driven `attributedString` read.
+//  This is an accepted scope boundary for the "copy visible text" item, not an
+//  oversight: drag/Services are not "copy". If a future requirement needs them
+//  covered, override the drag-source / services write path to route through
+//  `MarkdownSeamlessInput.visibleText` the same way `copy`/`cut` do.
+//
 #if os(macOS)
 import AppKit
 
