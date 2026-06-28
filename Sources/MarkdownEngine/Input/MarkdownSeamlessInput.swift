@@ -118,9 +118,10 @@ enum MarkdownSeamlessInput {
         }
 
         // Inline: caret at the start of a span's content (`**|bold**`, `` `|code` ``,
-        // `[|text](url)`, …) removes BOTH hidden markers by replacing the span
-        // with its visible content.
-        if let inline = inlineUnwrap(ns: ns, caret: caret) {
+        // `[|text](url)`, …). The hidden opening marker is zero-width, so Backspace
+        // deletes the visible character *before* it (seamless) rather than stripping
+        // the formatting.
+        if let inline = inlineBackspace(ns: ns, caret: caret) {
             return inline
         }
 
@@ -231,17 +232,64 @@ enum MarkdownSeamlessInput {
 
     // MARK: - Inline detection
 
-    /// If the caret sits at the start of an inline span's visible content,
-    /// returns the edit that unwraps that span (replacing `**bold**` with
-    /// `bold`, `` `code` `` with `code`, `[t](u)` with `t`, …). The *deepest*
-    /// matching span wins so unwrap peels one nesting level at a time.
-    private static func inlineUnwrap(ns: NSString, caret: Int) -> SeamlessEditDecision? {
+    /// Backspace at the start of an inline span's visible content. Because the
+    /// span's opening marker is hidden (zero-width) in seamless mode, a *seamless*
+    /// Backspace deletes the visible character before the marker — a space/letter
+    /// is removed, a newline merges lines — rather than stripping the formatting.
+    /// This is what the user means by "backspace the previous character"; a native
+    /// delete here would instead nibble one `*`/`` ` `` and corrupt the source.
+    ///
+    /// The visible character is found by skipping the contiguous run of hidden
+    /// markers immediately left of the caret (the span's own opening marker, plus
+    /// any nested-inner or block markers it abuts), scoped to the caret's paragraph
+    /// + line so there's no full-document parse. When *nothing* visible precedes
+    /// the span (it's the block's first content, or the document start), it falls
+    /// back to unwrapping the span — the safe, non-corrupting option there.
+    private static func inlineBackspace(ns: NSString, caret: Int) -> SeamlessEditDecision? {
         let paragraph = ns.paragraphRange(for: NSRange(location: caret, length: 0))
         guard paragraph.length > 0 else { return nil }
         let nodes = InlineParser.parse(ns, range: paragraph)
         guard let span = deepestSpan(in: nodes, contentStartingAt: caret, ns: ns) else { return nil }
-        let content = ns.substring(with: span.content)
-        return .replace(range: span.full, text: content, caret: span.full.location)
+
+        // Hidden marker ranges left of the caret, scoped to this paragraph + line:
+        // the paragraph's inline markers, plus the current line's block marker
+        // (`# `, `> `, `- `…) if any.
+        var hidden: [NSRange] = []
+        collectInlineMarkers(nodes, into: &hidden)
+        let line = ns.lineRange(for: NSRange(location: caret, length: 0))
+        var lineLen = line.length
+        if lineLen > 0 {
+            let last = ns.character(at: line.location + lineLen - 1)
+            if last == 0x0A || last == 0x0D { lineLen -= 1 }
+        }
+        let lineText = ns.substring(with: NSRange(location: line.location, length: lineLen))
+        if let contentStart = blockContentStart(
+            line: lineText, lineNSLen: (lineText as NSString).length, lineStart: line.location
+        ) {
+            hidden.append(NSRange(location: line.location, length: contentStart - line.location))
+        }
+
+        // Skip the contiguous run of hidden markers immediately left of the caret.
+        var scan = caret
+        var moved = true
+        while moved {
+            moved = false
+            for r in hidden where r.length > 0 && NSMaxRange(r) == scan {
+                scan = r.location
+                moved = true
+                break
+            }
+        }
+
+        guard scan > 0 else {
+            // Nothing visible precedes the span — fall back to unwrapping it
+            // (replacing `**bold**` with `bold`), which avoids corrupting markers.
+            let content = ns.substring(with: span.content)
+            return .replace(range: span.full, text: content, caret: span.full.location)
+        }
+        // Grapheme-safe delete of the visible character before the hidden run.
+        let prev = ns.rangeOfComposedCharacterSequence(at: scan - 1)
+        return .replace(range: prev, text: "", caret: prev.location)
     }
 
     /// If `caret` sits at the trailing edge of a rendered, atomic inline token

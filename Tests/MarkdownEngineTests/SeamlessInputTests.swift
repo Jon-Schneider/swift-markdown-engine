@@ -186,12 +186,34 @@ struct SeamlessInputTests {
         #expect(backspace("[t](u)", at: 1) == .replace(range: NSRange(location: 0, length: 6), text: "t", caret: 0))
     }
 
-    @Test("Nested bold-in-italic peels the inner span first")
-    func nestedInlineInnerFirst() {
-        // `*a**b**c*` — caret after the inner `**` (index 4) unwraps the bold,
-        // not the outer italic.
-        let text = "*a**b**c*"
-        #expect(backspace(text, at: 4) == .replace(range: NSRange(location: 2, length: 5), text: "b", caret: 2))
+    // The reported seamless-feel bug: at the start of an inline span's content the
+    // hidden marker is zero-width, so Backspace must delete the *previous visible
+    // character*, not strip the formatting.
+
+    @Test("Backspace at the start of mid-text bold deletes the preceding space")
+    func boldStartDeletesPreviousChar() {
+        // "hello **world**" — caret before "world" (index 8). The hidden `**` is
+        // zero-width, so Backspace removes the space at index 5, not the bold.
+        #expect(backspace("hello **world**", at: 8) == .replace(range: NSRange(location: 5, length: 1), text: "", caret: 5))
+    }
+
+    @Test("Backspace at the start of mid-text italic deletes the preceding char")
+    func italicStartDeletesPreviousChar() {
+        // "a *b*" — caret before "b" (index 3) deletes the space at index 1.
+        #expect(backspace("a *b*", at: 3) == .replace(range: NSRange(location: 1, length: 1), text: "", caret: 1))
+    }
+
+    @Test("Backspace at the start of a span on a later line merges with the line above")
+    func spanStartMergesLines() {
+        // "a\n**b**" — caret before "b" (index 4) deletes the newline (index 1).
+        #expect(backspace("a\n**b**", at: 4) == .replace(range: NSRange(location: 1, length: 1), text: "", caret: 1))
+    }
+
+    @Test("Nested bold-in-italic deletes the previous visible char, not the formatting")
+    func nestedInlineDeletesPreviousChar() {
+        // `*a**b**c*` — caret after the inner `**` (index 4) deletes the "a" before
+        // the bold marker, leaving the spans intact.
+        #expect(backspace("*a**b**c*", at: 4) == .replace(range: NSRange(location: 1, length: 1), text: "", caret: 1))
     }
 
     @Test("Caret inside bold content (not at start) is a normal delete")
@@ -199,9 +221,11 @@ struct SeamlessInputTests {
         #expect(backspace("**bold**", at: 4) == .allowDefault)
     }
 
-    @Test("Inline unwrap works after a hidden block marker")
-    func inlineAfterBlockMarker() {
-        // `# **b**` — caret after `# **` (index 4) unwraps the bold.
+    @Test("A span with no visible char before it unwraps (block's first content)")
+    func inlineAfterBlockMarkerUnwraps() {
+        // `# **b**` — caret after `# **` (index 4). Only the hidden `# ` and `**`
+        // precede the span on the line, so there's nothing visible to delete →
+        // fall back to unwrapping the bold.
         #expect(backspace("# **b**", at: 4) == .replace(range: NSRange(location: 2, length: 5), text: "b", caret: 2))
     }
 
