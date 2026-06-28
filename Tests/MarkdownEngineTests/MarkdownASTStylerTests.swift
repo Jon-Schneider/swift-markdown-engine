@@ -103,6 +103,78 @@ struct MarkdownASTStylerTests {
     }
 }
 
+/// Seamless mode collapses the ``` fence *lines* of a code block to ~1px so the
+/// block renders as just its styled body — no visible fences, no empty bands.
+/// These tests assert the paragraph-style contract the renderer relies on; the
+/// actual pixel collapse is a render concern verified in the simulator.
+@Suite("Seamless code-block fence collapse")
+struct SeamlessCodeBlockFenceTests {
+
+    private let base: CGFloat = 14
+    private var fontName: String { NSFont.systemFont(ofSize: 14).fontName }
+    private let seamless = MarkdownEditorConfiguration(markers: .seamless)
+
+    /// Effective `maximumLineHeight` at `pos`: the last styled range covering it
+    /// that sets `.paragraphStyle` wins (mirrors how TextKit applies attributes).
+    private func maxLineHeight(in attrs: [StyledRange], at pos: Int) -> CGFloat? {
+        var result: CGFloat?
+        for (range, a) in attrs where NSLocationInRange(pos, range) {
+            if let p = a[.paragraphStyle] as? NSParagraphStyle { result = p.maximumLineHeight }
+        }
+        return result
+    }
+
+    private func style(_ text: String, _ config: MarkdownEditorConfiguration) -> [StyledRange] {
+        MarkdownASTStyler.styleAttributes(text: text, fontName: fontName, fontSize: base, configuration: config)
+    }
+
+    @Test("seamless collapses both fence lines while the body keeps full height")
+    func seamlessCollapsesFences() {
+        // "```\ncode\n```": open fence chars 0–3, body "code" 4–8, close fence 9–11.
+        let attrs = style("```\ncode\n```", seamless)
+        #expect(maxLineHeight(in: attrs, at: 1) == 1)    // open fence
+        #expect(maxLineHeight(in: attrs, at: 10) == 1)   // close fence
+        let body = maxLineHeight(in: attrs, at: 5)       // "code"
+        #expect((body ?? 0) > 1)                          // full code line height, not collapsed
+    }
+
+    @Test("revealOnEdit (default) does NOT collapse fences — pixel-identical to today")
+    func defaultDoesNotCollapse() {
+        let attrs = style("```\ncode\n```", .default)
+        #expect(maxLineHeight(in: attrs, at: 1) != 1)    // open fence keeps codeLineHeight
+        #expect(maxLineHeight(in: attrs, at: 10) != 1)   // close fence keeps codeLineHeight
+    }
+
+    @Test("empty code block collapses both fences without crashing")
+    func emptyBlockCollapses() {
+        // "```\n```": open fence 0–3, close fence 4–6, no body.
+        let attrs = style("```\n```", seamless)
+        #expect(maxLineHeight(in: attrs, at: 1) == 1)
+        #expect(maxLineHeight(in: attrs, at: 5) == 1)
+    }
+
+    @Test("unterminated fence collapses the open fence but never the body line")
+    func unterminatedFenceGuard() {
+        // "```\ncode" — no closing fence; the body must keep its height (the
+        // `closeFence.length > 0` guard prevents collapsing a non-fence line).
+        let attrs = style("```\ncode", seamless)
+        #expect(maxLineHeight(in: attrs, at: 1) == 1)    // open fence collapses
+        #expect(maxLineHeight(in: attrs, at: 5) != 1)    // body "code" is not a fence
+    }
+
+    @Test("code block at document start and end collapses without out-of-range")
+    func blockAtDocumentEdges() {
+        // Block at the very start, then prose; and a block at the very end.
+        let start = style("```\nx\n```\n\nafter", seamless)
+        #expect(maxLineHeight(in: start, at: 1) == 1)
+        let end = style("intro\n\n```\nx\n```", seamless)
+        // Close fence is the final paragraph with no trailing newline.
+        let ns = "intro\n\n```\nx\n```" as NSString
+        let closeFencePos = ns.range(of: "```", options: .backwards).location + 1
+        #expect(maxLineHeight(in: end, at: closeFencePos) == 1)
+    }
+}
+
 /// Canonical, order-independent string of styled ranges so two style runs can be
 /// compared for equality.
 private func styleKeySnapshot(_ ranges: [StyledRange]) -> String {

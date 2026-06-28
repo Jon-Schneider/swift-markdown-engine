@@ -429,6 +429,51 @@ enum MarkdownASTStyler {
             : [.foregroundColor: PlatformColor.clear, .font: ctx.codeFont]   // hiddenMarkerFont == codeFont
         attrs.append((parts.openFence, markerAttrs))
         attrs.append((parts.closeFence, markerAttrs))
+
+        // Seamless: the fence lines are already invisible (clear color), but a
+        // whole line + newline still occupies a full `codeLineHeight` row, so a
+        // code block shows an empty code-colored band above and below its body.
+        // Collapse the two fence *paragraphs* to ~1px so the block renders as
+        // just its styled body. A FRESH paragraph style is mandatory: copying
+        // `codePara` would inherit `minimumLineHeight = codeLineHeight` and floor
+        // the row back to full height. `maximumLineHeight = 1` (not 0 — that
+        // means "no maximum" in Cocoa) clamps below the font's natural height;
+        // the same mechanism collapses multi-line image source in
+        // `MarkdownStyler.emitCollapsedAttrs`. Outer block spacing is preserved
+        // on the outward side and zeroed on the inner side so the collapsed
+        // fence sits flush against the body.
+        if ctx.collapsesHiddenMarkers, !ctx.revealMarker(range) {
+            let indent = ctx.config.codeBlock.horizontalIndent
+            let spacing = ctx.config.codeBlock.paragraphSpacing
+            func collapsedFencePara(before: CGFloat, after: CGFloat) -> NSParagraphStyle {
+                let p = NSMutableParagraphStyle()
+                p.firstLineHeadIndent = indent
+                p.headIndent = indent
+                p.tailIndent = -indent
+                p.lineSpacing = 0
+                p.maximumLineHeight = 1   // minimumLineHeight left at 0 — do NOT inherit codeLineHeight
+                p.paragraphSpacingBefore = before
+                p.paragraphSpacing = after
+                return p
+            }
+            attrs.append((ctx.ns.paragraphRange(for: parts.openFence),
+                          [.paragraphStyle: collapsedFencePara(before: spacing, after: 0)]))
+            // Also drop the code background on the fence text. Collapsing height
+            // alone leaves the fence's `.backgroundColor` painting a short gray
+            // rectangle the width of the (invisible) ```lang glyphs — a visible
+            // "tab" above/below the block. Clearing it means the collapsed fence
+            // contributes no fill, and `drawCodeBlockBackground` no longer treats
+            // the fence fragment as code (it keys off the first char's bg), so
+            // only the body fragments fill — the block reads as just its body.
+            attrs.append((parts.openFence, [.backgroundColor: PlatformColor.clear]))
+            // Guard against an unterminated fence: `closeFence` is then empty and
+            // its line is real body/EOF, which must keep its normal height.
+            if parts.closeFence.length > 0 {
+                attrs.append((ctx.ns.paragraphRange(for: parts.closeFence),
+                              [.paragraphStyle: collapsedFencePara(before: 0, after: spacing)]))
+                attrs.append((parts.closeFence, [.backgroundColor: PlatformColor.clear]))
+            }
+        }
     }
 
     /// Split a fenced-code range into open fence (+language), content, close fence, and language.
