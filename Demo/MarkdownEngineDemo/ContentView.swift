@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 import MarkdownEngine
 
 // Optional bridge products. Each is independent — drop either of these
@@ -101,6 +102,12 @@ struct ContentView: View {
         config.markers.visibility = markerVisibility
         config.markers.seamlessBackspaceUnwrap = backspaceUnwrap
 
+        // Resolve `![alt](url)` to a generated swatch so the sample's image
+        // renders (the default provider returns nil). Lets you see seamless's
+        // atomic image treatment: the image stays rendered, the raw source
+        // never appears, the caret skips it, and Backspace deletes it whole.
+        config.services.images = DemoImageProvider()
+
         #if canImport(MarkdownEngineCodeBlocks)
         // Syntax highlighting for fenced code blocks. Auto-switches between
         // `atom-one-light` and `atom-one-dark` with system appearance.
@@ -132,6 +139,7 @@ private var sampleMarkdown: String {
         inlineFormattingSection,
         latexSection,
         codeSection,
+        imageSection,
         markdownFooter,
     ].joined(separator: "\n\n")
 }
@@ -236,8 +244,43 @@ private var codeSection: String {
     #endif
 }
 
+/// Standalone-image demo. The `DemoImageProvider` resolves the URL to a
+/// generated swatch; in seamless mode the image is one atomic unit.
+private let imageSection = """
+## Image
+
+A standalone image renders inline; in seamless mode the `![alt](url)` source is hidden and the image is treated as one atomic unit.
+
+![A sample image](demo://card)
+"""
+
 private let markdownFooter = """
 ---
 
 Built by [nodes-web.com](https://nodes-web.com).
 """
+
+/// Resolves any `![alt](url)` to a generated gradient swatch so the demo can
+/// show real image rendering without bundling assets or hitting the network.
+/// A concrete named type (not a closure) per the engine's injection style.
+private struct DemoImageProvider: EmbeddedImageProvider {
+    func image(for reference: EmbeddedImageRequest) -> PlatformImage? {
+        let size = NSSize(width: 240, height: 140)
+        return NSImage(size: size, flipped: false) { rect in
+            NSGradient(colors: [.systemIndigo, .systemTeal])?
+                .draw(in: rect, angle: -45)
+            let label = "🖼 demo image" as NSString
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.boldSystemFont(ofSize: 20),
+                .foregroundColor: NSColor.white,
+            ]
+            let textSize = label.size(withAttributes: attrs)
+            label.draw(at: NSPoint(x: (rect.width - textSize.width) / 2,
+                                   y: (rect.height - textSize.height) / 2),
+                       withAttributes: attrs)
+            return true
+        }
+    }
+
+    func fingerprint() -> AnyHashable { "demo-image-v1" }
+}
