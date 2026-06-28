@@ -142,11 +142,95 @@ struct SeamlessInputTests {
         #expect(backspace("- [ ] task", at: 6) == .replace(range: NSRange(location: 0, length: 6), text: "", caret: 0))
     }
 
-    @Test("Ordered `1. ` keeps its visible number — normal delete")
-    func orderedListUntouched() {
-        // `1. item` — caret at content start index 3. Number stays visible in
-        // seamless mode, so Backspace is the ordinary one.
-        #expect(backspace("1. item", at: 3) == .allowDefault)
+    // 1.3: Backspace at an ordered item's content start unwraps the `1. ` marker
+    // (parity with `- `/`[ ]`). Renumbering of following items is out of scope.
+
+    @Test("Ordered `1. ` unwraps at content start")
+    func orderedListUnwrap() {
+        // `1. item` — content starts at index 3; unwrap removes `1. ` → `item`.
+        #expect(backspace("1. item", at: 3) == .replace(range: NSRange(location: 0, length: 3), text: "", caret: 0))
+    }
+
+    @Test("Multi-digit ordered `12. ` unwraps the whole marker")
+    func multiDigitOrderedUnwrap() {
+        // `12. item` — content starts at index 4.
+        #expect(backspace("12. item", at: 4) == .replace(range: NSRange(location: 0, length: 4), text: "", caret: 0))
+    }
+
+    @Test("Caret in the middle of an ordered item is a normal delete")
+    func orderedMidContentUntouched() {
+        // Only the content-start position unwraps; elsewhere is an ordinary delete.
+        #expect(backspace("1. item", at: 4) == .allowDefault)
+    }
+
+    @Test("9-digit ordered marker still unwraps (parser accepts up to 9 digits)")
+    func nineDigitOrderedUnwrap() {
+        // `123456789. x` — 9 digits + `. ` → content starts at index 11.
+        #expect(backspace("123456789. x", at: 11) == .replace(range: NSRange(location: 0, length: 11), text: "", caret: 0))
+    }
+
+    @Test("10+-digit ordered-looking line is NOT a list — normal delete")
+    func tenDigitOrderedNotAList() {
+        // `1234567890. item` — 10 digits. The parser caps ordered markers at 9
+        // digits, so this is a plain paragraph (visible literal text), not a list;
+        // Backspace must be an ordinary delete, not an unwrap of the whole prefix.
+        #expect(backspace("1234567890. item", at: 12) == .allowDefault)
+    }
+
+    @Test("Indented ordered item unwraps to a flush paragraph")
+    func indentedOrderedUnwrap() {
+        // 3 leading spaces + "1. x": content starts at index 6.
+        let text = "   1. x"
+        #expect(backspace(text, at: 6) == .replace(range: NSRange(location: 0, length: 6), text: "", caret: 0))
+    }
+
+    @Test("Ordered item on a later line unwraps relative to that line, leaving siblings byte-for-byte")
+    func orderedSecondLineUnwrap() {
+        // `1. a\n2. b` — content start of line 2 is index 8. Only `2. ` is removed;
+        // line 1 (`1. a`) is untouched (no renumber — out of scope per 1.3).
+        let text = "1. a\n2. b"
+        #expect(backspace(text, at: 8) == .replace(range: NSRange(location: 5, length: 3), text: "", caret: 5))
+    }
+
+    @Test("Plain ordered: copy preserves the visible number (unwrap is Backspace-only)")
+    func plainOrderedNumberStaysVisibleOnCopy() {
+        // A *plain* ordered number is drawn in seamless mode, so visibleText keeps
+        // it (only the Backspace path treats `1. ` as removable). This locks the
+        // `includeOrdered` design: copy/caret are unaffected for plain ordered.
+        let copied = MarkdownSeamlessInput.visibleText(
+            of: NSRange(location: 0, length: 7), in: "1. item", configuration: seamless
+        )
+        #expect(copied == "1. item")
+    }
+
+    // Ordered *checkbox* items: the styler's checkbox branch hides the `1.` marker
+    // (clears it, draws ☐), so `1. [ ] task` renders identically to `- [ ] task`
+    // and must behave the same for *all* callers — not just Backspace.
+
+    @Test("Ordered checkbox `1. [ ] ` unwraps the whole marker")
+    func orderedCheckboxUnwrap() {
+        // `1. [ ] task` — content starts at index 7 (`1. [ ] `).
+        #expect(backspace("1. [ ] task", at: 7) == .replace(range: NSRange(location: 0, length: 7), text: "", caret: 0))
+    }
+
+    @Test("Checked ordered checkbox `1. [x] ` unwraps the whole marker")
+    func checkedOrderedCheckboxUnwrap() {
+        #expect(backspace("1. [x] task", at: 7) == .replace(range: NSRange(location: 0, length: 7), text: "", caret: 0))
+    }
+
+    @Test("Ordered checkbox copies clean like `- [ ] ` (hidden marker, not visible number)")
+    func orderedCheckboxCopiesClean() {
+        // The `1.` is hidden by the checkbox styler, so visibleText must strip the
+        // whole `1. [ ] ` prefix — matching `- [ ] task` → `task`. Otherwise the
+        // copy would carry invisible buffer text the user never sees.
+        let ordered = MarkdownSeamlessInput.visibleText(
+            of: NSRange(location: 0, length: 11), in: "1. [ ] task", configuration: seamless
+        )
+        let unordered = MarkdownSeamlessInput.visibleText(
+            of: NSRange(location: 0, length: 10), in: "- [ ] task", configuration: seamless
+        )
+        #expect(ordered == "task")
+        #expect(unordered == "task")
     }
 
     @Test("Indented bullet unwraps to a flush paragraph (no 4-space code trap)")

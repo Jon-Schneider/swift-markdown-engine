@@ -107,7 +107,7 @@ enum MarkdownSeamlessInput {
         let line = ns.substring(with: NSRange(location: lineStart, length: lineLen))
         let lineNSLen = (line as NSString).length
 
-        if let contentStart = blockContentStart(line: line, lineNSLen: lineNSLen, lineStart: lineStart),
+        if let contentStart = blockContentStart(line: line, lineNSLen: lineNSLen, lineStart: lineStart, includeOrdered: true),
            caret == contentStart {
             // A heading/quote/list-looking line that actually lives inside an
             // opaque block-LaTeX (`$$…$$`) or table is literal content, not a
@@ -137,12 +137,27 @@ enum MarkdownSeamlessInput {
 
     // MARK: - Block detection
 
-    /// Absolute index where a quoted/heading/unordered-list line's *content*
-    /// begins (i.e. just past the hidden marker), or `nil` if the line has no
-    /// hidden block marker. Ordered-list markers (`1. `) are intentionally
-    /// excluded — their number stays visible in seamless mode, so a normal
-    /// Backspace there is expected and correct.
-    private static func blockContentStart(line: String, lineNSLen: Int, lineStart: Int) -> Int? {
+    /// Absolute index where a quoted/heading/list line's *content* begins (i.e.
+    /// just past the hidden marker), or `nil` if the line has no qualifying block
+    /// marker.
+    ///
+    /// Ordered-list markers split into two cases by how the styler draws them:
+    ///
+    /// - **Plain ordered (`1. `)** — the number is **drawn** in seamless mode (the
+    ///   styler's bullet decoration only fires for non-ordered items:
+    ///   `MarkdownASTStyler`, `else if !item.ordered`). So it is *not* a hidden
+    ///   marker for copy (`hiddenMarkerRanges` must keep the number) or the caret
+    ///   dead-zone (the caret may rest on a visible digit). Only the Backspace-
+    ///   unwrap path (1.3) treats `1. ` as removable, opting in via
+    ///   `includeOrdered: true`; every other caller keeps the default.
+    /// - **Ordered checkbox (`1. [ ] `)** — the styler's checkbox branch (`if let
+    ///   box = item.checkbox`, which precedes the `else if !item.ordered`) clears
+    ///   the `1.` marker and draws a ☐ glyph, so the whole `1. [ ] ` prefix is
+    ///   *hidden* exactly like `- [ ] `. It therefore qualifies for **every**
+    ///   caller (copy strips it, caret snaps past it, Backspace unwraps it),
+    ///   regardless of `includeOrdered` — otherwise it would copy invisible buffer
+    ///   text while the identically-rendered `- [ ] ` copies clean.
+    private static func blockContentStart(line: String, lineNSLen: Int, lineStart: Int, includeOrdered: Bool = false) -> Int? {
         let fullRange = NSRange(location: 0, length: lineNSLen)
 
         // Blockquote: `> `, `>> `, `  > `, `\t> `… — always hidden. Tab-tolerant to
@@ -157,11 +172,22 @@ enum MarkdownSeamlessInput {
             return lineStart + NSMaxRange(m.range)
         }
 
-        // List: unwrap only unordered / checkbox items (their `-`/`•`/`[ ]`
-        // marker is hidden). Ordered items keep a visible number.
+        // List markers. Unordered / checkbox markers (`-`/`•`/`[ ]`) are hidden, so
+        // they qualify for every caller. A *plain* ordered number (`1. `) is drawn,
+        // so it qualifies only when the caller opts in (Backspace-unwrap). An
+        // ordered *checkbox* (`1. [ ] `) has its marker hidden by the styler's
+        // checkbox branch — same as `- [ ] ` — so it qualifies for every caller.
         if let m = MarkdownLists.listRegex.firstMatch(in: line, range: fullRange) {
-            let isOrdered = m.range(at: 2).location != NSNotFound
-            if !isOrdered {
+            let orderedDigits = m.range(at: 2)               // ordered digit run; .location == NSNotFound for bullets
+            let isOrdered = orderedDigits.location != NSNotFound
+            // Parser parity: `listRegex` accepts an unbounded digit run, but the
+            // AST/`BlockParser` cap an ordered marker at 9 digits (`digits < 9`).
+            // A longer run (`1234567890. item`) is NOT parsed/styled as a list, so
+            // its prefix is literal visible text — never a hidden/unwrappable
+            // marker. Disqualify it so Backspace there is an ordinary delete.
+            guard !isOrdered || orderedDigits.length <= 9 else { return nil }
+            let hasCheckbox = (line as NSString).substring(with: m.range(at: 1)).contains("[")
+            if !isOrdered || hasCheckbox || includeOrdered {
                 return lineStart + NSMaxRange(m.range)
             }
         }
