@@ -247,6 +247,18 @@ struct SeamlessInputTests {
         #expect(backspace("# x", at: 2) == .replace(range: NSRange(location: 0, length: 2), text: "", caret: 0))
     }
 
+    @Test("An indented ``` is not a fence — a heading after it still unwraps")
+    func indentedFenceIsNotCodeHeadingUnwraps() {
+        // `BlockParser.isFence` requires column 0, so `  ``` ` is NOT a code
+        // fence; `# heading` between two indented ``` lines is a real heading and
+        // must unwrap (seamless detection must not treat it as inside code).
+        let text = "  ```\n# heading\n  ```"
+        let lineStart = (("  ```\n") as NSString).length     // start of `# heading`
+        let caret = (("  ```\n# ") as NSString).length       // just after `# `
+        #expect(backspace(text, at: caret)
+            == .replace(range: NSRange(location: lineStart, length: 2), text: "", caret: lineStart))
+    }
+
     // MARK: - Block LaTeX / tables are opaque too
 
     @Test("Backspace after a `# ` inside a `$$…$$` block is a normal delete")

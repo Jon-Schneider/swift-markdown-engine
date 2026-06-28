@@ -409,14 +409,15 @@ enum MarkdownSeamlessInput {
         return false
     }
 
-    /// Whether `line` is a ```` ``` ```` fence delimiter (≤3 spaces indent then
-    /// ≥3 backticks).
+    /// Whether `line` is a ```` ``` ```` fence delimiter: ≥3 backticks at
+    /// **column 0**. Mirrors `BlockParser.isFence` (`hasPrefix("```")`), which
+    /// does *not* allow leading indent — an indented `  ``` ` is not a fence to
+    /// the parser, so the styler renders the lines after it as ordinary Markdown
+    /// and seamless detection must agree (otherwise it would suppress
+    /// unwrap/caret-snap on a real heading as if it were inside code).
     private static func lineIsFenceDelimiter(_ ns: NSString, _ line: NSRange) -> Bool {
         var i = line.location
         let end = NSMaxRange(line)
-        var indent = 0
-        while i < end, indent < 4, ns.character(at: i) == 0x20 { i += 1; indent += 1 }
-        guard indent < 4 else { return false }
         var ticks = 0
         while i < end, ns.character(at: i) == 0x60 { ticks += 1; i += 1 }
         return ticks >= 3
