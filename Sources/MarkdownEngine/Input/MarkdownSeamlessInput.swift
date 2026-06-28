@@ -79,8 +79,17 @@ enum MarkdownSeamlessInput {
         let caret = selection.location
         guard caret > 0, caret <= ns.length else { return .allowDefault }
 
+        // Atomic full-line elements (fire at a line start, before the "marker to
+        // the left" guard below): Backspace at the start of a fenced code block's
+        // first body line unwraps the whole block to a plain paragraph; Backspace
+        // at the start of the line after a thematic break removes the rule line.
+        if let fullLine = fullLineElementBackspace(ns: ns, caret: caret) {
+            return fullLine
+        }
+
         // Inside a fenced code block the contents are opaque, not Markdown — a
         // line like `# x` is literal code, so none of the marker heuristics apply.
+        // (The body-start unwrap was already handled just above.)
         guard !isInFencedCode(ns: ns, location: caret) else { return .allowDefault }
 
         let lineRange = ns.lineRange(for: NSRange(location: caret, length: 0))
@@ -162,6 +171,57 @@ enum MarkdownSeamlessInput {
     private static func unwrap(from lineStart: Int, toContentStart contentStart: Int) -> SeamlessEditDecision {
         let removal = NSRange(location: lineStart, length: contentStart - lineStart)
         return .replace(range: removal, text: "", caret: lineStart)
+    }
+
+    // MARK: - Full-line hidden elements (delete)
+
+    /// Atomic Backspace for the two full-line hidden elements, both triggered at a
+    /// *line start*:
+    /// - **Code fence**: at the start of a fenced block's first body line, unwrap
+    ///   the whole block to a plain paragraph (drop both fence lines, keep the
+    ///   body text) in one edit.
+    /// - **Thematic break**: at the start of the line *after* a `---`/`***`/`___`
+    ///   rule, remove the entire rule line.
+    ///
+    /// Returns `nil` (→ native delete) anywhere else. A cheap per-line pre-check
+    /// gates the single structural parse, so ordinary Backspaces never parse.
+    private static func fullLineElementBackspace(ns: NSString, caret: Int) -> SeamlessEditDecision? {
+        let line = ns.lineRange(for: NSRange(location: min(caret, ns.length), length: 0))
+        // Only at a line start, and only when the line above could be one of the
+        // two elements — otherwise there's nothing atomic to delete here.
+        guard caret == line.location, line.location > 0 else { return nil }
+        let prevLine = ns.lineRange(for: NSRange(location: line.location - 1, length: 0))
+        let prevLooksThematic = lineLooksLikeThematicBreak(ns, prevLine)
+        let prevLooksFence = lineIsFenceDelimiter(ns, prevLine)
+        guard prevLooksThematic || prevLooksFence else { return nil }
+
+        let blocks = DocumentAST.parse(ns as String)
+
+        // Thematic break directly above → delete the whole rule line (+ newline).
+        if prevLooksThematic, blocks.contains(where: {
+            if case .thematicBreak(let r) = $0 { return NSLocationInRange(prevLine.location, r) }
+            return false
+        }) {
+            return .replace(
+                range: NSRange(location: prevLine.location, length: line.location - prevLine.location),
+                text: "", caret: prevLine.location
+            )
+        }
+
+        // Start of a fenced code body (the line above is this block's open fence)
+        // → unwrap the block: replace the whole block range with just its body.
+        for case .codeBlock(let range) in blocks where NSLocationInRange(caret, range) {
+            let firstLine = ns.lineRange(for: NSRange(location: range.location, length: 0))
+            let bodyStart = NSMaxRange(firstLine)
+            guard caret == bodyStart else { continue }
+            let lastLine = ns.lineRange(for: NSRange(location: max(range.location, NSMaxRange(range) - 1), length: 0))
+            let bodyEnd = lastLine.location
+            let body = bodyEnd > bodyStart
+                ? ns.substring(with: NSRange(location: bodyStart, length: bodyEnd - bodyStart))
+                : ""
+            return .replace(range: range, text: body, caret: range.location)
+        }
+        return nil
     }
 
     // MARK: - Inline detection
@@ -358,6 +418,14 @@ enum MarkdownSeamlessInput {
         guard configuration.markers.visibility == .seamless else { return proposed }
         let ns = text as NSString
         guard proposed >= 0, proposed <= ns.length else { return proposed }
+        // Hidden *full-line* elements (a thematic-break rule, or a code-fence
+        // delimiter line) are never a valid caret resting spot in seamless mode —
+        // step over them to the adjacent editable line. Checked before the
+        // fenced-code guard because a close-fence line counts as "inside" code yet
+        // must still be skipped.
+        if let skipped = fullLineHiddenElementCaret(ns: ns, proposed: proposed, previous: previous) {
+            return skipped
+        }
         // Code-block contents are opaque — don't treat code lines as markers.
         guard !isInFencedCode(ns: ns, location: proposed) else { return proposed }
         if let block = blockDeadZoneCaret(ns: ns, proposed: proposed, previous: previous) {
@@ -450,6 +518,84 @@ enum MarkdownSeamlessInput {
             return line.location > 0 ? line.location - 1 : contentStart
         }
         return contentStart   // tap / forward arrival / Home → visible content start
+    }
+
+    /// Snap a collapsed caret off a *hidden full-line element* — a thematic-break
+    /// rule (`---`/`***`/`___`) or a code-fence delimiter line (```` ``` ````) — to
+    /// the nearest editable line in the direction of travel. In seamless mode these
+    /// lines render as a rule / collapse to zero width, so a caret resting on them
+    /// (and any typing there) would silently mutate invisible syntax.
+    ///
+    /// Expands to the maximal contiguous run of hidden lines around the caret, then
+    /// lands on the editable boundary in the travel direction (falling back to the
+    /// other side at a document edge) — so stacked elements (an empty code block, a
+    /// rule immediately followed by a fence) are skipped in one step. The code
+    /// *body* between fences is editable and never skipped.
+    ///
+    /// Returns `nil` in the common case, decided by a cheap per-line pre-check
+    /// before any parse.
+    private static func fullLineHiddenElementCaret(ns: NSString, proposed: Int, previous: Int) -> Int? {
+        let startLine = ns.lineRange(for: NSRange(location: min(proposed, ns.length), length: 0))
+        // Cheap gate: only a fence-delimiter- or thematic-break-looking line can be
+        // a hidden full-line element, so prose/headings/quotes never trigger a parse.
+        guard lineIsFenceDelimiter(ns, startLine) || lineLooksLikeThematicBreak(ns, startLine) else { return nil }
+
+        let blocks = DocumentAST.parse(ns as String)
+        let thematic: [NSRange] = blocks.compactMap { if case .thematicBreak(let r) = $0 { return r } else { return nil } }
+        let code: [NSRange] = blocks.compactMap { if case .codeBlock(let r) = $0 { return r } else { return nil } }
+        func isHidden(_ line: NSRange) -> Bool {
+            if thematic.contains(where: { NSLocationInRange(line.location, $0) }) { return true }
+            // A code-fence *delimiter* line (open/close) — never an editable body line.
+            return code.contains(where: { NSLocationInRange(line.location, $0) }) && lineIsFenceDelimiter(ns, line)
+        }
+        guard isHidden(startLine) else { return nil }
+
+        var runStart = startLine.location
+        var runEnd = NSMaxRange(startLine)
+        while runStart > 0 {
+            let prev = ns.lineRange(for: NSRange(location: runStart - 1, length: 0))
+            if isHidden(prev) { runStart = prev.location } else { break }
+        }
+        while runEnd < ns.length {
+            let next = ns.lineRange(for: NSRange(location: runEnd, length: 0))
+            if isHidden(next) { runEnd = NSMaxRange(next) } else { break }
+        }
+        let hasBefore = runStart > 0           // → end of the line before the run
+        let hasAfter = runEnd < ns.length      // → start of the line after the run
+        let forward = proposed >= previous
+        if forward {
+            if hasAfter { return runEnd }
+            if hasBefore { return runStart - 1 }
+        } else {
+            if hasBefore { return runStart - 1 }
+            if hasAfter { return runEnd }
+        }
+        return nil   // entire document is hidden lines — nothing editable to snap to
+    }
+
+    /// Cheap, parse-free check: does `line` look like a thematic break — a solid run
+    /// of ≥3 of one of `-`/`*`/`_`, after optional surrounding whitespace? Mirrors
+    /// `BlockParser.isThematicBreak`. This engine has no setext-heading rule, so a
+    /// `---` line is never a heading underline; the only false positive is a `---`
+    /// *inside* a code body, which callers reject via AST confirmation.
+    private static func lineLooksLikeThematicBreak(_ ns: NSString, _ line: NSRange) -> Bool {
+        var i = line.location
+        let end = NSMaxRange(line)
+        while i < end, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 { i += 1 }   // trim leading WS
+        var j = end
+        while j > i {
+            let c = ns.character(at: j - 1)
+            if c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D { j -= 1 } else { break }      // trim trailing WS/newline
+        }
+        guard j - i >= 3 else { return false }
+        let first = ns.character(at: i)
+        guard first == 0x2D || first == 0x2A || first == 0x5F else { return false }            // - * _
+        var k = i
+        while k < j {
+            if ns.character(at: k) != first { return false }
+            k += 1
+        }
+        return true
     }
 
     /// Caret adjustment for a long atomic inline run (case 2 above), or `nil`.

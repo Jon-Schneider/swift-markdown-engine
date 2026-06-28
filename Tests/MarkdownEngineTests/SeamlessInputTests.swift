@@ -566,3 +566,103 @@ struct SeamlessHiddenRangesTests {
         #expect(hidden("1. item").isEmpty)
     }
 }
+
+/// Phase-C: full-line hidden elements (thematic-break rules and code-fence
+/// delimiter lines). In seamless mode the caret steps over them (never rests on
+/// a line the user can't edit), and Backspace deletes them atomically — a rule
+/// in one edit, a code block by unwrapping to a plain paragraph.
+@Suite("Seamless full-line elements")
+struct SeamlessFullLineElementTests {
+
+    private let seamless = MarkdownEditorConfiguration(markers: .seamless)
+
+    private func normalize(_ text: String, proposed: Int, previous: Int) -> Int {
+        MarkdownSeamlessInput.normalizedCaret(
+            text: text, proposed: proposed, previous: previous, configuration: seamless
+        )
+    }
+
+    private func backspace(_ text: String, at caret: Int) -> SeamlessEditDecision {
+        MarkdownSeamlessInput.backspace(
+            currentText: text, selection: NSRange(location: caret, length: 0), configuration: seamless
+        )
+    }
+
+    // MARK: - Caret skip: thematic break
+
+    @Test("Arrowing down onto a `---` rule skips to the line below")
+    func thematicSkipForward() {
+        // "a\n---\nb": rule line is indices 2…5; "b" starts at 6.
+        #expect(normalize("a\n---\nb", proposed: 3, previous: 0) == 6)
+    }
+
+    @Test("Arrowing up onto a `---` rule skips to the end of the line above")
+    func thematicSkipBackward() {
+        // Travelling up from "b" (6) → end of "a" (index 1).
+        #expect(normalize("a\n---\nb", proposed: 3, previous: 6) == 1)
+    }
+
+    // MARK: - Caret skip: code fence
+
+    @Test("Arrowing down onto an open fence lands in the first body line")
+    func openFenceSkipsIntoBody() {
+        // "a\n```\nx\n```\nb": open fence 2…5, body "x" at 6.
+        #expect(normalize("a\n```\nx\n```\nb", proposed: 3, previous: 0) == 6)
+    }
+
+    @Test("Arrowing up onto a close fence lands at the end of the last body line")
+    func closeFenceSkipsToBody() {
+        // Same doc: close fence is line 8…11; travelling up from "b" (12) lands at
+        // the end of body "x" (index 7).
+        #expect(normalize("a\n```\nx\n```\nb", proposed: 9, previous: 12) == 7)
+    }
+
+    @Test("The editable code body is never skipped")
+    func bodyCaretUntouched() {
+        // Caret at the start of body "x" (6) stays put.
+        #expect(normalize("a\n```\nx\n```\nb", proposed: 6, previous: 3) == 6)
+    }
+
+    @Test("A `---` line inside a code body is literal — caret is not skipped")
+    func dashesInsideCodeNotSkipped() {
+        // "```\n---\n```": the middle line is code, not a thematic break.
+        #expect(normalize("```\n---\n```", proposed: 5, previous: 0) == 5)
+    }
+
+    // MARK: - Atomic delete: thematic break
+
+    @Test("Backspace at the start of the line after a rule deletes the whole rule")
+    func backspaceDeletesRule() {
+        // "a\n---\nb", caret at "b" (6) → remove "---\n" (indices 2…5).
+        #expect(backspace("a\n---\nb", at: 6)
+            == .replace(range: NSRange(location: 2, length: 4), text: "", caret: 2))
+    }
+
+    @Test("`***` and `___` rules are recognized too")
+    func backspaceDeletesStarAndUnderscoreRules() {
+        #expect(backspace("a\n***\nb", at: 6)
+            == .replace(range: NSRange(location: 2, length: 4), text: "", caret: 2))
+        #expect(backspace("a\n___\nb", at: 6)
+            == .replace(range: NSRange(location: 2, length: 4), text: "", caret: 2))
+    }
+
+    // MARK: - Atomic delete: code fence (unwrap)
+
+    @Test("Backspace at the start of a code body unwraps the whole block")
+    func backspaceUnwrapsCodeBlock() {
+        // "```\nx\n```" → replace the whole block (0…8) with the body "x\n".
+        #expect(backspace("```\nx\n```", at: 4)
+            == .replace(range: NSRange(location: 0, length: 9), text: "x\n", caret: 0))
+    }
+
+    @Test("Backspace in the middle of a code body is a normal delete")
+    func backspaceMidBodyNative() {
+        #expect(backspace("```\nx\n```", at: 5) == .allowDefault)
+    }
+
+    @Test("Backspace at the start of the line after a code block is a normal delete")
+    func backspaceAfterCodeBlockNative() {
+        // Not an unwrap trigger — only the body's first line unwraps.
+        #expect(backspace("```\nx\n```\nb", at: 10) == .allowDefault)
+    }
+}

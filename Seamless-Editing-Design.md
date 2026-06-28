@@ -206,19 +206,32 @@ demo apps is the recommended next step (automated tests cover the logic, not the
 feel). Possible polish: a copy-as-Markdown menu alongside copy-visible; richer
 inline caret-skip if a future need justifies the complexity.
 
-**Known limitations (full-line hidden block syntax).** Two block elements keep an
+**Full-line hidden block syntax (Phase C — done).** Two block elements keep an
 editable *source line* in the buffer that seamless renders as (visually) empty or a
-rule, and the caret can still land on it:
-- **Code-fence lines** (```` ``` ````): hidden in seamless, but the open/close fence
-  lines remain; clicking/arrowing onto one and editing mutates the hidden fence.
-  (Inside the fenced *body*, seamless edit/caret logic already no-ops via the
-  parse-free `isInFencedCode` guard, and copy strips the fences.)
-- **Thematic breaks** (`---`/`***`): rendered as a rule even with the caret on the
-  source, but there's no atomic caret/delete handling for the rule line yet.
+rule. These are now handled with a **skip + atomic-delete** model in
+`MarkdownSeamlessInput` (so both the macOS and iOS adapters get it):
+- **Caret skip** (`fullLineHiddenElementCaret`, run from `normalizedCaret` *before*
+  the fenced-code guard so a close-fence line is still skipped): a collapsed caret
+  never rests on a thematic-break rule or a code-fence delimiter line. It expands to
+  the contiguous run of hidden lines and lands on the editable boundary in the
+  travel direction (falling back to the other side at a document edge), so stacked
+  elements (an empty code block, a rule abutting a fence) are skipped in one step.
+  The code *body* between fences stays fully editable and is never skipped.
+- **Atomic delete** (`fullLineElementBackspace`, both triggered at a line start):
+  Backspace at the start of the line *after* a `---`/`***`/`___` rule removes the
+  whole rule line in one edit; Backspace at the start of a fenced block's first body
+  line unwraps the entire block to a plain paragraph (drops both fence lines, keeps
+  the body text).
 
-Proper handling means deciding what arrow/Backspace *do* on an invisible full-line
-element (treat as an atomic object, skip the line, …) — a Phase-C design question, so
-these are consciously deferred rather than partially (and riskily) handled here.
+Both paths gate a single `DocumentAST.parse` behind a cheap per-line pre-check
+(`lineIsFenceDelimiter` / `lineLooksLikeThematicBreak`), so ordinary prose keystrokes
+stay parse-free, and the AST confirmation correctly leaves a `---` *inside* a code
+body literal. (This engine has no setext-heading rule, so a `---` line is never a
+heading underline.) Copy already strips code fences; a thematic-break line still
+copies as its `---` source (it has no visible text to preserve — left as-is, since
+copy semantics weren't part of this change). Forward-delete (Del) on these elements
+is still native; only Backspace is rewritten, matching the rest of the seamless
+input layer.
 
 **Review.** Hardened after an Opus hate-review pass: the macOS arrow keys no longer
 reimplement (grapheme-breaking) caret motion; per-keystroke `DocumentAST.parse` on
