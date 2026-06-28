@@ -22,11 +22,15 @@ struct ContentView: View {
     /// Seamless-editing mode (live toggle). `.seamless` hides every Markdown
     /// marker; `.revealAll` is the "show raw Markdown" escape hatch.
     @State private var markerVisibility: MarkerVisibility = .revealOnEdit
+    /// In seamless mode, whether Backspace at content start unwraps the whole
+    /// hidden marker (on) or does a plain native delete (off).
+    @State private var backspaceUnwrap = true
 
     private var configuration: MarkdownEditorConfiguration {
         var config = MarkdownEditorConfiguration.default
         config.textInsets = TextInsets(horizontal: 16, vertical: 12)
         config.markers.visibility = markerVisibility
+        config.markers.seamlessBackspaceUnwrap = backspaceUnwrap
         #if canImport(MarkdownEngineCodeBlocks)
         config.services.syntaxHighlighter = HighlighterSwiftBridge()
         #endif
@@ -47,6 +51,13 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+
+            // Seamless-only: Backspace-to-unwrap vs. plain native delete.
+            if markerVisibility == .seamless {
+                Toggle("Backspace unwraps markers", isOn: $backspaceUnwrap)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
 
             MarkdownUITextViewWrapper(
                 text: text,

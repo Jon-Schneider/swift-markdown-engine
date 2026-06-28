@@ -27,6 +27,9 @@ struct ContentView: View {
     /// `.seamless` hides every Markdown marker (true WYSIWYG); `.revealAll` is
     /// the "show raw Markdown" escape hatch.
     @State private var markerVisibility: MarkerVisibility = .revealOnEdit
+    /// In seamless mode, whether Backspace at content start unwraps the whole
+    /// hidden marker (on) or does a plain native delete (off).
+    @State private var backspaceUnwrap = true
 
     var body: some View {
         NativeTextViewWrapper(
@@ -47,6 +50,10 @@ struct ContentView: View {
                     Text("Reveal raw").tag(MarkerVisibility.revealAll)
                 }
                 .pickerStyle(.segmented)
+
+                // Seamless-only: Backspace-to-unwrap vs. plain native delete.
+                Toggle("Backspace unwraps", isOn: $backspaceUnwrap)
+                    .disabled(markerVisibility != .seamless)
 
                 // Scroll-away header: an embedder-supplied SwiftUI view hosted
                 // above the body that scrolls with it. "Expanded" animates
@@ -92,6 +99,7 @@ struct ContentView: View {
     private var configuration: MarkdownEditorConfiguration {
         var config = MarkdownEditorConfiguration.default
         config.markers.visibility = markerVisibility
+        config.markers.seamlessBackspaceUnwrap = backspaceUnwrap
 
         #if canImport(MarkdownEngineCodeBlocks)
         // Syntax highlighting for fenced code blocks. Auto-switches between

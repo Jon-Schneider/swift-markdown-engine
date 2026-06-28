@@ -43,6 +43,23 @@ struct SeamlessInputTests {
         #expect(backspace("> hi", at: 2, length: 1) == .allowDefault)
     }
 
+    @Test("Disabling seamlessBackspaceUnwrap reverts Backspace to native delete")
+    func backspaceUnwrapDisabled() {
+        let noUnwrap = MarkdownEditorConfiguration(
+            markers: MarkerStyle(visibility: .seamless, seamlessBackspaceUnwrap: false)
+        )
+        // Block, inline, and atomic-token cases all fall through to native delete.
+        #expect(backspace("> hi", at: 2, config: noUnwrap) == .allowDefault)
+        #expect(backspace("# Title", at: 2, config: noUnwrap) == .allowDefault)
+        #expect(backspace("**bold**", at: 2, config: noUnwrap) == .allowDefault)
+    }
+
+    @Test("seamlessBackspaceUnwrap defaults to enabled")
+    func backspaceUnwrapDefaultsOn() {
+        #expect(MarkerStyle.seamless.seamlessBackspaceUnwrap == true)
+        #expect(MarkdownEditorConfiguration(markers: .seamless).markers.seamlessBackspaceUnwrap == true)
+    }
+
     // MARK: - Blockquote
 
     @Test("Backspace at quote content start unwraps the whole `> ` marker")

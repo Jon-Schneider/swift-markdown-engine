@@ -58,6 +58,9 @@ enum MarkdownSeamlessInput {
     ) -> SeamlessEditDecision {
         // Only seamless mode rewrites Backspace; other modes keep native behavior.
         guard configuration.markers.visibility == .seamless else { return .allowDefault }
+        // Backspace-to-unwrap is opt-out: when disabled, Backspace falls through
+        // to the platform's native single-character delete.
+        guard configuration.markers.seamlessBackspaceUnwrap else { return .allowDefault }
         guard selection.length == 0 else { return .allowDefault }
 
         let ns = currentText as NSString

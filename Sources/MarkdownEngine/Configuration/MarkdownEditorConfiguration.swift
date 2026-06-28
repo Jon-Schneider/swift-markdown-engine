@@ -231,17 +231,28 @@ public struct MarkerStyle: Sendable {
     /// `revealOnEdit` so existing embedders are unaffected; set to `.seamless`
     /// for the always-hidden WYSIWYG editing surface.
     public var visibility: MarkerVisibility
+    /// In `.seamless` mode, whether Backspace at the start of an element's
+    /// visible content removes the *entire* hidden marker (unwrapping the
+    /// block/inline element) in one edit. When `false`, Backspace performs a
+    /// plain native single-character delete — so a press at the start of a
+    /// quoted/heading/list line nibbles one invisible marker character at a
+    /// time, exactly like the underlying buffer. Defaults to `true` (the
+    /// behavior that makes seamless editing feel native). No effect outside
+    /// `.seamless`.
+    public var seamlessBackspaceUnwrap: Bool
 
     public init(
         hiddenMarkerFontSize: CGFloat = 0.1,
         inlineCodeMarkerAlpha: CGFloat = 0.5,
         findMatchHighlightAlpha: CGFloat = 0.65,
-        visibility: MarkerVisibility = .revealOnEdit
+        visibility: MarkerVisibility = .revealOnEdit,
+        seamlessBackspaceUnwrap: Bool = true
     ) {
         self.hiddenMarkerFontSize = hiddenMarkerFontSize
         self.inlineCodeMarkerAlpha = inlineCodeMarkerAlpha
         self.findMatchHighlightAlpha = findMatchHighlightAlpha
         self.visibility = visibility
+        self.seamlessBackspaceUnwrap = seamlessBackspaceUnwrap
     }
 
     public static let `default` = MarkerStyle()
