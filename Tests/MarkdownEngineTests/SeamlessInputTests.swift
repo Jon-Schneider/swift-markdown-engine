@@ -877,6 +877,16 @@ struct SeamlessCaretTests {
         #expect(normalize(text, proposed: tail, previous: tail - 2) == tail)
     }
 
+    @Test("An image cell inside a REVEALED table is editable — its run is not snapped")
+    func imageRunInsideRevealedTableNotSnapped() {
+        // Same contract as the link-cell case, for the other atomic run kind: an
+        // `![a](u)` image cell in a revealed table is drawn source, so the caret must
+        // rest inside it rather than snapping to the run's far edge.
+        let text = "| ![a](u) | x |\n| --- | --- |\n| a | b |"
+        let inside = (("| ![a]") as NSString).length   // inside the image run
+        #expect(normalize(text, proposed: inside, previous: inside - 2) == inside)
+    }
+
     @Test("Short `**` markers are left to native motion (not snapped)")
     func shortInlineMarkersNotSnapped() {
         // `a**b**` — caret 2 (between the asterisks) is left where the system put it.
