@@ -741,6 +741,27 @@ struct SeamlessActiveTokenTests {
         #expect(active(Self.tableDoc, caret: 2, .seamless).isEmpty)
     }
 
+    @Test("Seamless table reveal boundary: trailing edge is inside, the next line is not")
+    func seamlessTableRevealBoundary() {
+        // A table token's range EXCLUDES its trailing newline (it ends at the last `|`), unlike a
+        // block-LaTeX token whose range includes its `\n` (cf. `seamlessNoRevealOnNextLine`). So the
+        // `caret == end` trailing-edge rule (reveal unless the last char is a newline) behaves
+        // differently for the two kinds, and the table boundary deserves its own pin:
+        //   • caret AT the table's end (just after the last `|`, before the row's `\n`) is still on
+        //     the last row's line → the table stays revealed (you're editing the last cell).
+        //   • caret ONE PAST that (the first char of the following line) is genuinely outside → the
+        //     table re-hides. This is the adjacency validated live in the 3.1 seamless re-check:
+        //     formatting/typing on a paragraph below a table must not keep the table revealed.
+        let text = "| a | b |\n| --- | --- |\n| 1 | 2 |\nplain"   // table immediately followed by prose
+        let tokens = MarkdownTokenizer.parseTokensViaAST(in: text)
+        guard let tableIdx = tokens.firstIndex(where: { $0.kind == .table }) else {
+            Issue.record("expected a table token"); return
+        }
+        let tableEnd = NSMaxRange(tokens[tableIdx].range)        // on the last row's terminating `\n`
+        #expect(active(text, caret: tableEnd, .seamless).contains(tableIdx))     // last row → revealed
+        #expect(active(text, caret: tableEnd + 1, .seamless).isEmpty)            // next line → hidden
+    }
+
     @Test("Seamless propagates active state to a table cell's link/image token (load-bearing)")
     func seamlessRevealsTableCellTokens() {
         // A link in a cell is the case where propagation MATTERS: the link styler honors
