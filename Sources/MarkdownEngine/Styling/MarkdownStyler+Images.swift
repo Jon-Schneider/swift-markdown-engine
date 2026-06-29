@@ -39,10 +39,10 @@ extension MarkdownStyler {
             let url = ctx.nsText.substring(with: urlRange)
             // Seamless treats an image as one atomic, always-rendered unit, so it
             // must never flip to the "active" dual display (rendered image + dimmed
-            // raw `![alt](url)` source). The active set is already empty in seamless
-            // today (computeActiveTokenIndices returns [] there); this gate is a
-            // belt-and-suspenders guarantee for any future path that marks an
-            // image active (stale caches, revealAll→seamless transitions).
+            // raw `![alt](url)` source). Seamless DOES mark some blocks active now (the
+            // block-LaTeX reveal hole, plan 1.2), so this gate is what keeps images out
+            // of that set — it force-collapses images regardless of `activeTokenIndices`
+            // (also covering stale caches / revealAll→seamless transitions).
             let forceCollapsed = ctx.configuration.markers.visibility == .seamless
             let isActive = ctx.activeTokenIndices.contains(idx) && !forceCollapsed
 

@@ -13,6 +13,17 @@ enum MarkdownDetection {
 
     // MARK: - Active Token Indices
 
+    /// Block-level rendered elements whose raw source reveals on caret entry even in SEAMLESS
+    /// mode, so they can be edited (the "reveal hole", plan 1.2). Inline elements ($x$, **bold**)
+    /// never reveal in seamless — that is the whole point of the mode.
+    ///
+    /// 1.1 (tables) will add `.table` here, but that's NOT sufficient on its own: tables need the
+    /// container→inline-cell propagation that today lives only in the reveal-on-edit branch
+    /// (`activeContainers` below), and the ranged-selection rule for tables should match that
+    /// branch. Adding `.table` here reveals the table's outer source but not its cells — 1.1 must
+    /// extend the seamless path accordingly.
+    static let seamlessRevealableBlockKinds: Set<MarkdownTokenKind> = [.blockLatex]
+
     static func computeActiveTokenIndices(
         selectionRange: NSRange,
         tokens: [MarkdownToken],
@@ -22,12 +33,14 @@ enum MarkdownDetection {
     ) -> Set<Int> {
         // Read-only mode (no caret) hides all tokens regardless of any trailing selection.
         if suppressed { return [] }
-        // Seamless: rendered blocks (LaTeX, images, tables) never reveal their
-        // source, even with the caret on them. Reveal-all: every block reveals
-        // its source (the "show raw Markdown" escape hatch).
         switch markerVisibility {
-        case .seamless:  return []
-        case .revealAll: return Set(tokens.indices)
+        case .seamless:
+            // Seamless hides every marker EXCEPT a block-level rendered element the caret has
+            // entered (block LaTeX today; tables via 1.1), whose raw source must reveal so it can
+            // be edited. Inline rendered runs stay hidden.
+            return tokenIndices(touching: selectionRange, in: tokens, text: text,
+                                where: { seamlessRevealableBlockKinds.contains($0.kind) })
+        case .revealAll: return Set(tokens.indices)  // "show raw Markdown" escape hatch
         case .revealOnEdit: break
         }
         var indices: Set<Int> = []
@@ -68,6 +81,36 @@ enum MarkdownDetection {
                 }) {
                     indices.insert(i)
                 }
+            }
+        }
+        return indices
+    }
+
+    /// Indices of tokens matching `predicate` that the selection touches: a ranged selection that
+    /// overlaps the token, a caret strictly inside it, or a zero-length caret resting at a
+    /// non-newline trailing edge. The seamless reveal hole uses this over a restricted set of block
+    /// kinds. NOTE: this mirrors — but does not share — the reveal-on-edit branch's per-token
+    /// containment; that branch additionally gates the intersection rule to LaTeX only and
+    /// propagates active containers to their inline children. Keep the two in mind together if you
+    /// change containment semantics (see `seamlessRevealableBlockKinds`).
+    private static func tokenIndices(
+        touching selectionRange: NSRange,
+        in tokens: [MarkdownToken],
+        text: NSString,
+        where predicate: (MarkdownToken) -> Bool
+    ) -> Set<Int> {
+        var indices: Set<Int> = []
+        let caretLocation = selectionRange.location
+        for (index, token) in tokens.enumerated() where predicate(token) {
+            let start = token.range.location
+            let end = NSMaxRange(token.range)
+            if selectionRange.length > 0 {
+                if NSIntersectionRange(selectionRange, token.range).length > 0 { indices.insert(index) }
+            } else if caretLocation >= start && caretLocation < end {
+                indices.insert(index)
+            } else if caretLocation == end, end - 1 >= start, end - 1 < text.length,
+                      text.substring(with: NSRange(location: end - 1, length: 1)) != "\n" {
+                indices.insert(index)
             }
         }
         return indices

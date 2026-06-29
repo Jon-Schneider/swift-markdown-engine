@@ -665,10 +665,12 @@ struct SeamlessActiveTokenTests {
         )
     }
 
-    @Test("Seamless never marks a rendered block active (source stays hidden)")
-    func seamlessHidesSource() {
-        // Caret inside the inline LaTeX `$x$`.
+    @Test("Seamless keeps INLINE rendered runs hidden, even with the caret on them")
+    func seamlessHidesInlineSource() {
+        // Inline LaTeX `$x$` and inline emphasis never reveal in seamless — only block-level
+        // rendered elements do (see the reveal-hole tests below).
         #expect(active("$x$", caret: 1, .seamless).isEmpty)
+        #expect(active("**bold**", caret: 3, .seamless).isEmpty)
     }
 
     @Test("Reveal-all marks every token active (source shown everywhere)")
@@ -676,6 +678,60 @@ struct SeamlessActiveTokenTests {
         let text = "$x$"
         let count = MarkdownTokenizer.parseTokensViaAST(in: text).count
         #expect(active(text, caret: 0, .revealAll).count == count)
+    }
+
+    // MARK: - Seamless reveal hole (plan 1.2): block LaTeX reveals its source on caret entry
+
+    @Test("Seamless reveals the block LaTeX the caret is inside (so it can be edited)")
+    func seamlessRevealsBlockLatexOnEntry() {
+        // Single-line `$$x$$`: caret inside → that block becomes active (raw source revealed).
+        #expect(active("$$x$$", caret: 2, .seamless) == [0])
+    }
+
+    @Test("Seamless reveals a multi-line block LaTeX by the block containing the caret")
+    func seamlessRevealsMultiLineBlockLatex() {
+        let text = "$$\n\\frac{a}{b}\n$$"
+        let tokens = MarkdownTokenizer.parseTokensViaAST(in: text)
+        guard let blockIdx = tokens.firstIndex(where: { $0.kind == .blockLatex }) else {
+            Issue.record("expected a block-LaTeX token"); return
+        }
+        let caretInside = tokens[blockIdx].range.location + 4   // on the content line
+        #expect(active(text, caret: caretInside, .seamless) == [blockIdx])
+    }
+
+    @Test("Seamless reveals nothing when the caret is outside any block LaTeX")
+    func seamlessNoRevealOutsideBlock() {
+        // `$$x$$` then a blank line then prose; caret in the prose → no block revealed.
+        let text = "$$x$$\n\nplain text"
+        #expect(active(text, caret: text.utf16.count - 1, .seamless).isEmpty)
+    }
+
+    @Test("Seamless reveals from the block's start edge")
+    func seamlessRevealsAtBlockStart() {
+        // Caret at index 0 (the block's leading `$`) counts as inside.
+        #expect(active("$$x$$", caret: 0, .seamless) == [0])
+    }
+
+    @Test("Seamless does NOT reveal once the caret sits on the line after the block")
+    func seamlessNoRevealOnNextLine() {
+        // The block range includes its trailing newline; a caret at the start of the next line
+        // (== block end, preceded by `\n`) must re-hide the block, not keep it revealed.
+        let text = "$$x$$\nplain"          // block [0,6) incl. the `\n`; next line starts at 6
+        #expect(active(text, caret: 6, .seamless).isEmpty)
+    }
+
+    @Test("Seamless reveals a block a ranged selection overlaps")
+    func seamlessRevealsBlockUnderRangedSelection() {
+        let text = "$$x$$\nplain"
+        let tokens = MarkdownTokenizer.parseTokensViaAST(in: text)
+        guard let blockIdx = tokens.firstIndex(where: { $0.kind == .blockLatex }) else {
+            Issue.record("expected a block-LaTeX token"); return
+        }
+        let sel = NSRange(location: 1, length: 3)   // spans inside `$$x$$`
+        let result = MarkdownDetection.computeActiveTokenIndices(
+            selectionRange: sel, tokens: tokens, in: text as NSString, markerVisibility: .seamless
+        )
+        #expect(result == [blockIdx])
     }
 }
 
