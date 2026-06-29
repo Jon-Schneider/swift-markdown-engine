@@ -15,14 +15,14 @@ enum MarkdownDetection {
 
     /// Block-level rendered elements whose raw source reveals on caret entry even in SEAMLESS
     /// mode, so they can be edited (the "reveal hole", plan 1.2). Inline elements ($x$, **bold**)
-    /// never reveal in seamless — that is the whole point of the mode.
-    ///
-    /// 1.1 (tables) will add `.table` here, but that's NOT sufficient on its own: tables need the
-    /// container→inline-cell propagation that today lives only in the reveal-on-edit branch
-    /// (`activeContainers` below), and the ranged-selection rule for tables should match that
-    /// branch. Adding `.table` here reveals the table's outer source but not its cells — 1.1 must
-    /// extend the seamless path accordingly.
-    static let seamlessRevealableBlockKinds: Set<MarkdownTokenKind> = [.blockLatex]
+    /// never reveal in seamless — that is the whole point of the mode. A container kind here
+    /// (`.table`) also marks the tokens nested in its range active via `propagateActiveContainers`.
+    /// That's load-bearing for cell content whose styler renders an overlay keyed off
+    /// `activeTokenIndices` and does NOT skip table interiors — images / links / embeds — which must
+    /// show their raw `![…]` / `[…](…)` source, not a rendered overlay, when the table is revealed.
+    /// (Plain cell text and inline `$…$` / `**bold**` reveal regardless, because the table styler
+    /// paints the whole range as plain body text and the inline-LaTeX styler skips table interiors.)
+    static let seamlessRevealableBlockKinds: Set<MarkdownTokenKind> = [.blockLatex, .table]
 
     static func computeActiveTokenIndices(
         selectionRange: NSRange,
@@ -36,10 +36,12 @@ enum MarkdownDetection {
         switch markerVisibility {
         case .seamless:
             // Seamless hides every marker EXCEPT a block-level rendered element the caret has
-            // entered (block LaTeX today; tables via 1.1), whose raw source must reveal so it can
-            // be edited. Inline rendered runs stay hidden.
-            return tokenIndices(touching: selectionRange, in: tokens, text: text,
-                                where: { seamlessRevealableBlockKinds.contains($0.kind) })
+            // entered (block LaTeX, table), whose raw source must reveal so it can be edited.
+            // Inline rendered runs outside such a block stay hidden. A revealed container (table)
+            // propagates to its inline children so the whole block's source shows.
+            let blocks = tokenIndices(touching: selectionRange, in: tokens, text: text,
+                                      where: { seamlessRevealableBlockKinds.contains($0.kind) })
+            return propagateActiveContainers(blocks, tokens: tokens)
         case .revealAll: return Set(tokens.indices)  // "show raw Markdown" escape hatch
         case .revealOnEdit: break
         }
@@ -67,32 +69,40 @@ enum MarkdownDetection {
             }
         }
 
-        // When a container token (e.g. a table) is active, every inline token inside it becomes active too.
+        return propagateActiveContainers(indices, tokens: tokens)
+    }
+
+    /// When a container token (a `.table`) is active, every token nested inside its range becomes
+    /// active too. This is load-bearing for cell content whose styler keys off `activeTokenIndices`
+    /// without skipping table interiors — images / links / embeds: without propagation a revealed
+    /// table would render an overlay over the raw `![…]` / `[…](…)` source. (Inline LaTeX is skipped
+    /// inside tables by its own styler, so propagation is inert for it; plain cell text reveals via
+    /// the table styler painting the range as plain text.) Shared by the seamless and reveal-on-edit
+    /// paths so the two stay in lockstep. Returns `indices` unchanged when no active container is present.
+    private static func propagateActiveContainers(_ indices: Set<Int>, tokens: [MarkdownToken]) -> Set<Int> {
         let activeContainers: [MarkdownToken] = indices.compactMap { idx in
-            let token = tokens[idx]
-            return token.kind == .table ? token : nil
+            tokens[idx].kind == .table ? tokens[idx] : nil
         }
-        if !activeContainers.isEmpty {
-            for (i, token) in tokens.enumerated() where !indices.contains(i) {
-                let tStart = token.range.location
-                let tEnd = NSMaxRange(token.range)
-                if activeContainers.contains(where: {
-                    tStart >= $0.range.location && tEnd <= NSMaxRange($0.range)
-                }) {
-                    indices.insert(i)
-                }
+        guard !activeContainers.isEmpty else { return indices }
+        var result = indices
+        for (i, token) in tokens.enumerated() where !result.contains(i) {
+            let tStart = token.range.location
+            let tEnd = NSMaxRange(token.range)
+            if activeContainers.contains(where: { tStart >= $0.range.location && tEnd <= NSMaxRange($0.range) }) {
+                result.insert(i)
             }
         }
-        return indices
+        return result
     }
 
     /// Indices of tokens matching `predicate` that the selection touches: a ranged selection that
     /// overlaps the token, a caret strictly inside it, or a zero-length caret resting at a
     /// non-newline trailing edge. The seamless reveal hole uses this over a restricted set of block
-    /// kinds. NOTE: this mirrors — but does not share — the reveal-on-edit branch's per-token
-    /// containment; that branch additionally gates the intersection rule to LaTeX only and
-    /// propagates active containers to their inline children. Keep the two in mind together if you
-    /// change containment semantics (see `seamlessRevealableBlockKinds`).
+    /// kinds. Container→child propagation is shared (`propagateActiveContainers`, applied after this
+    /// in both paths). NOTE: this still mirrors — not shares — the reveal-on-edit branch's per-token
+    /// containment loop; the one semantic difference is the ranged-selection rule (reveal-on-edit
+    /// gates intersection to LaTeX kinds, this applies it to every matched kind). Keep them in lockstep
+    /// if you change containment.
     private static func tokenIndices(
         touching selectionRange: NSRange,
         in tokens: [MarkdownToken],

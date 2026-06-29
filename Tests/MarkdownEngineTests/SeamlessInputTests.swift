@@ -720,6 +720,45 @@ struct SeamlessActiveTokenTests {
         #expect(active(text, caret: 6, .seamless).isEmpty)
     }
 
+    // MARK: - Seamless reveal hole (plan 1.1): tables reveal their source on caret entry
+
+    private static let tableDoc = "intro\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nend"
+
+    @Test("Seamless reveals a table the caret is inside (so its source can be edited)")
+    func seamlessRevealsTableOnEntry() {
+        let text = Self.tableDoc
+        let tokens = MarkdownTokenizer.parseTokensViaAST(in: text)
+        guard let tableIdx = tokens.firstIndex(where: { $0.kind == .table }) else {
+            Issue.record("expected a table token"); return
+        }
+        let caretInside = tokens[tableIdx].range.location + 3
+        #expect(active(text, caret: caretInside, .seamless).contains(tableIdx))
+    }
+
+    @Test("Seamless keeps a table hidden when the caret is outside it")
+    func seamlessNoTableRevealOutside() {
+        // Caret in the leading "intro" prose → no table revealed.
+        #expect(active(Self.tableDoc, caret: 2, .seamless).isEmpty)
+    }
+
+    @Test("Seamless propagates active state to a table cell's link/image token (load-bearing)")
+    func seamlessRevealsTableCellTokens() {
+        // A link in a cell is the case where propagation MATTERS: the link styler honors
+        // `activeTokenIndices` and does NOT skip table interiors, so without propagation the link
+        // would render over the revealed raw `[a](b)` source. (Inline `$…$`/`**bold**` reveal via
+        // the table styler regardless, so they don't exercise propagation.)
+        let text = "intro\n\n| [a](b) | c |\n| --- | --- |\n| 1 | 2 |\n\nend"
+        let tokens = MarkdownTokenizer.parseTokensViaAST(in: text)
+        guard let tableIdx = tokens.firstIndex(where: { $0.kind == .table }),
+              let linkIdx = tokens.firstIndex(where: { $0.kind == .link }) else {
+            Issue.record("expected table + link tokens"); return
+        }
+        let caretInside = tokens[tableIdx].range.location + 5
+        let activeSet = active(text, caret: caretInside, .seamless)
+        #expect(activeSet.contains(tableIdx))
+        #expect(activeSet.contains(linkIdx), "a link inside a revealed table must be active via container propagation")
+    }
+
     @Test("Seamless reveals a block a ranged selection overlaps")
     func seamlessRevealsBlockUnderRangedSelection() {
         let text = "$$x$$\nplain"
