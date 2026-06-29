@@ -308,6 +308,11 @@ public struct ListStyle: Sendable {
     public var helpersEnabled: Bool
     /// Master switch for auto-closing pairs `()`, `{}`, `[]` while typing.
     public var autoClosePairsEnabled: Bool
+    /// Master switch for table grid navigation (Tab / Shift-Tab walk cells, Enter
+    /// moves to the cell below / appends a row). When `false`, those keys behave
+    /// natively inside a table. Lives here because, like list continuation, it's a
+    /// structural typing-time editing aid (not list-specific, but the same family).
+    public var tableNavigationEnabled: Bool
     /// Indent (in points) that one nesting level adds to the list item.
     public var indentPerLevel: CGFloat
     /// Maximum nesting level reachable by pressing Tab inside a list.
@@ -318,12 +323,14 @@ public struct ListStyle: Sendable {
     public init(
         helpersEnabled: Bool = true,
         autoClosePairsEnabled: Bool = true,
+        tableNavigationEnabled: Bool = true,
         indentPerLevel: CGFloat = 27.5,
         maximumNestingLevel: Int = 3,
         extraLineHeight: CGFloat = 2
     ) {
         self.helpersEnabled = helpersEnabled
         self.autoClosePairsEnabled = autoClosePairsEnabled
+        self.tableNavigationEnabled = tableNavigationEnabled
         self.indentPerLevel = indentPerLevel
         self.maximumNestingLevel = maximumNestingLevel
         self.extraLineHeight = extraLineHeight
