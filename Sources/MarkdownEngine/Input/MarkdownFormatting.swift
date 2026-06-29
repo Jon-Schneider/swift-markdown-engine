@@ -150,7 +150,7 @@ enum MarkdownFormatting {
             let line = ns.substring(with: ns.lineRange(for: selection))
             return isBlockquoteLine(line)
         case .codeBlock:
-            return enclosingToken(text: text, selection: selection, kinds: [.codeBlock]) != nil
+            return enclosingFencedCodeRange(text: text, selection: selection) != nil
         case .toggleCheckbox:
             // "On" == the line is a CHECKED task (menu checkmark / toolbar highlight).
             let line = ns.substring(with: ns.lineRange(for: selection)).trimmingCharacters(in: .newlines)
@@ -528,14 +528,14 @@ enum MarkdownFormatting {
         let ns = text as NSString
 
         // Toggle off: caret inside an existing fenced block → replace the whole block with its
-        // code, dropping the line terminator that preceded the closing fence.
-        if let token = enclosingToken(text: text, selection: selection, kinds: [.codeBlock]) {
-            let terminator = trailingLineTerminatorLength(of: token.contentRange, in: ns)
-            let innerRange = NSRange(location: token.contentRange.location, length: token.contentRange.length - terminator)
-            let inner = ns.substring(with: innerRange)
+        // code. Detected via `BlockParser`, which (unlike `parseTokensViaAST`) also recognizes an
+        // UNTERMINATED fence (open ``` through EOF) — so an in-progress block unwraps instead of
+        // getting re-wrapped.
+        if let blockRange = enclosingFencedCodeRange(text: text, selection: selection) {
+            let inner = fencedCodeInnerContent(blockRange, in: ns)
             return FormattingEdit(
-                range: token.range, text: inner,
-                selection: NSRange(location: token.range.location, length: (inner as NSString).length)
+                range: blockRange, text: inner,
+                selection: NSRange(location: blockRange.location, length: (inner as NSString).length)
             )
         }
 
@@ -556,6 +556,33 @@ enum MarkdownFormatting {
         // won't form a token over nothing, so skip verification there.
         guard !body.isEmpty else { return edit }
         return verifiedWrap(edit, formsKind: .codeBlock, in: text, selection: selection)
+    }
+
+    /// The range of the fenced code block enclosing `selection`, if any — terminated OR unterminated
+    /// (`BlockParser` consumes an open fence through EOF, which the token parser doesn't surface).
+    private static func enclosingFencedCodeRange(text: String, selection: NSRange) -> NSRange? {
+        BlockParser.parse(text)
+            .first { $0.kind == .fencedCode && enclosesSelection($0.range, selection) }?
+            .range
+    }
+
+    /// The code inside a fenced block: everything after the opening fence line, minus the closing
+    /// fence line and the terminator before it when present (an unterminated block has neither).
+    private static func fencedCodeInnerContent(_ blockRange: NSRange, in ns: NSString) -> String {
+        let openLine = ns.lineRange(for: NSRange(location: blockRange.location, length: 0))
+        let contentStart = min(NSMaxRange(openLine), NSMaxRange(blockRange))
+        var contentEnd = NSMaxRange(blockRange)
+        if contentEnd > contentStart {
+            let lastLine = ns.lineRange(for: NSRange(location: contentEnd - 1, length: 0))
+            let lastTrimmed = ns.substring(with: lastLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            if lastLine.location >= contentStart, lastTrimmed.hasPrefix("```") {
+                contentEnd = lastLine.location   // drop the closing fence line…
+                let body = NSRange(location: contentStart, length: contentEnd - contentStart)
+                contentEnd -= trailingLineTerminatorLength(of: body, in: ns)   // …and its preceding terminator
+            }
+        }
+        return contentEnd > contentStart
+            ? ns.substring(with: NSRange(location: contentStart, length: contentEnd - contentStart)) : ""
     }
 
     /// The UTF-16 length (0, 1, or 2) of the line terminator at the end of `range` in `ns` — a

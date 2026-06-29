@@ -325,6 +325,15 @@ struct MarkdownFormattingTests {
             == FormattingEdit(range: NSRange(location: 0, length: 12), text: "code", selection: NSRange(location: 0, length: 4)))
     }
 
+    @Test("Code block unwraps an unterminated (open) fence instead of re-wrapping it")
+    func codeBlockUnwrapsUnterminatedFence() {
+        // "```\ncode" has no closing fence; BlockParser treats it as a code block through EOF, so
+        // the command must unwrap to "code", not wrap it again.
+        #expect(edit(.codeBlock, "```\ncode", NSRange(location: 5, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 8), text: "code", selection: NSRange(location: 0, length: 4)))
+        #expect(MarkdownFormatting.isActive(.codeBlock, text: "```\ncode", selection: NSRange(location: 5, length: 0)))
+    }
+
     @Test("Code block refuses a body that already contains a fence line (would close early)")
     func codeBlockRefusesBodyWithFence() {
         // This engine closes a fence on any line starting with ```, so a body containing a ```
