@@ -23,7 +23,9 @@ public struct InlineLinkContext: Equatable {
     public let target: String
     /// The link's full source range, for an edit command to replace.
     public let sourceRange: NSRange
-    /// Caret rect in the editor's coordinate space, to anchor an edit popover.
+    /// Caret rect in WINDOW coordinates, to anchor an edit popover (position an overlay in
+    /// SwiftUI's `.global` space — which equals the window only for a full-screen host; otherwise
+    /// map it through a known view's window). Reflects the editor's on-screen origin and scroll.
     public let anchorRect: CGRect
 }
 

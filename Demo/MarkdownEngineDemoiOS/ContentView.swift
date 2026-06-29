@@ -100,6 +100,114 @@ struct ContentView: View {
             )
         }
         .ignoresSafeArea(edges: .bottom)
+        // Slash-command menu: the engine publishes `slashMenuContext` when the caret sits in a
+        // `/command`; the host renders the menu, anchored at the caret, and applies a choice.
+        .overlay(alignment: .topLeading) {
+            if let context = controller.slashMenuContext {
+                SlashMenuOverlay(context: context) { block in
+                    // Bind the edit to the range the *visible* menu was built from, not whatever
+                    // the engine has republished since (defensive against a re-publish race).
+                    controller.insertBlock(block, replacing: context.sourceRange)
+                }
+            }
+        }
+    }
+}
+
+/// The `/` block-insert menu — a floating card anchored at the caret. Driven entirely by the
+/// engine's published `SlashMenuContext` (query + caret rect): the host owns presentation, the
+/// engine owns detection and the edit. A `GeometryReader` maps the context's window-space caret
+/// rect into this overlay's local space and clamps the card on-screen.
+private struct SlashMenuOverlay: View {
+    let context: SlashMenuContext
+    let onSelect: (MarkdownBlockInsert) -> Void
+
+    private static let cardWidth: CGFloat = 260
+    private static let rowHeight: CGFloat = 44
+    private static let maxVisibleRows = 6
+    private static let gap: CGFloat = 6
+    private static let margin: CGFloat = 8
+
+    private var items: [MarkdownSlashMenuItem] {
+        MarkdownSlashMenu.items(matching: context.query)
+    }
+
+    private var cardHeight: CGFloat {
+        CGFloat(min(max(items.count, 1), Self.maxVisibleRows)) * Self.rowHeight
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            // The overlay's own origin in window space; subtract it to convert the caret rect
+            // (window coords) into this container's local coordinates.
+            let containerOrigin = proxy.frame(in: .global).origin
+            let caret = context.anchorRect
+            // Clamp to the container so the card can't overflow a narrow Slide-Over / split width.
+            let cardWidth = min(Self.cardWidth, max(120, proxy.size.width - 2 * Self.margin))
+
+            // Prefer ABOVE the caret. The software keyboard always sits below the caret (the text
+            // view keeps the caret just above it), and keyboard avoidance is the text view's own
+            // `contentInset` — SwiftUI never shrinks this overlay for the keyboard, so a downward
+            // menu would render *under* it. Fall back to below only when there's no room above
+            // (caret near the very top of the screen, where the keyboard isn't).
+            let aboveY = caret.minY - containerOrigin.y - Self.gap - cardHeight
+            let belowY = caret.maxY - containerOrigin.y + Self.gap
+            let y = aboveY >= 0 ? aboveY : belowY
+
+            // Left-align to the caret, clamped within the container's width.
+            let rawX = caret.minX - containerOrigin.x
+            let x = min(max(0, rawX), max(0, proxy.size.width - cardWidth))
+
+            card
+                .frame(width: cardWidth)
+                .offset(x: x, y: y)
+        }
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if items.isEmpty {
+                Text("No matching blocks")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .frame(height: Self.rowHeight, alignment: .leading)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(items) { item in
+                            row(item)
+                        }
+                    }
+                }
+                .frame(height: cardHeight)
+            }
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(uiColor: .separator)))
+        .shadow(radius: 12, y: 4)
+    }
+
+    // Tap-only on iOS (no arrow/Return nav until `onKeyPress`, iOS 17+), so rows carry no
+    // "selected" highlight — that would imply a keyboard affordance that doesn't exist here.
+    private func row(_ item: MarkdownSlashMenuItem) -> some View {
+        Button {
+            onSelect(item.block)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: item.systemImage)
+                    .frame(width: 24)
+                    .foregroundStyle(Color.accentColor)
+                Text(item.title)
+                    .foregroundStyle(Color.primary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: Self.rowHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

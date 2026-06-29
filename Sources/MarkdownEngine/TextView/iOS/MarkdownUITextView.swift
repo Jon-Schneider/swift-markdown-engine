@@ -327,10 +327,20 @@ public final class MarkdownUITextView: UITextView {
         )
     }
 
-    /// Caret rect in view coordinates, for anchoring a host popover.
+    /// Caret rect in WINDOW coordinates, for anchoring a host popover/overlay. Window space (not
+    /// the text view's content space) is what a SwiftUI host needs: it positions an overlay in
+    /// `.global` coordinates, which already accounts for the editor's on-screen origin and the
+    /// scroll offset (`caretRect(for:)` alone is in scrolled content space). Falls back to the raw
+    /// caret rect if the view isn't yet in a window.
+    ///
+    /// Caveat: SwiftUI `.global` equals the UIKit window only when the host fills the window. In a
+    /// sheet/popover/Stage-Manager-inset host, map this rect through a known UIView's window rather
+    /// than assuming the two origins coincide. Note this is a snapshot taken at publish time (on
+    /// selection/text change), so it can lag a manual scroll while the menu stays open.
     private func caretAnchorRect() -> CGRect {
         guard let position = selectedTextRange?.start else { return .zero }
-        return caretRect(for: position)
+        let rect = caretRect(for: position)
+        return window == nil ? rect : convert(rect, to: nil)
     }
 
     /// Extract the URL from a `[text](url)` source (the run between the last `](` and the
