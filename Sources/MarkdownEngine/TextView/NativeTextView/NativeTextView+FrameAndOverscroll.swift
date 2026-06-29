@@ -268,10 +268,24 @@ extension NativeTextView {
         if widthChanged {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
+                var restyledWidthDependentTable = false
                 if self.configuration.readingWidth == nil {
-                    self.restyleWidthDependentTableParagraphsForWidthChange()
+                    restyledWidthDependentTable = self.restyleWidthDependentTableParagraphsForWidthChange()
                 }
                 self.updateWideTableOverlays()
+                // That restyle ran AFTER setFrameSize's own `recalcOverscroll`, and it can change
+                // document HEIGHT — an active table's reveal-height reservation is added/dropped across
+                // the narrow↔wide threshold, and a wide table gains/loses its scroller strip on the
+                // same crossing. Without a re-measure, `baseContentHeight`, the managed frame height,
+                // and the fits-content intrinsic size stay at the pre-restyle height until the next
+                // edit/scroll forces a measurement. Re-measure here (forced full layout) so they stay in
+                // sync; `applyManagedFrameSize` (reached only when the height actually moved) also
+                // re-invalidates the fits-content intrinsic size.
+                if restyledWidthDependentTable, let scrollView = self.enclosingScrollView {
+                    self.pendingFullLayoutMeasure = true
+                    self.recalcOverscroll(for: scrollView, debugTag: "widthDependentTableRestyle")
+                    (scrollView as? ClampedScrollView)?.clampToInsets()
+                }
             }
         }
     }
@@ -290,15 +304,19 @@ extension NativeTextView {
     ///     (or keep it if still narrow — the recompute is idempotent and paragraph-scoped, so doing it
     ///     on every width change is cheap). Block-LaTeX reveal reservation is width-INDEPENDENT
     ///     (`contentWidth == nil`), so it can't go stale on resize and is deliberately not collected.
-    private func restyleWidthDependentTableParagraphsForWidthChange() {
+    /// Returns whether it restyled any paragraphs (so the caller knows to re-measure the document
+    /// height — the restyle can change it; see the call site).
+    @discardableResult
+    private func restyleWidthDependentTableParagraphsForWidthChange() -> Bool {
         guard let storage = textStorage,
-              let coord = delegate as? NativeTextViewCoordinator else { return }
+              let coord = delegate as? NativeTextViewCoordinator else { return false }
         let tokens = coord.parsedDocument(for: self.string).tokens
         let ranges = NativeTextView.widthDependentTableParagraphs(
             in: storage, activeTokenIndices: coord.activeTokenIndices, tokens: tokens
         )
-        guard !ranges.isEmpty else { return }
+        guard !ranges.isEmpty else { return false }
         coord.restyleParagraphs(ranges, in: self)
+        return true
     }
 
     /// The width-dependent table paragraphs whose styling a width change can invalidate:
