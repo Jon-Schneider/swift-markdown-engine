@@ -220,8 +220,16 @@ struct TableLayout: Equatable {
     let tableRange: NSRange
     let rows: [Row]
 
-    /// Widest row — new appended rows match this so the table stays rectangular.
-    var columnCount: Int { rows.map(\.cells.count).max() ?? 0 }
+    /// Rendered column count — `max(header, separator)`, mirroring the renderer's
+    /// `parseTableSource` (`max(header.count, alignments.count)`), which DERIVES the
+    /// table width from those two rows only (body rows are padded/truncated to it).
+    /// New appended rows match this so they line up with the drawn grid even when the
+    /// separator declares more columns than the header (`| a |\n| - | - |`).
+    var columnCount: Int {
+        let header = rows.first?.cells.count ?? 0
+        let separator = rows.count > 1 ? rows[1].cells.count : 0
+        return max(header, separator)
+    }
 
     /// Next data (non-separator) row after `row`, or `nil` at the last one.
     func dataRow(after row: Int) -> Int? {
@@ -283,9 +291,19 @@ struct TableLayout: Equatable {
         while i < end {
             let lineRange = ns.lineRange(for: NSRange(location: i, length: 0))
             var contentLen = lineRange.length
+            // Strip the trailing line terminator, including a full CRLF — otherwise a
+            // leftover `\r` (which `cellRanges` doesn't trim) defeats the trailing-pipe
+            // check and a phantom final cell appears on CRLF documents.
             if contentLen > 0 {
                 let last = ns.character(at: lineRange.location + contentLen - 1)
-                if last == 0x0A || last == 0x0D { contentLen -= 1 }
+                if last == 0x0A {
+                    contentLen -= 1
+                    if contentLen > 0, ns.character(at: lineRange.location + contentLen - 1) == 0x0D {
+                        contentLen -= 1   // CRLF
+                    }
+                } else if last == 0x0D {
+                    contentLen -= 1       // lone CR
+                }
             }
             // Clamp to the table range (defensive; lines never exceed it in practice).
             let lineContent = NSRange(
@@ -300,7 +318,10 @@ struct TableLayout: Equatable {
             // both desyncs from the renderer (it only treats line 1 as the separator)
             // and would let a native newline split that row.
             let separator = (index == 1)
-            let cells = separator ? [] : cellRanges(in: lineContent, ns: ns)
+            // Parse cells for EVERY row, including the separator: navigation skips the
+            // separator (via `isSeparator`), but `columnCount` must count its cells to
+            // match the renderer's `max(header, separator)` width.
+            let cells = cellRanges(in: lineContent, ns: ns)
             rows.append(Row(lineContent: lineContent, isSeparator: separator, cells: cells))
             let next = NSMaxRange(lineRange)
             if next <= i { break }

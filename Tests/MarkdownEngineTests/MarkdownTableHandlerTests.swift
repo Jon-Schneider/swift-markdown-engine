@@ -254,6 +254,39 @@ struct MarkdownTableHandlerTests {
         #expect(newline(t, caret: at("b", in: t)) == .replace(range: NSRange(location: end, length: 0), text: "\n|  |", caret: end + 2))
     }
 
+    @Test("Append matches the rendered width when the separator has more columns than the header")
+    func appendWidthFollowsSeparator() {
+        // Regression (Codex backstop): the renderer derives width from
+        // max(header, separator), so this table renders as TWO columns even though
+        // the header/body each have one. The appended row must be 2 cells, not 1.
+        let t = "| a |\n| - | - |\n| b |"
+        let end = (t as NSString).length
+        guard let layout = TableLayout.layout(containing: at("a", in: t), in: t) else {
+            Issue.record("expected a table layout"); return
+        }
+        #expect(layout.columnCount == 2)
+        // Enter on "b" (last row) → append "\n|  |  |" (two cells), col 0 at index 2.
+        #expect(newline(t, caret: at("b", in: t)) == .replace(range: NSRange(location: end, length: 0), text: "\n|  |  |", caret: end + 2))
+    }
+
+    @Test("CRLF rows parse without a phantom trailing cell")
+    func crlfRowsHaveNoPhantomCell() {
+        // Regression (Codex backstop): lineRange includes "\r\n"; stripping only "\n"
+        // used to leave a "\r" that defeated trailing-pipe removal, adding a phantom
+        // cell. Each row here must have exactly 2 cells, and Tab/Enter target the
+        // real cells.
+        let t = "| a | b |\r\n| - | - |\r\n| c | d |"
+        guard let layout = TableLayout.layout(containing: at("a", in: t), in: t) else {
+            Issue.record("expected a table layout"); return
+        }
+        #expect(layout.rows[0].cells.count == 2)   // not 3 (no phantom)
+        #expect(layout.columnCount == 2)
+        // Tab from "a" → "b" (the real next cell, not a phantom).
+        #expect(tab(t, caret: at("a", in: t)) == .moveCaret(at("b", in: t)))
+        // Tab from "b" (last cell of header) → first cell of the next data row "c".
+        #expect(tab(t, caret: at("b", in: t)) == .moveCaret(at("c", in: t)))
+    }
+
     @Test("Multibyte (emoji) cell content keeps UTF-16 offsets consistent")
     func multibyteCellContent() {
         // "😀" is 2 UTF-16 units; navigation is offset-based, so the next-cell target
