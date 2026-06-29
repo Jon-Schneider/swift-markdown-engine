@@ -428,6 +428,19 @@ public final class MarkdownUITextView: UITextView {
         publishHostState()
     }
 
+    /// Move the collapsed caret to `location` with NO text change (table grid
+    /// navigation). Setting `selectedRange` drives `textViewDidChangeSelection`,
+    /// which restyles the reveal/hide as the caret enters/leaves a cell or exits the
+    /// table — so no explicit restyle is needed here. `previousCaretLocation` is
+    /// synced first so the seamless caret-normalization there reads no phantom
+    /// directional step (the target is already inside the revealed table, where
+    /// `normalizedCaret` doesn't snap anyway, but this keeps the baseline honest).
+    private func moveCaretProgrammatically(to location: Int) {
+        let clamped = max(0, min(location, (textStorage.string as NSString).length))
+        previousCaretLocation = clamped
+        selectedRange = NSRange(location: clamped, length: 0)
+    }
+
     // MARK: - Styling
 
     /// Base body size scaled for the current Dynamic Type setting. All derived sizes
@@ -837,6 +850,31 @@ extension MarkdownUITextView: UITextViewDelegate {
                 pendingPreEditActiveTokens = nil
                 applyUndoableEdit(replacing: replaceRange, with: replaceText,
                                   finalSelection: NSRange(location: unwrapCaret, length: 0))
+                return false
+            }
+        }
+        // Table grid navigation (plan 1.1): inside a table, Tab walks to the next
+        // cell and Enter steps to the cell below / appends a row. Runs BEFORE list
+        // handling, which also consumes "\t" (for indent). Outside a table the
+        // handler returns `.allowDefault` and we fall through unchanged. (Shift-Tab
+        // has no `shouldChangeTextIn` representation on iOS — it's macOS-only.)
+        if range.length == 0, text == "\t" || text == "\n" {
+            let tableDecision = (text == "\t")
+                ? MarkdownTableHandler.tab(currentText: textView.text, selection: range, configuration: configuration)
+                : MarkdownTableHandler.newline(currentText: textView.text, selection: range, configuration: configuration)
+            switch tableDecision {
+            case .allowDefault:
+                break
+            case .moveCaret(let loc):
+                pendingEditedRange = nil
+                pendingPreEditActiveTokens = nil
+                moveCaretProgrammatically(to: loc)
+                return false
+            case .replace(let replaceRange, let replaceText, let caret):
+                pendingEditedRange = nil
+                pendingPreEditActiveTokens = nil
+                applyUndoableEdit(replacing: replaceRange, with: replaceText,
+                                  finalSelection: NSRange(location: caret, length: 0))
                 return false
             }
         }

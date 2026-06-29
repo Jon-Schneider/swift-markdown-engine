@@ -416,6 +416,20 @@ extension NativeTextViewCoordinator {
             markerVisibility: configuration.markers.visibility
         )
 
+        // Table grid navigation (plan 1.1): inside a table, Tab walks to the next
+        // cell and Enter steps to the cell below / appends a row. Runs BEFORE the
+        // block-LaTeX / image auto-wrap (a "\t" at a token boundary inside a cell
+        // would otherwise auto-wrap) and BEFORE list insertion (which also consumes
+        // "\t"/"\n"). Outside a table the handler returns `.allowDefault` and we fall
+        // through. (Shift-Tab arrives as the `insertBacktab:` command, in `doCommandBy`.)
+        // Uses the coordinator `configuration`, matching the rest of this function.
+        if affectedCharRange.length == 0, let s = replacementString, s == "\t" || s == "\n" {
+            let decision = (s == "\t")
+                ? MarkdownTableHandler.tab(currentText: textView.string, selection: affectedCharRange, configuration: configuration)
+                : MarkdownTableHandler.newline(currentText: textView.string, selection: affectedCharRange, configuration: configuration)
+            if applyTableNavigation(textView, decision) { return false }
+        }
+
         // Block LaTeX auto-wrap: insert newlines to keep $$ on its own line
         if MarkdownInputHandler.handleBlockLatexAutoWrap(
             textView: textView,
@@ -438,8 +452,57 @@ extension NativeTextViewCoordinator {
         return MarkdownInputHandler.handleListInsertion(textView: textView, affectedCharRange: affectedCharRange, replacementString: replacementString)
     }
 
+    /// Apply a ``TableEditDecision`` to `textView`. Returns true when it handled the
+    /// key (so the caller swallows it). A `.moveCaret` just repositions the collapsed
+    /// caret (the ensuing selection change restyles the cell reveal/hide); a
+    /// `.replace` goes through the same undoable edit path as list edits. Mirrors the
+    /// iOS adapter so both platforms land identically. `previousCaretLocation` is
+    /// synced so the seamless caret-normalization baseline doesn't read a phantom step.
+    @discardableResult
+    private func applyTableNavigation(_ textView: NSTextView, _ decision: TableEditDecision) -> Bool {
+        let length = (textView.string as NSString).length
+        func clamp(_ loc: Int) -> Int { max(0, min(loc, length)) }
+        switch decision {
+        case .allowDefault:
+            // Leave `pendingEditedRange` alone — it belongs to the real insertion the
+            // default/list path is about to perform.
+            return false
+        case .moveCaret(let loc):
+            // Clear the pending-edit state BEFORE mutating the selection: no text
+            // changes (so `textDidChange`, the only other place that clears it, never
+            // runs), and `setSelectedRange` fires `textViewDidChangeSelection`
+            // synchronously, where a stale `pendingEditedRange` would suppress the
+            // cell reveal/hide restyle (and keep suppressing it on later events).
+            pendingEditedRange = nil
+            pendingPreEditActiveTokenIndices = nil
+            let target = clamp(loc)
+            previousCaretLocation = target
+            textView.setSelectedRange(NSRange(location: target, length: 0))
+            return true
+        case .replace(let range, let text, let caret):
+            // Same: clear before `performEdit` so the post-edit restyle scopes to the
+            // actually-inserted range (`textStorage.editedRange`) rather than the
+            // stale length-1 range stamped at the top of `shouldChangeTextIn`.
+            pendingEditedRange = nil
+            pendingPreEditActiveTokenIndices = nil
+            if MarkdownLists.performEdit(textView, replace: range, with: text) {
+                let target = clamp(caret)
+                textView.setSelectedRange(NSRange(location: target, length: 0))
+                previousCaretLocation = target
+            }
+            return true
+        }
+    }
+
     public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
+            // Shift-Tab inside a table walks to the previous cell (plan 1.1); only
+            // when it isn't in a table does it fall through to list outdent.
+            let config = (textView as? NativeTextView)?.configuration ?? configuration
+            let decision = MarkdownTableHandler.backtab(
+                currentText: textView.string, selection: textView.selectedRange(), configuration: config
+            )
+            if applyTableNavigation(textView, decision) { return true }
             return handleBacktab(textView)
         }
         if commandSelector == #selector(NSResponder.deleteBackward(_:)),
