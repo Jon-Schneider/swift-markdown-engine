@@ -572,22 +572,23 @@ enum MarkdownFormatting {
 
     // MARK: - List marker patterns (shared by detection + the list-structure commands)
 
-    /// A bullet line: `-`, `•` (the engine's legacy glyph), `*`, or `+`, after optional indent.
-    static let bulletLinePattern = #"^\s*[-•*+] "#
-    /// An ordered line: `N.` capped at 9 digits, matching `BlockParser.isListItem` / seamless input
-    /// (a 10+-digit run renders as plain text, so the commands must not treat it as a list).
-    static let orderedLinePattern = #"^\s*\d{1,9}\. "#
+    // Mirrors `BlockParser.isListItem`: leading spaces/tabs, then a bullet `-*+` (plus the engine's
+    // legacy `•`) or an ordered `N` (≤ 9 digits) ended by `.` or `)`, then a space OR tab separator.
+    /// A bullet line.
+    static let bulletLinePattern = #"^[ \t]*[-•*+][ \t]"#
+    /// An ordered line (`N.` or `N)`, ≤ 9 digits — a 10+-digit run renders as plain text).
+    static let orderedLinePattern = #"^[ \t]*\d{1,9}[.)][ \t]"#
     /// Any list marker (bullet or ordered) at line start.
-    private static let listMarkerPrefix = #"^\s*([-•*+]|\d{1,9}\.) "#
+    private static let listMarkerPrefix = #"^[ \t]*([-•*+]|\d{1,9}[.)])[ \t]"#
 
     /// A list line whose marker is immediately followed by a `[ ]`/`[x]`/`[X]` box (the engine
     /// accepts upper- or lower-case x as checked).
     private static func isTaskLine(_ line: String) -> Bool {
-        line.range(of: #"^\s*([-•*+]|\d{1,9}\.) \[[ xX]\]"#, options: .regularExpression) != nil
+        line.range(of: #"^[ \t]*([-•*+]|\d{1,9}[.)])[ \t]\[[ xX]\]"#, options: .regularExpression) != nil
     }
 
     private static func isCheckedTaskLine(_ line: String) -> Bool {
-        line.range(of: #"^\s*([-•*+]|\d{1,9}\.) \[[xX]\]"#, options: .regularExpression) != nil
+        line.range(of: #"^[ \t]*([-•*+]|\d{1,9}[.)])[ \t]\[[xX]\]"#, options: .regularExpression) != nil
     }
 
     /// Toggle a task checkbox on the caret's line. An existing task line flips `[ ]`↔`[x]`

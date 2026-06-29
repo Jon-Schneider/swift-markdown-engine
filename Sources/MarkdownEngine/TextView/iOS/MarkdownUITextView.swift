@@ -652,9 +652,9 @@ public final class MarkdownUITextView: UITextView {
         switch command {
         case .bold, .italic, .strikethrough, .inlineCode, .blockquote, .codeBlock, .toggleCheckbox:
             state = active ? .on : .off                       // toggleable
-        case .clearFormatting:
-            // A plain action (never "on"), disabled when there's nothing to clear — the edit
-            // would be an identity. Mirrors macOS `validateMenuItem` (ContextMenu.swift).
+        case .clearFormatting, .indent, .outdent:
+            // Plain actions (never "on"), disabled when the edit would be an identity (nothing to
+            // clear / off a list line / already at the root). Mirrors macOS `validateMenuItem`.
             if isIdentity(MarkdownFormatting.edit(for: command, text: text, selection: range)) {
                 attributes.insert(.disabled)
             }

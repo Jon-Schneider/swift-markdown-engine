@@ -371,6 +371,14 @@ struct MarkdownFormattingTests {
         #expect(edit(.toggleCheckbox, "1. item", NSRange(location: 0, length: 0)).text == "1. [ ] item")
     }
 
+    @Test("Toggle checkbox recognizes parser-valid list forms (tab separator, paren ordered)")
+    func toggleCheckboxParserValidForms() {
+        // `BlockParser.isListItem` accepts a tab after the marker and `)` ordered markers, so these
+        // are existing list items and must gain a box after the marker, not a fresh `- [ ] ` prefix.
+        #expect(edit(.toggleCheckbox, "-\titem", NSRange(location: 0, length: 0)).text == "-\t[ ] item")
+        #expect(edit(.toggleCheckbox, "1) item", NSRange(location: 0, length: 0)).text == "1) [ ] item")
+    }
+
     @Test("Toggle checkbox handles the engine's legacy • bullet")
     func toggleCheckboxOnLegacyBullet() {
         #expect(edit(.toggleCheckbox, "• item", NSRange(location: 0, length: 0)).text == "• [ ] item")
@@ -408,6 +416,12 @@ struct MarkdownFormattingTests {
     @Test("Indent works on a numbered list line")
     func indentNumberedLine() {
         #expect(edit(.indent, "1. a", NSRange(location: 0, length: 0)).text == "\t1. a")
+    }
+
+    @Test("Indent works on parser-valid forms (tab separator, paren ordered)")
+    func indentParserValidForms() {
+        #expect(edit(.indent, "-\ta", NSRange(location: 0, length: 0)).text == "\t-\ta")
+        #expect(edit(.indent, "1) a", NSRange(location: 0, length: 0)).text == "\t1) a")
     }
 
     @Test("Outdent removes a leading tab from a list line")
