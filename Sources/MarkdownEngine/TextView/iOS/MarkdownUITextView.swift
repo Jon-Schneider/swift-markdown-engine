@@ -65,6 +65,9 @@ public final class MarkdownUITextView: UITextView {
     private var lastActiveTokens: Set<Int> = []
     /// Token cache keyed by exact text, so caret moves don't re-parse an unchanged document.
     private var tokenCache: (text: String, tokens: [MarkdownToken])?
+    /// Rendered-height cache for revealed standalone blocks (plan 1.2) — lets a revealed `$$…$$`
+    /// block reserve its formula's height so the content below doesn't jump on caret entry/exit.
+    private let blockRenderHeightCache = BlockRenderHeightCache()
 
     // MARK: Incremental (paragraph-scoped) restyle state
     /// Post-edit range of the change captured in `shouldChangeTextIn`, consumed by
@@ -472,7 +475,8 @@ public final class MarkdownUITextView: UITextView {
             caretLocation: selectedRange.location, activeTokenIndices: active,
             precomputedTokens: parsed,
             colorScheme: MarkdownColorScheme.resolved(from: traitCollection),
-            configuration: configuration
+            configuration: configuration,
+            blockRenderHeightCache: blockRenderHeightCache
         )
 
         textStorage.beginEditing()
@@ -532,7 +536,8 @@ public final class MarkdownUITextView: UITextView {
             precomputedTokens: parsed,
             scopedRanges: paragraphs,
             colorScheme: MarkdownColorScheme.resolved(from: traitCollection),
-            configuration: configuration
+            configuration: configuration,
+            blockRenderHeightCache: blockRenderHeightCache
         )
 
         textStorage.beginEditing()

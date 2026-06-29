@@ -63,7 +63,8 @@ struct TextStylingService {
         wikiLinkIDProvider: @escaping (NSRange) -> String?,
         precomputedTokens: [MarkdownToken]? = nil,
         colorScheme: MarkdownColorScheme,
-        configuration: MarkdownEditorConfiguration = .default
+        configuration: MarkdownEditorConfiguration = .default,
+        blockRenderHeightCache: BlockRenderHeightCache? = nil
     ) {
         let paragraphs = normalize(paragraphCandidates)
 
@@ -89,7 +90,8 @@ struct TextStylingService {
             precomputedTokens: precomputedTokens,
             scopedRanges: paragraphs,
             colorScheme: colorScheme,
-            configuration: configuration
+            configuration: configuration,
+            blockRenderHeightCache: blockRenderHeightCache
         )
 
         let spellingDisabledRanges = styledRanges.compactMap { (range, attrs) -> NSRange? in

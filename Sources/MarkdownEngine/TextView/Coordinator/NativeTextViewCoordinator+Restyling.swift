@@ -67,7 +67,8 @@ extension NativeTextViewCoordinator {
             activeTokenIndices: activeTokenIndices,
             precomputedTokens: tokens,
             colorScheme: .resolved(from: textView.effectiveAppearance),
-            configuration: configuration
+            configuration: configuration,
+            blockRenderHeightCache: blockRenderHeightCache
         )
         for (range, attrs) in ranges {
             for (key, value) in attrs {
@@ -122,7 +123,8 @@ extension NativeTextViewCoordinator {
             },
             precomputedTokens: tokens,
             colorScheme: .resolved(from: textView.effectiveAppearance),
-            configuration: configuration
+            configuration: configuration,
+            blockRenderHeightCache: blockRenderHeightCache
         )
         // Reconcile wide-table overlays after layout settles.
         if let nativeTextView = textView as? NativeTextView {

@@ -8,6 +8,11 @@
 //
 
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 extension MarkdownStyler {
 
@@ -24,14 +29,23 @@ extension MarkdownStyler {
 
             attrs.append((token.range, [NSAttributedString.Key.spellingState: 0]))
 
-            guard token.standaloneParagraphRange(in: ctx.nsText) != nil else { continue }
+            guard let paraRange = token.standaloneParagraphRange(in: ctx.nsText) else { continue }
 
             let latexFontSize = HeadingHelpers.latexFontSize(for: token, tokens: ctx.tokens, baseFont: ctx.baseFont)
 
             if isActive {
                 appendSecondaryMarkers(for: token, to: &attrs, theme: ctx.configuration.theme)
+                // Reveal hole (plan 1.2): the raw source replaces the rendered formula, which is
+                // usually a different height. Reserve the formula's last-rendered height (if cached)
+                // so the block doesn't collapse and jump the content below on caret entry. A cache
+                // miss (source edited since it rendered, or never rendered) → natural reflow.
+                if let reserved = ctx.blockRenderHeightCache?.height(forSource: latexContent, fontSize: latexFontSize) {
+                    reserveRevealedBlockHeight(reserved, paraRange: paraRange, ctx: ctx, attrs: &attrs)
+                }
             } else if !latexContent.isEmpty,
                       let entry = ctx.services.latex.render(latex: latexContent, fontSize: latexFontSize, theme: ctx.configuration.theme, colorScheme: ctx.colorScheme) {
+                // Cache the rendered footprint height so a later reveal can reserve it (above).
+                ctx.blockRenderHeightCache?.store(height: entry.size.height, forSource: latexContent, fontSize: latexFontSize)
                 _ = appendRenderedStandaloneBlock(
                     for: token,
                     rawContent: rawLatexContent,
@@ -54,6 +68,45 @@ extension MarkdownStyler {
             }
         }
         return attrs
+    }
+
+    /// Reserve `height` (a revealed block's last-rendered formula footprint) across the revealed
+    /// source so the block stays at least as tall as the rendered formula and the content below
+    /// doesn't jump on caret entry/exit. The height is distributed as a per-paragraph
+    /// `minimumLineHeight` floor; the rendered block's vertical spacing is matched by placing
+    /// `paragraphSpacingBefore` on only the FIRST paragraph and `paragraphSpacing` on only the LAST
+    /// (mirroring the collapsed path, which spaces a single anchor paragraph) — so the total
+    /// footprint equals the formula's, not multiplied by the source's paragraph count. A shorter
+    /// source (e.g. one `$$…$$` line vs a tall fraction) pads up to the formula's height; a taller
+    /// source keeps its natural height (no `maximumLineHeight`, so nothing is clipped).
+    ///
+    /// Note: the floor is per *paragraph* but applies per laid-out (visual) line, so a single long
+    /// logical line that WRAPS over-reserves slightly (each wrapped line gets the floor). Narrow
+    /// edge case; the common single-line and multi-line block forms reserve exactly.
+    private static func reserveRevealedBlockHeight(
+        _ height: CGFloat,
+        paraRange: NSRange,
+        ctx: StylingContext,
+        attrs: inout [StyledRange]
+    ) {
+        var paragraphRanges: [NSRange] = []
+        ctx.nsText.enumerateSubstrings(in: paraRange, options: .byParagraphs) { _, _, enclosingRange, _ in
+            paragraphRanges.append(enclosingRange)
+        }
+        guard !paragraphRanges.isEmpty else { return }
+
+        let baseLineHeight = layoutBridgeDefaultLineHeight(for: ctx.baseFont, using: ctx.layoutBridge)
+        let perLineFloor = max(baseLineHeight, height / CGFloat(paragraphRanges.count))
+        let spacingBefore = ctx.configuration.blockLatex.paragraphSpacingBefore
+        let spacingAfter = ctx.configuration.blockLatex.paragraphSpacing
+
+        for (i, range) in paragraphRanges.enumerated() {
+            let para = NSMutableParagraphStyle()
+            para.minimumLineHeight = perLineFloor
+            para.paragraphSpacingBefore = (i == 0) ? spacingBefore : 0
+            para.paragraphSpacing = (i == paragraphRanges.count - 1) ? spacingAfter : 0
+            attrs.append((range, [.paragraphStyle: para]))
+        }
     }
 
     // MARK: Inline LaTeX $formula$

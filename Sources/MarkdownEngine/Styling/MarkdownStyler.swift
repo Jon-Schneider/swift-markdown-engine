@@ -36,6 +36,9 @@ extension MarkdownStyler {
         /// the view-adapter boundary (no environment probing in this logic).
         let colorScheme: MarkdownColorScheme
         let configuration: MarkdownEditorConfiguration
+        /// Per-editor rendered-height cache for revealed standalone blocks (plan 1.2). `nil` for
+        /// read-only / non-editing styling, where reveal-on-entry doesn't apply.
+        let blockRenderHeightCache: BlockRenderHeightCache?
 
         var services: MarkdownEditorServices { configuration.services }
     }
@@ -58,7 +61,8 @@ enum MarkdownStyler {
         precomputedTokens: [MarkdownToken]? = nil,
         scopedRanges: [NSRange]? = nil,
         colorScheme: MarkdownColorScheme,
-        configuration: MarkdownEditorConfiguration = .default
+        configuration: MarkdownEditorConfiguration = .default,
+        blockRenderHeightCache: BlockRenderHeightCache? = nil
     ) -> [StyledRange] {
         let tokens = precomputedTokens ?? MarkdownTokenizer.parseTokensViaAST(in: text)
         let nsText = text as NSString
@@ -82,7 +86,8 @@ enum MarkdownStyler {
             latexMarkerFont: PlatformFont(name: fontName, size: hiddenMarkerSize)
                 ?? PlatformFont.systemFont(ofSize: hiddenMarkerSize),
             colorScheme: colorScheme,
-            configuration: configuration
+            configuration: configuration,
+            blockRenderHeightCache: blockRenderHeightCache
         )
 
         var result: [StyledRange] = []

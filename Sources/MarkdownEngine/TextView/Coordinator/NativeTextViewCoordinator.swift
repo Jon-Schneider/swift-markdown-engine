@@ -51,6 +51,9 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// returns the current value, regardless of when state changed.
     var lastImageFingerprint: AnyHashable?
     var lastWikiFingerprint: AnyHashable?
+    /// Rendered-height cache for revealed standalone blocks (plan 1.2) — lets a revealed `$$…$$`
+    /// block reserve its formula's height so the content below doesn't jump on caret entry/exit.
+    let blockRenderHeightCache = BlockRenderHeightCache()
     private var busObservers: [NSObjectProtocol] = []
     private var registeredAppearanceObserverName: Notification.Name?
     weak var textView: NSTextView?
