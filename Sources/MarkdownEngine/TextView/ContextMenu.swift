@@ -60,6 +60,15 @@ extension NativeTextViewWrapper.Coordinator {
             let orderedItem = NSMenuItem(title: "Numbered", action: #selector(didMarkdownOrderedList(_:)), keyEquivalent: "")
             orderedItem.target = self
             listSubmenu.addItem(orderedItem)
+            let checkboxItem = NSMenuItem(title: "Checkbox", action: #selector(didMarkdownToggleCheckbox(_:)), keyEquivalent: "")
+            checkboxItem.target = self
+            listSubmenu.addItem(checkboxItem)
+            let indentItem = NSMenuItem(title: "Indent", action: #selector(didMarkdownIndent(_:)), keyEquivalent: "")
+            indentItem.target = self
+            listSubmenu.addItem(indentItem)
+            let outdentItem = NSMenuItem(title: "Outdent", action: #selector(didMarkdownOutdent(_:)), keyEquivalent: "")
+            outdentItem.target = self
+            listSubmenu.addItem(outdentItem)
             listItem.submenu = listSubmenu
             customMenu.insertItem(listItem, at: fontIndex + 2)
 
@@ -228,6 +237,18 @@ extension NativeTextViewWrapper.Coordinator {
         applyMarkdownCommand(.codeBlock)
     }
 
+    @objc func didMarkdownToggleCheckbox(_ sender: Any?) {
+        applyMarkdownCommand(.toggleCheckbox)
+    }
+
+    @objc func didMarkdownIndent(_ sender: Any?) {
+        applyMarkdownCommand(.indent)
+    }
+
+    @objc func didMarkdownOutdent(_ sender: Any?) {
+        applyMarkdownCommand(.outdent)
+    }
+
     @objc func didMarkdownUnorderedList(_ sender: Any?) {
         applyList(prefix: "- ")
     }
@@ -338,6 +359,14 @@ extension NativeTextViewWrapper.Coordinator: NSMenuItemValidation {
         case #selector(didMarkdownCodeBlock(_:)):
             menuItem.state = MarkdownFormatting.isActive(.codeBlock, text: tv.string, selection: range) ? .on : .off
             return true
+        case #selector(didMarkdownToggleCheckbox(_:)):
+            menuItem.state = MarkdownFormatting.isActive(.toggleCheckbox, text: tv.string, selection: range) ? .on : .off
+            return true
+        case #selector(didMarkdownIndent(_:)), #selector(didMarkdownOutdent(_:)):
+            // Enabled only on a list line (where the edit would actually change the text).
+            let command: MarkdownFormattingCommand = menuItem.action == #selector(didMarkdownIndent(_:)) ? .indent : .outdent
+            let edit = MarkdownFormatting.edit(for: command, text: tv.string, selection: range)
+            return nsText.substring(with: edit.range) != edit.text
         case #selector(didMarkdownHeading(_:)):
             return !isSelectionHeading(level: menuItem.tag, in: nsText, range: range)
         case #selector(didMarkdownUnorderedList(_:)),

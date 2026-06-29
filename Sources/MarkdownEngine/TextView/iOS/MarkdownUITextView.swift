@@ -650,7 +650,7 @@ public final class MarkdownUITextView: UITextView {
         var attributes: UIMenuElement.Attributes = []
         var state: UIMenuElement.State = .off
         switch command {
-        case .bold, .italic, .strikethrough, .inlineCode, .blockquote, .codeBlock:
+        case .bold, .italic, .strikethrough, .inlineCode, .blockquote, .codeBlock, .toggleCheckbox:
             state = active ? .on : .off                       // toggleable
         case .clearFormatting:
             // A plain action (never "on"), disabled when there's nothing to clear — the edit
@@ -875,6 +875,9 @@ extension MarkdownUITextView: UITextViewDelegate {
             UIMenu(title: "Lists", children: [
                 formatAction("Bullet", .bulletList, range),
                 formatAction("Numbered", .numberedList, range),
+                formatAction("Checkbox", .toggleCheckbox, range),
+                formatAction("Indent", .indent, range),
+                formatAction("Outdent", .outdent, range),
             ]),
             formatAction("Quote", .blockquote, range),
             formatAction("Code Block", .codeBlock, range),

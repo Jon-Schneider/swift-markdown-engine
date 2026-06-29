@@ -333,6 +333,102 @@ struct MarkdownFormattingTests {
             == FormattingEdit(range: NSRange(location: 0, length: 0), text: "```\n\n```", selection: NSRange(location: 4, length: 0)))
     }
 
+    // MARK: - Task checkbox
+
+    @Test("Toggle checkbox checks an unchecked task line (length-preserving)")
+    func toggleCheckboxChecks() {
+        #expect(edit(.toggleCheckbox, "- [ ] task", NSRange(location: 8, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 10), text: "- [x] task", selection: NSRange(location: 8, length: 0)))
+    }
+
+    @Test("Toggle checkbox unchecks a checked task line (accepts [X])")
+    func toggleCheckboxUnchecks() {
+        #expect(edit(.toggleCheckbox, "- [x] task", NSRange(location: 8, length: 0)).text == "- [ ] task")
+        #expect(edit(.toggleCheckbox, "- [X] task", NSRange(location: 8, length: 0)).text == "- [ ] task")
+    }
+
+    @Test("Toggle checkbox adds a box to a bullet line")
+    func toggleCheckboxOnBullet() {
+        #expect(edit(.toggleCheckbox, "- item", NSRange(location: 0, length: 0)).text == "- [ ] item")
+    }
+
+    @Test("Toggle checkbox makes a plain line a task item")
+    func toggleCheckboxOnPlain() {
+        #expect(edit(.toggleCheckbox, "item", NSRange(location: 0, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 4), text: "- [ ] item", selection: NSRange(location: 6, length: 4)))
+    }
+
+    @Test("Toggle checkbox adds a box to a numbered list line (not a fresh bullet)")
+    func toggleCheckboxOnNumbered() {
+        #expect(edit(.toggleCheckbox, "1. item", NSRange(location: 0, length: 0)).text == "1. [ ] item")
+    }
+
+    @Test("Toggle checkbox handles the engine's legacy • bullet")
+    func toggleCheckboxOnLegacyBullet() {
+        #expect(edit(.toggleCheckbox, "• item", NSRange(location: 0, length: 0)).text == "• [ ] item")
+        #expect(edit(.toggleCheckbox, "• [ ] item", NSRange(location: 8, length: 0)).text == "• [x] item")
+    }
+
+    @Test("Toggle checkbox flips only the leading box when content also has brackets")
+    func toggleCheckboxFlipsLeadingBoxOnly() {
+        #expect(edit(.toggleCheckbox, "- [ ] see [x] later", NSRange(location: 8, length: 0)).text
+            == "- [x] see [x] later")
+    }
+
+    @Test("Toggle checkbox does not flip a stray [x] that isn't a task marker")
+    func toggleCheckboxIgnoresProseBrackets() {
+        // "see [x] below" has no leading list marker, so it's treated as plain → gets a checkbox,
+        // rather than flipping the mid-line [x].
+        #expect(edit(.toggleCheckbox, "see [x] below", NSRange(location: 0, length: 0)).text == "- [ ] see [x] below")
+    }
+
+    // MARK: - Indent / outdent
+
+    @Test("Indent prepends a tab to a list line and shifts the caret")
+    func indentListLine() {
+        #expect(edit(.indent, "- a", NSRange(location: 2, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 3), text: "\t- a", selection: NSRange(location: 3, length: 0)))
+    }
+
+    @Test("Indent is a no-op off a list line")
+    func indentNonListIsNoOp() {
+        let selection = NSRange(location: 0, length: 0)
+        #expect(edit(.indent, "plain", selection)
+            == FormattingEdit(range: selection, text: "", selection: selection))
+    }
+
+    @Test("Indent works on a numbered list line")
+    func indentNumberedLine() {
+        #expect(edit(.indent, "1. a", NSRange(location: 0, length: 0)).text == "\t1. a")
+    }
+
+    @Test("Outdent removes a leading tab from a list line")
+    func outdentTab() {
+        #expect(edit(.outdent, "\t- a", NSRange(location: 3, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 4), text: "- a", selection: NSRange(location: 2, length: 0)))
+    }
+
+    @Test("Outdent shrinks a selection that covered the stripped indent (no out-of-range)")
+    func outdentSelectionCoveringIndent() {
+        // Whole indented line selected including the tab → after removing the tab the selection
+        // must shrink to the new line bounds, not run past the now-shorter document.
+        #expect(edit(.outdent, "\t- a", NSRange(location: 0, length: 4))
+            == FormattingEdit(range: NSRange(location: 0, length: 4), text: "- a", selection: NSRange(location: 0, length: 3)))
+    }
+
+    @Test("Outdent removes up to two leading spaces (engine's 2-space level)")
+    func outdentSpaces() {
+        #expect(edit(.outdent, "  - a", NSRange(location: 4, length: 0)).text == "- a")
+    }
+
+    @Test("Outdent is a no-op at the root and off a list line")
+    func outdentNoOp() {
+        let root = NSRange(location: 0, length: 0)
+        let identity = FormattingEdit(range: root, text: "", selection: root)
+        #expect(edit(.outdent, "- a", root) == identity)        // list line, no indent → identity no-op
+        #expect(edit(.outdent, "\tplain", root) == identity)    // not a list line → identity no-op
+    }
+
     // MARK: - Active state (menu on/off)
 
     @Test("isActive reflects the current formatting")
@@ -363,6 +459,14 @@ struct MarkdownFormattingTests {
         #expect(!MarkdownFormatting.isActive(.blockquote, text: "q", selection: NSRange(location: 0, length: 0)))
         #expect(MarkdownFormatting.isActive(.codeBlock, text: "```\nc\n```", selection: NSRange(location: 5, length: 0)))
         #expect(!MarkdownFormatting.isActive(.codeBlock, text: "c", selection: NSRange(location: 0, length: 0)))
+    }
+
+    @Test("isActive reflects a checked task line; indent/outdent are never 'on'")
+    func isActiveCheckboxAndIndent() {
+        #expect(MarkdownFormatting.isActive(.toggleCheckbox, text: "- [x] t", selection: NSRange(location: 6, length: 0)))
+        #expect(!MarkdownFormatting.isActive(.toggleCheckbox, text: "- [ ] t", selection: NSRange(location: 6, length: 0)))
+        #expect(!MarkdownFormatting.isActive(.indent, text: "- a", selection: NSRange(location: 0, length: 0)))
+        #expect(!MarkdownFormatting.isActive(.outdent, text: "- a", selection: NSRange(location: 0, length: 0)))
     }
 
     // MARK: - Selection state (toolbar sync)
@@ -417,6 +521,13 @@ struct MarkdownFormattingTests {
         #expect(!state("plain", NSRange(location: 2, length: 0)).isBlockquote)
         #expect(state("```\ncode\n```", NSRange(location: 5, length: 0)).isCodeBlock)
         #expect(!state("code", NSRange(location: 2, length: 0)).isCodeBlock)
+    }
+
+    @Test("Selection state flags a checked task line")
+    func selectionStateChecked() {
+        #expect(state("- [x] done", NSRange(location: 7, length: 0)).isChecked)
+        #expect(!state("- [ ] todo", NSRange(location: 7, length: 0)).isChecked)
+        #expect(!state("- plain", NSRange(location: 3, length: 0)).isChecked)
     }
 }
 

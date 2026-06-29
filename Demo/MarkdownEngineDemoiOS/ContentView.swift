@@ -124,6 +124,9 @@ private struct FormatBar: View {
             Divider().frame(height: 24)
             button("list.bullet", active: state.isBulletList) { onCommand(.bulletList) }
             button("list.number", active: state.isNumberedList) { onCommand(.numberedList) }
+            button("checkmark.square", active: state.isChecked) { onCommand(.toggleCheckbox) }
+            button("increase.indent", active: false) { onCommand(.indent) }
+            button("decrease.indent", active: false) { onCommand(.outdent) }
             Divider().frame(height: 24)
             button("text.quote", active: state.isBlockquote) { onCommand(.blockquote) }
             button("curlybraces", active: state.isCodeBlock) { onCommand(.codeBlock) }

@@ -24,6 +24,14 @@ public enum MarkdownFormattingCommand: Equatable {
     case numberedList
     case blockquote
     case codeBlock
+    /// Toggle a task checkbox on the caret's line: flip `[ ]`↔`[x]` on an existing task line,
+    /// or add `- [ ] ` to a plain / bullet line.
+    case toggleCheckbox
+    /// Indent the caret's list line one level (prepend a tab). No-op off a list line.
+    case indent
+    /// Outdent the caret's list line one level (remove a leading tab / up to 2 spaces). No-op
+    /// when off a list line or already at the root.
+    case outdent
     /// Remove inline emphasis (bold / italic / strikethrough / inline-code) markers from
     /// the selection. A pure action, not a toggle — block-level prefixes (heading, list,
     /// blockquote) are cleared by toggling their own command off, not by this one.
@@ -52,6 +60,8 @@ public struct MarkdownSelectionState: Equatable {
     public var isNumberedList: Bool
     public var isBlockquote: Bool
     public var isCodeBlock: Bool
+    /// The caret's line is a checked task item (`- [x]`).
+    public var isChecked: Bool
 
     public init(
         isBold: Bool = false,
@@ -62,7 +72,8 @@ public struct MarkdownSelectionState: Equatable {
         isBulletList: Bool = false,
         isNumberedList: Bool = false,
         isBlockquote: Bool = false,
-        isCodeBlock: Bool = false
+        isCodeBlock: Bool = false,
+        isChecked: Bool = false
     ) {
         self.isBold = isBold
         self.isItalic = isItalic
@@ -73,6 +84,7 @@ public struct MarkdownSelectionState: Equatable {
         self.isNumberedList = isNumberedList
         self.isBlockquote = isBlockquote
         self.isCodeBlock = isCodeBlock
+        self.isChecked = isChecked
     }
 }
 
@@ -99,6 +111,12 @@ enum MarkdownFormatting {
             return blockquoteEdit(text: text, selection: selection)
         case .codeBlock:
             return codeBlockEdit(text: text, selection: selection)
+        case .toggleCheckbox:
+            return toggleCheckboxEdit(text: text, selection: selection)
+        case .indent:
+            return indentEdit(text: text, selection: selection, outdent: false)
+        case .outdent:
+            return indentEdit(text: text, selection: selection, outdent: true)
         case .clearFormatting:
             return clearFormattingEdit(text: text, selection: selection)
         }
@@ -133,6 +151,12 @@ enum MarkdownFormatting {
             return isBlockquoteLine(line)
         case .codeBlock:
             return enclosingToken(text: text, selection: selection, kinds: [.codeBlock]) != nil
+        case .toggleCheckbox:
+            // "On" == the line is a CHECKED task (menu checkmark / toolbar highlight).
+            let line = ns.substring(with: ns.lineRange(for: selection)).trimmingCharacters(in: .newlines)
+            return isCheckedTaskLine(line)
+        case .indent, .outdent:
+            return false   // actions, never an "on" state
         }
     }
 
@@ -153,13 +177,15 @@ enum MarkdownFormatting {
         let isNumberedList = line.range(of: #"^\d+\. "#, options: .regularExpression) != nil
         let isBlockquote = isBlockquoteLine(line)
         let isCodeBlock = tokens.contains { $0.kind == .codeBlock && enclosesSelection($0.range, selection) }
+        let isChecked = isCheckedTaskLine(trimmed)
 
         return MarkdownSelectionState(
             isBold: isBold, isItalic: isItalic,
             isStrikethrough: isStrikethrough, isInlineCode: isInlineCode,
             headingLevel: headingLevel,
             isBulletList: isBulletList, isNumberedList: isNumberedList,
-            isBlockquote: isBlockquote, isCodeBlock: isCodeBlock
+            isBlockquote: isBlockquote, isCodeBlock: isCodeBlock,
+            isChecked: isChecked
         )
     }
 
@@ -529,5 +555,105 @@ enum MarkdownFormatting {
         // won't form a token over nothing, so skip verification there.
         guard !body.isEmpty else { return edit }
         return verifiedWrap(edit, formsKind: .codeBlock, in: text, selection: selection)
+    }
+
+    // MARK: - Task checkbox
+
+    /// A list marker at line start: a bullet (`-`, `•`, `*`, `+`) or an ordered `N.`, after optional
+    /// indent — matching the engine's list marker set (`MarkdownListHandler` / the styler, which both
+    /// include the legacy `•` glyph and treat `\d+.` as a task-capable marker).
+    private static let listMarkerPrefix = #"^\s*([-•*+]|\d+\.) "#
+
+    /// A list line whose marker is immediately followed by a `[ ]`/`[x]`/`[X]` box (the engine
+    /// accepts upper- or lower-case x as checked).
+    private static func isTaskLine(_ line: String) -> Bool {
+        line.range(of: #"^\s*([-•*+]|\d+\.) \[[ xX]\]"#, options: .regularExpression) != nil
+    }
+
+    private static func isCheckedTaskLine(_ line: String) -> Bool {
+        line.range(of: #"^\s*([-•*+]|\d+\.) \[[xX]\]"#, options: .regularExpression) != nil
+    }
+
+    /// Toggle a task checkbox on the caret's line. An existing task line flips `[ ]`↔`[x]`
+    /// (length-preserving, lowercase `x` on check — matching the tap-toggle); a bullet line gains
+    /// a `[ ] ` after its marker; a plain line becomes `- [ ] …`.
+    private static func toggleCheckboxEdit(text: String, selection: NSRange) -> FormattingEdit {
+        let ns = text as NSString
+        let lineRange = ns.lineRange(for: selection)
+        let originalLine = ns.substring(with: lineRange)
+        let lineText = originalLine.trimmingCharacters(in: .newlines)
+        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
+
+        // 1) Existing task line → flip the box. Length-preserving, so the caret stays valid.
+        if let box = lineText.range(of: #"\[[ xX]\]"#, options: .regularExpression),
+           isTaskLine(lineText) {
+            let isChecked = lineText[box].contains("x") || lineText[box].contains("X")
+            var newLine = lineText
+            newLine.replaceSubrange(box, with: isChecked ? "[ ]" : "[x]")
+            return FormattingEdit(range: lineRange, text: newLine + suffix, selection: selection)
+        }
+
+        // 2) List line without a box (bullet or numbered) → insert "[ ] " after the marker.
+        if let marker = lineText.range(of: listMarkerPrefix, options: .regularExpression) {
+            let head = String(lineText[..<marker.upperBound])
+            let visible = String(lineText[marker.upperBound...])
+            let newLine = head + "[ ] " + visible
+            let visibleStart = lineRange.location + (head as NSString).length + 4   // after "[ ] "
+            return FormattingEdit(
+                range: lineRange, text: newLine + suffix,
+                selection: NSRange(location: visibleStart, length: (visible as NSString).length)
+            )
+        }
+
+        // 3) Plain line → make it an unchecked task item.
+        let newLine = "- [ ] " + lineText
+        return FormattingEdit(
+            range: lineRange, text: newLine + suffix,
+            selection: NSRange(location: lineRange.location + 6, length: (lineText as NSString).length)   // after "- [ ] "
+        )
+    }
+
+    // MARK: - Indent / outdent (list lines)
+
+    /// A bullet/numbered/checkbox list line (optionally already indented).
+    private static func isListItemLine(_ line: String) -> Bool {
+        line.range(of: listMarkerPrefix, options: .regularExpression) != nil
+    }
+
+    /// Indent (prepend a tab) or outdent (strip one leading tab / up to 2 spaces — the engine's
+    /// "1 tab or 2 spaces = 1 level") the caret's list line. A no-op off a list line, and outdent
+    /// is a no-op at the root (no leading whitespace). The caret tracks the shift.
+    private static func indentEdit(text: String, selection: NSRange, outdent: Bool) -> FormattingEdit {
+        let ns = text as NSString
+        let lineRange = ns.lineRange(for: selection)
+        let originalLine = ns.substring(with: lineRange)
+        let lineText = originalLine.trimmingCharacters(in: .newlines)
+        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
+
+        let identity = FormattingEdit(range: selection, text: ns.substring(with: selection), selection: selection)
+        guard isListItemLine(lineText) else { return identity }
+
+        if outdent {
+            let removed: Int
+            if lineText.hasPrefix("\t") { removed = 1 }
+            else if lineText.hasPrefix("  ") { removed = 2 }
+            else if lineText.hasPrefix(" ") { removed = 1 }
+            else { return identity }                       // already at the root
+            let newLine = String(lineText.dropFirst(removed))
+            // Map both selection ends left past the removed indent (clamped to the line start), so a
+            // selection that covered the stripped whitespace shrinks instead of running out of range.
+            let newStart = max(lineRange.location, selection.location - removed)
+            let newEnd = max(lineRange.location, NSMaxRange(selection) - removed)
+            return FormattingEdit(
+                range: lineRange, text: newLine + suffix,
+                selection: NSRange(location: newStart, length: newEnd - newStart)
+            )
+        }
+
+        let newLine = "\t" + lineText
+        return FormattingEdit(
+            range: lineRange, text: newLine + suffix,
+            selection: NSRange(location: selection.location + 1, length: selection.length)   // tab shifts caret +1
+        )
     }
 }
