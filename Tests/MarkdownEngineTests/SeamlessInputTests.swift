@@ -1065,3 +1065,180 @@ struct SeamlessFullLineElementTests {
         #expect(backspace("```\nx\n```\nb", at: 10) == .allowDefault)
     }
 }
+
+/// Plan 1.4 — inline seamless hardening. A time-boxed pass that pins the
+/// "glitchy last mile" of inline-span editing in `.seamless` mode as named
+/// regression tests, one per defect-checklist item. The contract under test:
+/// inline markers (`**`, `_`, `~~`, `` ` ``, `$ $`) are ALWAYS zero-width/hidden
+/// in seamless (they never reveal — only block elements do), so the caret must
+/// step across them and type inside them without snapping, freezing, skipping, or
+/// flashing the source. Backspace at a span's content start follows the inline
+/// backspace contract. These lock the decision layer; the interactive flash/freeze
+/// dimension is covered by the simulator soak.
+@Suite("Seamless inline hardening (1.4)")
+struct SeamlessInlineHardeningTests {
+
+    private let seamless = MarkdownEditorConfiguration(markers: .seamless)
+
+    private func normalize(_ text: String, proposed: Int, previous: Int) -> Int {
+        MarkdownSeamlessInput.normalizedCaret(
+            text: text, proposed: proposed, previous: previous, configuration: seamless
+        )
+    }
+    private func backspace(_ text: String, at caret: Int) -> SeamlessEditDecision {
+        MarkdownSeamlessInput.backspace(
+            currentText: text, selection: NSRange(location: caret, length: 0), configuration: seamless
+        )
+    }
+    private func active(_ text: String, caret: Int) -> Set<Int> {
+        let ns = text as NSString
+        let tokens = MarkdownTokenizer.parseTokensViaAST(in: text)
+        return MarkdownDetection.computeActiveTokenIndices(
+            selectionRange: NSRange(location: caret, length: 0),
+            tokens: tokens, in: ns, markerVisibility: .seamless
+        )
+    }
+
+    // MARK: - Item 1: typing inside a bold span
+
+    @Test("1.4.1 Typing inside `**bold**`: caret in content is never moved")
+    func typingInsideBoldNoCaretJump() {
+        // `**bold** [t](u)` — content "bold" at [2,6). The trailing link puts a `]` on
+        // the line so `atomicInlineCaret` actually PARSES (its cheap gate would
+        // otherwise bail and make this a vacuous no-op); the assertion then proves the
+        // short `**` markers produce no atomic run and the caret in content stays put.
+        // A regression that snapped `**` would move it and fail here.
+        let text = "**bold** [t](u)"
+        #expect(normalize(text, proposed: 4, previous: 3) == 4)
+        #expect(normalize(text, proposed: 3, previous: 4) == 3)
+    }
+
+    @Test("1.4.1 A bold span never becomes active in seamless (markers stay zero-width)")
+    func boldNeverRevealsInSeamless() {
+        // Caret anywhere in/around the span — nothing reveals (inline is never a
+        // seamless reveal hole), so the markers stay hidden and typing can't push
+        // the caret to a suddenly-visible marker edge.
+        #expect(active("**bold**", caret: 4).isEmpty)
+        #expect(active("**bold**", caret: 2).isEmpty)
+        #expect(active("**bold**", caret: 6).isEmpty)
+    }
+
+    // MARK: - Item 2: nested span `**_x_**`
+
+    @Test("1.4.2 Nested `**_x_**`: caret crosses each boundary without snapping")
+    func nestedSpanCaretNotSnapped() {
+        // `**_x_** [t](u)` — `**`[0,2) `_`[2,3) x[3,4) `_`[4,5) `**`[5,7). The trailing
+        // link forces `atomicInlineCaret` to parse (a `]` is on the line), so these
+        // are non-vacuous: stepping onto/off the content and across the inner/outer
+        // seams keeps every proposed position (neither the `**` nor the `_` short
+        // markers yield an atomic run to snap to).
+        let text = "**_x_** [t](u)"
+        #expect(normalize(text, proposed: 3, previous: 2) == 3)   // onto "x" rightward
+        #expect(normalize(text, proposed: 3, previous: 4) == 3)   // onto "x" leftward
+        #expect(normalize(text, proposed: 2, previous: 1) == 2)   // outer→inner seam
+        #expect(normalize(text, proposed: 5, previous: 4) == 5)   // inner→outer seam
+    }
+
+    @Test("1.4.2 A nested inline span is never in the seamless reveal set (caret-independent)")
+    func nestedSpanNeverReveals() {
+        // In seamless the reveal set is gated purely by token KIND (only blockLatex /
+        // table), so this is caret-independent — sweeping every position documents
+        // that and guards against an inline kind being added to seamlessRevealableBlockKinds.
+        for caret in 0...7 {
+            #expect(active("**_x_**", caret: caret).isEmpty, "caret \(caret) should reveal nothing")
+        }
+    }
+
+    // MARK: - Item 3: adjacent spans `**a**_b_`
+
+    @Test("1.4.3 Adjacent `**a**_b_`: the shared boundary doesn't snap or flash")
+    func adjacentSpansBoundaryNoSnap() {
+        // `**a**_b_ [t](u)` — bold `**a**`[0,5), italic `_b_`[5,8); shared seam at 5.
+        // The trailing link forces a parse (a `]` is on the line); crossing the seam
+        // in either direction keeps the caret put (the adjacent short markers yield no
+        // atomic run on the shared boundary).
+        let text = "**a**_b_ [t](u)"
+        #expect(normalize(text, proposed: 5, previous: 4) == 5)   // bold→italic
+        #expect(normalize(text, proposed: 5, previous: 6) == 5)   // italic→bold
+    }
+
+    @Test("1.4.3 Neither adjacent span reveals (no flash on the shared boundary)")
+    func adjacentSpansNeverReveal() {
+        #expect(active("**a**_b_", caret: 2).isEmpty)   // in "a"
+        #expect(active("**a**_b_", caret: 5).isEmpty)   // on the seam
+        #expect(active("**a**_b_", caret: 6).isEmpty)   // in "b"
+    }
+
+    // MARK: - Item 4: backspace at a span's content start
+
+    @Test("1.4.4 Backspace at a span content start with nothing visible before unwraps it")
+    func backspaceContentStartUnwraps() {
+        // `**bold**` — caret at content start 2; the only thing left of it is the
+        // hidden `**`, so backspace unwraps to the plain content rather than nibbling
+        // an invisible marker char.
+        #expect(backspace("**bold**", at: 2) == .replace(range: NSRange(location: 0, length: 8), text: "bold", caret: 0))
+    }
+
+    @Test("1.4.4 Backspace at a span content start deletes the visible char before it")
+    func backspaceContentStartDeletesPrevChar() {
+        // `x**b**` — caret at bold's content start 3; the visible "x" precedes the
+        // hidden `**`, so backspace removes "x" (not the formatting).
+        #expect(backspace("x**b**", at: 3) == .replace(range: NSRange(location: 0, length: 1), text: "", caret: 0))
+    }
+
+    @Test("1.4.4 Backspace at the inner content start of a nested span unwraps the innermost span")
+    func backspaceNestedContentStartUnwrapsInner() {
+        // `**_x_**` — caret at the inner italic's content start 3; nothing visible
+        // precedes (both `**` and `_` are hidden), so the innermost span unwraps:
+        // `**_x_**` → `**x**`.
+        #expect(backspace("**_x_**", at: 3) == .replace(range: NSRange(location: 2, length: 3), text: "x", caret: 2))
+    }
+
+    // MARK: - Item 5: arrow-keying across a span edge
+
+    @Test("1.4.5 Arrowing across short markers neither freezes nor skips two positions")
+    func arrowAcrossShortMarkersNoSkip() {
+        // `a**b**c [t](u)` — bold [1,6), content "b" at [3,4). The trailing link forces
+        // a parse (a `]` is on the line), so single-step arrow motion across the `**`
+        // seams is verified to be preserved one position at a time — no snap to a far
+        // edge (which would manifest as a 2-position skip).
+        let text = "a**b**c [t](u)"
+        #expect(normalize(text, proposed: 2, previous: 1) == 2)   // into opening `**`
+        #expect(normalize(text, proposed: 3, previous: 2) == 3)   // onto "b"
+        #expect(normalize(text, proposed: 4, previous: 3) == 4)   // into closing `**`
+        #expect(normalize(text, proposed: 5, previous: 4) == 5)
+    }
+
+    @Test("1.4.5 Contrast: a long link tail IS snapped (the skip is the intended affordance)")
+    func arrowAcrossLinkTailSnaps() {
+        // The deliberate exception to 1.4.5: a link's `](url)` tail is a long atomic
+        // hidden run, so arrowing into it jumps to its far edge (one imperceptible
+        // press), unlike the 1–2 char `**` seams above. Locks the contrast.
+        #expect(normalize("[t](u)", proposed: 4, previous: 2) == 6)
+    }
+
+    @Test("1.4.5 A short marker on a line that ALSO has a link is still not snapped (non-vacuous)")
+    func shortMarkerNotSnappedEvenWhenLineParses() {
+        // The other short-marker tests use fixtures with no `]`, so `atomicInlineCaret`
+        // bails at its cheap line-gate before parsing — they'd miss a regression that
+        // wrongly added `**` to the snapped runs. This fixture puts `**b**` AND a link
+        // on the SAME line, so the line-gate passes and the paragraph is actually
+        // parsed; the assertion then proves `**` produces no atomic run (a caret inside
+        // the opening `**` at index 1 stays put) WHILE the link tail on the same line
+        // still snaps — exercising the real code path both ways.
+        let text = "**b** [t](u)"   // **b** [0,5), space 5, link [6,12), tail [8,12)
+        #expect(normalize(text, proposed: 1, previous: 0) == 1)    // inside `**` → not snapped
+        #expect(normalize(text, proposed: 10, previous: 8) == 12)  // inside link tail → snaps to far edge
+    }
+
+    @Test("1.4.5 The other short markers (`~~`, backtick, `$ $`) are also not snapped when the line parses")
+    func otherShortMarkersNotSnappedWhenLineParses() {
+        // Same non-vacuous shape as above for the remaining inline kinds: each line has
+        // a trailing link so `atomicInlineCaret` parses, and a caret inside the short
+        // marker's content stays put (those kinds produce no atomic run; only the link
+        // tail does). Guards against any of them being wrongly added to the snapped set.
+        #expect(normalize("~~s~~ [t](u)", proposed: 2, previous: 1) == 2)   // inside `~~strike~~`
+        #expect(normalize("`c` [t](u)", proposed: 1, previous: 0) == 1)     // inside `` `code` ``
+        #expect(normalize("$x$ [t](u)", proposed: 1, previous: 0) == 1)     // inside `$latex$`
+    }
+}
