@@ -44,6 +44,9 @@ public final class MarkdownUITextView: UITextView {
     /// Called when the inline link under the caret changes (entered / left / edited), so the
     /// host can show a link-edit affordance. Wired by `MarkdownEditorController`.
     var onInlineLinkContextChange: ((InlineLinkContext?) -> Void)?
+    /// Called when the `/` slash-command context at the caret changes (opened / filtered / closed),
+    /// so the host can show the block-insert menu. Wired by `MarkdownEditorController`.
+    var onSlashMenuContextChange: ((SlashMenuContext?) -> Void)?
     /// Called when an image is pasted, with the image's PNG bytes. The host persists it
     /// however it likes and returns a path/URL to reference (or nil to decline and fall
     /// back to the default paste); the editor then inserts `![](returnedPath)`.
@@ -282,6 +285,18 @@ public final class MarkdownUITextView: UITextView {
             text: display, selection: selectedRange, tokens: tokens
         ))
         onInlineLinkContextChange?(inlineLinkContext(tokens: tokens, display: display))
+        onSlashMenuContextChange?(slashMenuContext(display: display))
+    }
+
+    /// The `/` slash-command context for the caret, or nil. Only a zero-length caret triggers it
+    /// (typing, not a selection); the menu opens on a `/` at line start or after whitespace.
+    private func slashMenuContext(display: String) -> SlashMenuContext? {
+        guard selectedRange.length == 0,
+              let trigger = MarkdownSlashMenu.trigger(in: display, caret: selectedRange.location)
+        else { return nil }
+        return SlashMenuContext(
+            query: trigger.query, sourceRange: trigger.sourceRange, anchorRect: caretAnchorRect()
+        )
     }
 
     /// Force-publish host state now (the controller calls this on attach so freshly-shown
@@ -628,6 +643,12 @@ public final class MarkdownUITextView: UITextView {
     }
 
     // MARK: - Formatting commands
+
+    /// Insert a slash-menu `block`, replacing the `/query` at `sourceRange`. Single-undo.
+    func insertSlashBlock(_ block: MarkdownBlockInsert, replacing sourceRange: NSRange) {
+        let edit = MarkdownSlashMenu.insertEdit(block, replacing: sourceRange, in: text)
+        applyUndoableEdit(replacing: edit.range, with: edit.text, finalSelection: edit.selection)
+    }
 
     /// Apply a formatting command to `range` via the undoable edit path.
     func applyFormatting(_ command: MarkdownFormattingCommand, in range: NSRange) {

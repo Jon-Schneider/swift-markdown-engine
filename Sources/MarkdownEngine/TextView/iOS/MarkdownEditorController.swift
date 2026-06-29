@@ -39,6 +39,11 @@ public final class MarkdownEditorController: ObservableObject {
     /// link-edit popover anchored at `anchorRect`.
     @Published public private(set) var inlineLinkContext: InlineLinkContext?
 
+    /// The active `/` slash command at the caret, or `nil`. Observe this to show/hide the
+    /// block-insert menu anchored at `anchorRect`; filter rows with
+    /// `MarkdownSlashMenu.items(matching: context.query)` and apply a choice via `insertBlock`.
+    @Published public private(set) var slashMenuContext: SlashMenuContext?
+
     /// The editor view, bound by the wrapper. Weak: the SwiftUI view tree owns it.
     private weak var view: MarkdownUITextView?
 
@@ -59,6 +64,9 @@ public final class MarkdownEditorController: ObservableObject {
         view.onInlineLinkContextChange = { [weak self] context in
             self?.updateInlineLinkContext(context)
         }
+        view.onSlashMenuContextChange = { [weak self] context in
+            self?.updateSlashMenuContext(context)
+        }
         // Publish initial state so freshly-shown host UI isn't stale — deferred to the next
         // main-actor tick so it doesn't mutate @Published from inside the view-update cycle.
         DispatchQueue.main.async { [weak view] in view?.publishHostStateNow() }
@@ -70,6 +78,10 @@ public final class MarkdownEditorController: ObservableObject {
 
     private func updateInlineLinkContext(_ context: InlineLinkContext?) {
         if inlineLinkContext != context { inlineLinkContext = context }
+    }
+
+    private func updateSlashMenuContext(_ context: SlashMenuContext?) {
+        if slashMenuContext != context { slashMenuContext = context }
     }
 
     // MARK: Commands (called by the host's UI)
@@ -85,6 +97,14 @@ public final class MarkdownEditorController: ObservableObject {
     /// the link text (and `text` is ignored); otherwise `text` (or the URL) is used.
     public func insertLink(text: String? = nil, url: String) {
         view?.insertMarkdownLink(text: text, url: url)
+    }
+
+    /// Insert `block` from the slash menu, replacing the active `/command`. Pass the source range
+    /// from the current `slashMenuContext` (defaults to it); a no-op if there's no active trigger.
+    /// Single-undo, and clears the menu.
+    public func insertBlock(_ block: MarkdownBlockInsert, replacing sourceRange: NSRange? = nil) {
+        guard let range = sourceRange ?? slashMenuContext?.sourceRange else { return }
+        view?.insertSlashBlock(block, replacing: range)
     }
 
     /// Replace the markdown link the caret is currently in with `[text](url)`. No-op if the
