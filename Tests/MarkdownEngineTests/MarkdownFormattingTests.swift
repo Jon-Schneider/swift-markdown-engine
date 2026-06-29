@@ -334,6 +334,13 @@ struct MarkdownFormattingTests {
         #expect(MarkdownFormatting.isActive(.codeBlock, text: "```\ncode", selection: NSRange(location: 5, length: 0)))
     }
 
+    @Test("Unwrapping an open fence keeps an indented ``` content line (not a closing fence)")
+    func codeBlockUnwrapKeepsIndentedFenceLine() {
+        // "   ```" is indented, so BlockParser treats it as content (the fence stays open to EOF);
+        // unwrapping must preserve it, not strip it as a closing fence (would be silent data loss).
+        #expect(edit(.codeBlock, "```\ncode\n   ```", NSRange(location: 5, length: 0)).text == "code\n   ```")
+    }
+
     @Test("Code block refuses a body that already contains a fence line (would close early)")
     func codeBlockRefusesBodyWithFence() {
         // This engine closes a fence on any line starting with ```, so a body containing a ```

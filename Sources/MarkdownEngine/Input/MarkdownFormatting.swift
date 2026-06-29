@@ -574,8 +574,10 @@ enum MarkdownFormatting {
         var contentEnd = NSMaxRange(blockRange)
         if contentEnd > contentStart {
             let lastLine = ns.lineRange(for: NSRange(location: contentEnd - 1, length: 0))
-            let lastTrimmed = ns.substring(with: lastLine).trimmingCharacters(in: .whitespacesAndNewlines)
-            if lastLine.location >= contentStart, lastTrimmed.hasPrefix("```") {
+            // Match `BlockParser.isFence` EXACTLY — a column-0 `` ``` `` with no leading-whitespace
+            // trim. An indented `   ``` ` is content to BlockParser (the fence stays open to EOF),
+            // so trimming here would silently delete that line on unwrap.
+            if lastLine.location >= contentStart, ns.substring(with: lastLine).hasPrefix("```") {
                 contentEnd = lastLine.location   // drop the closing fence line…
                 let body = NSRange(location: contentStart, length: contentEnd - contentStart)
                 contentEnd -= trailingLineTerminatorLength(of: body, in: ns)   // …and its preceding terminator
