@@ -63,6 +63,24 @@ extension MarkdownStyler {
                     }
                     i += 1
                 }
+                // Reveal-height reservation (plan 1.1 follow-up): a NARROW table's
+                // revealed pipe-source is shorter than the rendered grid, so without
+                // this the block collapses and the content below jumps on caret
+                // entry/exit. Reserve the grid's last-rendered height (only cached for
+                // narrow tables — see the render branch) across the source rows, using
+                // the same half-line spacing the render branch emits so the footprint
+                // matches exactly (one non-wrapping line per row). A cache miss (wide
+                // table, never rendered, or source edited since) → natural reflow, never
+                // a re-render purely to measure.
+                if let reserved = ctx.blockRenderHeightCache?.height(forSource: source, fontSize: ctx.baseFont.pointSize),
+                   let paraRange = token.standaloneParagraphRange(in: ctx.nsText) {
+                    let spacing = ctx.baseDefaultLineHeight * 0.5
+                    reserveRevealedBlockHeight(
+                        reserved, paraRange: paraRange,
+                        spacingBefore: spacing, spacingAfter: spacing,
+                        ctx: ctx, attrs: &attrs
+                    )
+                }
                 continue
             }
 
@@ -84,6 +102,19 @@ extension MarkdownStyler {
             // `MarkdownTableScrollView` (UIScrollView) on iOS); narrow → collapsed.
             let containerWidth = effectiveContainerWidth(for: ctx)
             let isWide = image.size.width > containerWidth + 0.5
+            // Cache the rendered grid height for the reveal-height reservation (above) —
+            // ONLY for NARROW tables. A narrow table's revealed pipe-source is one
+            // non-wrapping line per row, so the per-line `minimumLineHeight` floor
+            // reserves its footprint exactly. A WIDE table is intrinsically different on
+            // reveal: its rendered footprint adds a horizontal-scroller strip (see
+            // `MarkdownStyler` wide path), and its long source rows WRAP — so a single
+            // grid height can't be distributed across them without over/under-reserving.
+            // Not caching wide tables → the reveal branch misses → natural reflow (the
+            // pre-feature behavior). Keyed by source + base font size (same source + base
+            // font → same render). Wide-table reservation is a tracked follow-up.
+            if !isWide {
+                ctx.blockRenderHeightCache?.store(height: image.size.height, forSource: source, fontSize: ctx.baseFont.pointSize)
+            }
             let computedSourceID = stableTableSourceID(
                 for: source,
                 occurrenceIndex: occurrenceIndex

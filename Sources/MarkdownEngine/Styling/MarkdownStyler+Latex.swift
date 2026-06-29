@@ -40,7 +40,12 @@ extension MarkdownStyler {
                 // so the block doesn't collapse and jump the content below on caret entry. A cache
                 // miss (source edited since it rendered, or never rendered) → natural reflow.
                 if let reserved = ctx.blockRenderHeightCache?.height(forSource: latexContent, fontSize: latexFontSize) {
-                    reserveRevealedBlockHeight(reserved, paraRange: paraRange, ctx: ctx, attrs: &attrs)
+                    reserveRevealedBlockHeight(
+                        reserved, paraRange: paraRange,
+                        spacingBefore: ctx.configuration.blockLatex.paragraphSpacingBefore,
+                        spacingAfter: ctx.configuration.blockLatex.paragraphSpacing,
+                        ctx: ctx, attrs: &attrs
+                    )
                 }
             } else if !latexContent.isEmpty,
                       let entry = ctx.services.latex.render(latex: latexContent, fontSize: latexFontSize, theme: ctx.configuration.theme, colorScheme: ctx.colorScheme) {
@@ -80,12 +85,23 @@ extension MarkdownStyler {
     /// source (e.g. one `$$…$$` line vs a tall fraction) pads up to the formula's height; a taller
     /// source keeps its natural height (no `maximumLineHeight`, so nothing is clipped).
     ///
-    /// Note: the floor is per *paragraph* but applies per laid-out (visual) line, so a single long
-    /// logical line that WRAPS over-reserves slightly (each wrapped line gets the floor). Narrow
-    /// edge case; the common single-line and multi-line block forms reserve exactly.
-    private static func reserveRevealedBlockHeight(
+    /// IMPORTANT: the floor is per *paragraph* but applies per laid-out (visual) line, so a logical
+    /// line that WRAPS over-reserves (each wrapped visual line gets the full floor). Callers must
+    /// therefore only reserve blocks whose revealed source does NOT wrap: block LaTeX (`$$…$$` lines
+    /// fit) and NARROW tables (one short line per row) qualify; wide tables (long, wrapping pipe
+    /// rows) are deliberately excluded by their caller — for them this would inflate the footprint.
+    /// Also assumes a top-level standalone block: it builds a fresh paragraph style, discarding any
+    /// inherited indentation (true for top-level LaTeX/tables; a nested block would lose it).
+    ///
+    /// Shared by the block-LaTeX (plan 1.2) and table (plan 1.1 follow-up) reveal paths — each
+    /// passes its own `spacingBefore`/`spacingAfter` (block LaTeX uses its configured paragraph
+    /// spacing; a table uses the half-line spacing its render branch emits), so the reserved
+    /// footprint matches the rendered block's vertical extent on either path.
+    static func reserveRevealedBlockHeight(
         _ height: CGFloat,
         paraRange: NSRange,
+        spacingBefore: CGFloat,
+        spacingAfter: CGFloat,
         ctx: StylingContext,
         attrs: inout [StyledRange]
     ) {
@@ -97,8 +113,6 @@ extension MarkdownStyler {
 
         let baseLineHeight = layoutBridgeDefaultLineHeight(for: ctx.baseFont, using: ctx.layoutBridge)
         let perLineFloor = max(baseLineHeight, height / CGFloat(paragraphRanges.count))
-        let spacingBefore = ctx.configuration.blockLatex.paragraphSpacingBefore
-        let spacingAfter = ctx.configuration.blockLatex.paragraphSpacing
 
         for (i, range) in paragraphRanges.enumerated() {
             let para = NSMutableParagraphStyle()
