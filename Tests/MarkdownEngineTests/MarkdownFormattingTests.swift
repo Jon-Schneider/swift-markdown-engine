@@ -304,6 +304,13 @@ struct MarkdownFormattingTests {
         #expect(result.text == "> a\n")
     }
 
+    @Test("Line-prefix commands preserve the original terminator (CRLF), not normalize to LF")
+    func linePrefixPreservesCRLF() {
+        #expect(edit(.blockquote, "a\r\nb", NSRange(location: 0, length: 0)).text == "> a\r\n")
+        #expect(edit(.toggleCheckbox, "a\r\nb", NSRange(location: 0, length: 0)).text == "- [ ] a\r\n")
+        #expect(edit(.indent, "- a\r\nb", NSRange(location: 0, length: 0)).text == "\t- a\r\n")
+    }
+
     // MARK: - Code block (fenced)
 
     @Test("Code block wraps the line in a fence and selects the body")
@@ -379,10 +386,11 @@ struct MarkdownFormattingTests {
         #expect(edit(.toggleCheckbox, "1) item", NSRange(location: 0, length: 0)).text == "1) [ ] item")
     }
 
-    @Test("Toggle checkbox handles the engine's legacy • bullet")
-    func toggleCheckboxOnLegacyBullet() {
-        #expect(edit(.toggleCheckbox, "• item", NSRange(location: 0, length: 0)).text == "• [ ] item")
-        #expect(edit(.toggleCheckbox, "• [ ] item", NSRange(location: 8, length: 0)).text == "• [x] item")
+    @Test("A • glyph is a render artifact, not a source marker, so checkbox treats it as plain")
+    func toggleCheckboxLegacyBulletIsPlain() {
+        // `•` is painted over a hidden -/*/+ at render time; the AST never treats a source `•` as a
+        // list marker, so the command must too (emitting `• [ ]` would never style as a task).
+        #expect(edit(.toggleCheckbox, "• item", NSRange(location: 0, length: 0)).text == "- [ ] • item")
     }
 
     @Test("Toggle checkbox flips only the leading box when content also has brackets")

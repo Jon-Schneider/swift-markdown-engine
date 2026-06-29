@@ -497,9 +497,7 @@ enum MarkdownFormatting {
     private static func blockquoteEdit(text: String, selection: NSRange) -> FormattingEdit {
         let ns = text as NSString
         let lineRange = ns.lineRange(for: selection)
-        let originalLine = ns.substring(with: lineRange)
-        let lineText = originalLine.trimmingCharacters(in: .newlines)
-        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
+        let (lineText, suffix) = splitLineTerminator(lineRange, in: ns)
 
         let newLine: String         // full replacement line (sans the preserved newline)
         let visibleStart: Int       // where the non-marker text begins, to select like list/heading
@@ -570,25 +568,40 @@ enum MarkdownFormatting {
         return (last == 0x0A || last == 0x0D) ? 1 : 0
     }
 
+    /// Split a line range into (content, original terminator). The line-prefix commands rebuild a
+    /// line and re-append its terminator — using the EXACT original (CRLF/CR/LF) instead of a hard
+    /// `\n` so they don't rewrite or drop line endings on non-LF documents.
+    private static func splitLineTerminator(_ lineRange: NSRange, in ns: NSString) -> (line: String, terminator: String) {
+        let terminatorLength = trailingLineTerminatorLength(of: lineRange, in: ns)
+        let line = ns.substring(with: NSRange(location: lineRange.location, length: lineRange.length - terminatorLength))
+        let terminator = terminatorLength > 0
+            ? ns.substring(with: NSRange(location: NSMaxRange(lineRange) - terminatorLength, length: terminatorLength))
+            : ""
+        return (line, terminator)
+    }
+
     // MARK: - List marker patterns (shared by detection + the list-structure commands)
 
-    // Mirrors `BlockParser.isListItem`: leading spaces/tabs, then a bullet `-*+` (plus the engine's
-    // legacy `•`) or an ordered `N` (≤ 9 digits) ended by `.` or `)`, then a space OR tab separator.
+    // Mirrors the AST's `listItem` (MarkdownAST.swift) — the source of truth for what becomes a
+    // list/task node: leading spaces/tabs, then a bullet `-*+` or an ordered `N` (≤ 9 digits) ended
+    // by `.` or `)`, then a space OR tab separator. NOTE: `•` is deliberately excluded — it's a
+    // render-time glyph painted over a hidden `-`/`*`/`+`, never a source marker the AST recognizes,
+    // so emitting `• [ ]` would never style as a task.
     /// A bullet line.
-    static let bulletLinePattern = #"^[ \t]*[-•*+][ \t]"#
+    static let bulletLinePattern = #"^[ \t]*[-*+][ \t]"#
     /// An ordered line (`N.` or `N)`, ≤ 9 digits — a 10+-digit run renders as plain text).
     static let orderedLinePattern = #"^[ \t]*\d{1,9}[.)][ \t]"#
     /// Any list marker (bullet or ordered) at line start.
-    private static let listMarkerPrefix = #"^[ \t]*([-•*+]|\d{1,9}[.)])[ \t]"#
+    private static let listMarkerPrefix = #"^[ \t]*([-*+]|\d{1,9}[.)])[ \t]"#
 
     /// A list line whose marker is immediately followed by a `[ ]`/`[x]`/`[X]` box (the engine
     /// accepts upper- or lower-case x as checked).
     private static func isTaskLine(_ line: String) -> Bool {
-        line.range(of: #"^[ \t]*([-•*+]|\d{1,9}[.)])[ \t]\[[ xX]\]"#, options: .regularExpression) != nil
+        line.range(of: #"^[ \t]*([-*+]|\d{1,9}[.)])[ \t]\[[ xX]\]"#, options: .regularExpression) != nil
     }
 
     private static func isCheckedTaskLine(_ line: String) -> Bool {
-        line.range(of: #"^[ \t]*([-•*+]|\d{1,9}[.)])[ \t]\[[xX]\]"#, options: .regularExpression) != nil
+        line.range(of: #"^[ \t]*([-*+]|\d{1,9}[.)])[ \t]\[[xX]\]"#, options: .regularExpression) != nil
     }
 
     /// Toggle a task checkbox on the caret's line. An existing task line flips `[ ]`↔`[x]`
@@ -597,9 +610,7 @@ enum MarkdownFormatting {
     private static func toggleCheckboxEdit(text: String, selection: NSRange) -> FormattingEdit {
         let ns = text as NSString
         let lineRange = ns.lineRange(for: selection)
-        let originalLine = ns.substring(with: lineRange)
-        let lineText = originalLine.trimmingCharacters(in: .newlines)
-        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
+        let (lineText, suffix) = splitLineTerminator(lineRange, in: ns)
 
         // 1) Existing task line → flip the box. Length-preserving, so the caret stays valid.
         if let box = lineText.range(of: #"\[[ xX]\]"#, options: .regularExpression),
@@ -643,9 +654,7 @@ enum MarkdownFormatting {
     private static func indentEdit(text: String, selection: NSRange, outdent: Bool) -> FormattingEdit {
         let ns = text as NSString
         let lineRange = ns.lineRange(for: selection)
-        let originalLine = ns.substring(with: lineRange)
-        let lineText = originalLine.trimmingCharacters(in: .newlines)
-        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
+        let (lineText, suffix) = splitLineTerminator(lineRange, in: ns)
 
         let identity = FormattingEdit(range: selection, text: ns.substring(with: selection), selection: selection)
         guard isListItemLine(lineText) else { return identity }
