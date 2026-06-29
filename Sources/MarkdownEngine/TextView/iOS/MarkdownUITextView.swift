@@ -664,6 +664,10 @@ public final class MarkdownUITextView: UITextView {
     /// Insert a slash-menu `block`, replacing the `/query` at `sourceRange`. Single-undo.
     func insertSlashBlock(_ block: MarkdownBlockInsert, replacing sourceRange: NSRange) {
         let edit = MarkdownSlashMenu.insertEdit(block, replacing: sourceRange, in: text)
+        // `insertEdit` returns an identity no-op for an invalid/stale range; skip it so the public
+        // `insertBlock(replacing:)` API truly does nothing (no caret jump to EOF, no undo step)
+        // rather than applying an empty replacement. Mirrors `applyFormatting` and the macOS guard.
+        if isIdentity(edit) { return }
         applyUndoableEdit(replacing: edit.range, with: edit.text, finalSelection: edit.selection)
     }
 
