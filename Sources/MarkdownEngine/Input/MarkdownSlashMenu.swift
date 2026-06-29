@@ -137,11 +137,29 @@ public enum MarkdownSlashMenu {
     /// controller's `insertBlock`.)
     static func insertEdit(_ block: MarkdownBlockInsert, replacing sourceRange: NSRange, in text: String) -> FormattingEdit {
         let ns = text as NSString
-        // The host hands back a PUBLISHED (potentially stale) range; never trust it. An OOB range
-        // would crash `getLineStart`/`lineRange` with NSRangeException — so no-op out of bounds.
-        guard sourceRange.location >= 0, NSMaxRange(sourceRange) <= ns.length else {
-            let safe = max(0, min(sourceRange.location, ns.length))
+        // The host hands back a PUBLISHED range it may have captured earlier; never trust it. Two
+        // ways it can be bad — both would corrupt text or crash `getLineStart`/`lineRange`
+        // (NSRangeException) — so fall back to an identity no-op:
+        func noOp(at location: Int) -> FormattingEdit {
+            let safe = max(0, min(location, ns.length))   // `min` first: NSNotFound clamps, no overflow
             return FormattingEdit(range: NSRange(location: safe, length: 0), text: "", selection: NSRange(location: safe, length: 0))
+        }
+        // 1. Out of bounds. Subtraction-based checks (never `NSMaxRange`, which overflows when
+        //    `location == NSNotFound`); short-circuit order keeps `ns.length - location` >= 0.
+        guard sourceRange.location != NSNotFound,
+              sourceRange.location >= 0,
+              sourceRange.location <= ns.length,
+              sourceRange.length >= 0,
+              sourceRange.length <= ns.length - sourceRange.location else {
+            return noOp(at: sourceRange.location)
+        }
+        // 2. Stale: still in bounds but no longer delimiting the active `/query` (the text was
+        //    edited or already replaced since the range was published). Re-detect the trigger at
+        //    the range's end and bail unless it reproduces exactly this range, rather than blindly
+        //    replacing whatever characters now occupy it.
+        guard let live = trigger(in: text, caret: NSMaxRange(sourceRange)),
+              live.sourceRange == sourceRange else {
+            return noOp(at: sourceRange.location)
         }
 
         // Split the line via getLineStart so the terminator boundary matches `lineRange` for EVERY

@@ -152,6 +152,28 @@ struct MarkdownSlashMenuTests {
         #expect(NSMaxRange(result.range) <= 2)                       // clamped within "ab"
     }
 
+    @Test("An NSNotFound / overflowing source range is a safe no-op (no overflow crash)")
+    func insertNSNotFoundRangeIsNoOp() {
+        // `NSMaxRange` would overflow for location == NSNotFound; the bounds check must reject it.
+        let result = insert(.heading1, "/h", NSRange(location: NSNotFound, length: 1))
+        #expect(result.text == "")
+        #expect(result.range.length == 0)
+        #expect(NSMaxRange(result.range) <= 2)
+        // A negative length is likewise rejected.
+        #expect(insert(.heading1, "/h", NSRange(location: 0, length: -3)).text == "")
+    }
+
+    @Test("An in-bounds range that no longer covers the /query is a no-op (no corruption)")
+    func insertStaleInBoundsRangeIsNoOp() {
+        // The host captured `/h` at [0,2) but the text changed to plain "hello" since; the range
+        // is still in bounds but no longer a slash trigger, so inserting must NOT mangle "he".
+        let result = insert(.heading1, "hello", NSRange(location: 0, length: 2))
+        #expect(result.text == "")
+        #expect(result.range.length == 0)
+        // A range whose end isn't preceded by a line-start/whitespace `/` is also rejected.
+        #expect(insert(.bulletList, "a/b", NSRange(location: 1, length: 2)).text == "")
+    }
+
     @Test("Divider with trailing content puts the caret on the content line")
     func insertDividerWithContent() {
         // "a /d" → keep "a " below the rule, caret on that content line.
