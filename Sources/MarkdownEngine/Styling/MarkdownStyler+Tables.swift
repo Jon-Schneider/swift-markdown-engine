@@ -66,13 +66,18 @@ extension MarkdownStyler {
                 // Reveal-height reservation (plan 1.1 follow-up): a NARROW table's
                 // revealed pipe-source is shorter than the rendered grid, so without
                 // this the block collapses and the content below jumps on caret
-                // entry/exit. Reserve the grid's last-rendered height (only cached for
-                // narrow tables — see the render branch) across the source rows, using
-                // the same half-line spacing the render branch emits so the footprint
-                // matches exactly (one non-wrapping line per row). A cache miss (wide
-                // table, never rendered, or source edited since) → natural reflow, never
+                // entry/exit. Reserve the grid's last-rendered height across the source
+                // rows, using the same half-line spacing the render branch emits so the
+                // footprint matches exactly (one non-wrapping line per row). The
+                // width-aware lookup reserves ONLY while the table is narrow at the
+                // CURRENT container width — a wide table (rendered width > container) is
+                // rejected here, so its wrapping source isn't force-floored. A miss
+                // (wide, never rendered, or source edited since) → natural reflow, never
                 // a re-render purely to measure.
-                if let reserved = ctx.blockRenderHeightCache?.height(forSource: source, fontSize: ctx.baseFont.pointSize),
+                if let reserved = ctx.blockRenderHeightCache?.height(
+                       forSource: source, fontSize: ctx.baseFont.pointSize,
+                       maxContentWidth: effectiveContainerWidth(for: ctx)
+                   ),
                    let paraRange = token.standaloneParagraphRange(in: ctx.nsText) {
                     let spacing = ctx.baseDefaultLineHeight * 0.5
                     reserveRevealedBlockHeight(
@@ -102,26 +107,17 @@ extension MarkdownStyler {
             // `MarkdownTableScrollView` (UIScrollView) on iOS); narrow → collapsed.
             let containerWidth = effectiveContainerWidth(for: ctx)
             let isWide = image.size.width > containerWidth + 0.5
-            // Cache the rendered grid height for the reveal-height reservation (above) —
-            // ONLY for NARROW tables. A narrow table's revealed pipe-source is one
-            // non-wrapping line per row, so the per-line `minimumLineHeight` floor
-            // reserves its footprint exactly. A WIDE table is intrinsically different on
-            // reveal: its rendered footprint adds a horizontal-scroller strip (see
-            // `MarkdownStyler` wide path), and its long source rows WRAP — so a single
-            // grid height can't be distributed across them without over/under-reserving.
-            // Not caching wide tables → the reveal branch misses → natural reflow (the
-            // pre-feature behavior). Keyed by source + base font size (same source + base
-            // font → same render). Wide-table reservation is a tracked follow-up.
-            //
-            // When wide, EVICT any previously-cached narrow height for this table: the
-            // key is only source+fontSize, so after a resize/rotation narrows→wide the
-            // stale narrow height would otherwise still be reserved on reveal. (A width
-            // change re-runs this render branch, so the eviction lands before any reveal.)
-            if !isWide {
-                ctx.blockRenderHeightCache?.store(height: image.size.height, forSource: source, fontSize: ctx.baseFont.pointSize)
-            } else {
-                ctx.blockRenderHeightCache?.remove(forSource: source, fontSize: ctx.baseFont.pointSize)
-            }
+            // Cache the rendered grid height + its intrinsic width for the reveal-height
+            // reservation (above). The width lets the reveal branch decide narrow-vs-wide
+            // at the CURRENT container width (reserve only while narrow), so a
+            // resize/rotation that turns this table wide stops reserving even though the
+            // macOS width-change restyle won't re-render a narrow table. Keyed by source +
+            // base font size (same source + base font → same render). Wide-table
+            // reservation (its source wraps + a scroller strip) is a tracked follow-up.
+            ctx.blockRenderHeightCache?.store(
+                height: image.size.height, forSource: source,
+                fontSize: ctx.baseFont.pointSize, contentWidth: image.size.width
+            )
             let computedSourceID = stableTableSourceID(
                 for: source,
                 occurrenceIndex: occurrenceIndex

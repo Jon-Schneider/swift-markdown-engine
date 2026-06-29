@@ -42,22 +42,32 @@ struct BlockRenderHeightCacheTests {
         #expect(cache.height(forSource: "z", fontSize: 17) == nil)
     }
 
-    @Test("remove evicts a cached height (the narrow→wide table invalidation path)")
-    func removeEvicts() {
+    @Test("Width-aware lookup reserves while the block is narrow at the current width")
+    func widthAwareLookupNarrow() {
         let cache = BlockRenderHeightCache()
-        cache.store(height: 100, forSource: "| a | b |", fontSize: 17)
-        #expect(cache.height(forSource: "| a | b |", fontSize: 17) == 100)
-        // A table that re-renders wide evicts its stale narrow height so the reveal
-        // path misses (→ natural reflow) instead of reserving the wrong footprint.
-        cache.remove(forSource: "| a | b |", fontSize: 17)
-        #expect(cache.height(forSource: "| a | b |", fontSize: 17) == nil)
+        // A table rendered with intrinsic content width 300.
+        cache.store(height: 100, forSource: "| a | b |", fontSize: 17, contentWidth: 300)
+        // Container 360 ≥ 300 → still narrow → the height is reservable.
+        #expect(cache.height(forSource: "| a | b |", fontSize: 17, maxContentWidth: 360) == 100)
     }
 
-    @Test("remove of an absent key is a harmless no-op")
-    func removeAbsentIsNoOp() {
+    @Test("Width-aware lookup rejects once the block is wider than the container (resize→wide)")
+    func widthAwareLookupRejectsWide() {
         let cache = BlockRenderHeightCache()
-        cache.remove(forSource: "absent", fontSize: 17)   // must not crash
-        #expect(cache.height(forSource: "absent", fontSize: 17) == nil)
+        cache.store(height: 100, forSource: "| a | b |", fontSize: 17, contentWidth: 300)
+        // After a shrink to 250 < 300 the table is now wide → the narrow reservation
+        // must be rejected WITHOUT the table re-rendering, so the reveal reflows naturally.
+        #expect(cache.height(forSource: "| a | b |", fontSize: 17, maxContentWidth: 250) == nil)
+    }
+
+    @Test("A width-independent entry (block LaTeX, no contentWidth) ignores the width gate")
+    func widthIndependentEntryAlwaysReservable() {
+        let cache = BlockRenderHeightCache()
+        cache.store(height: 80, forSource: "$$x$$", fontSize: 17)   // contentWidth defaults to nil
+        // Even a tiny container doesn't reject it — block LaTeX reveal is width-independent.
+        #expect(cache.height(forSource: "$$x$$", fontSize: 17, maxContentWidth: 10) == 80)
+        // And the plain (width-unaware) lookup still returns it.
+        #expect(cache.height(forSource: "$$x$$", fontSize: 17) == 80)
     }
 
     @Test("A later store overwrites an earlier height for the same key")
