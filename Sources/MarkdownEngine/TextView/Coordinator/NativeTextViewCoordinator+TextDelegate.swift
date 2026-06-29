@@ -488,6 +488,12 @@ extension NativeTextViewCoordinator {
         case .replace(let range, let text, let caret):
             if MarkdownLists.performEdit(textView, replace: range, with: text) {
                 textView.setSelectedRange(NSRange(location: caret, length: 0))
+                // Sync the seamless caret-normalization baseline to this programmatic caret move,
+                // so the ensuing selection-change doesn't read the new caret (shifted left as the
+                // document shrank) as a leftward arrow step at a block's content start and escape
+                // it to the previous line (mirrors the iOS `applyUndoableEdit` fix). Surfaced by
+                // merge-up-over-blank-line Backspace, where the final caret lands at content start.
+                previousCaretLocation = caret
             }
             return true
         }

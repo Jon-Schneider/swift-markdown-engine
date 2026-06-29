@@ -124,6 +124,52 @@ struct SeamlessInputTests {
         #expect(backspace(text, at: 6) == .replace(range: NSRange(location: 0, length: 6), text: "", caret: 0))
     }
 
+    // MARK: - Merge-up over a blank line (keep the marker)
+    //
+    // When the line directly above the block is BLANK, Backspace at the block's content start
+    // deletes that blank line and KEEPS the marker, rather than unwrapping it — the only single
+    // gesture for that in seamless mode (the caret can't sit before the hidden marker).
+
+    @Test("Heading after a blank line: Backspace deletes the blank line, keeps `# `")
+    func headingMergesUpOverBlankLine() {
+        // "\n# Title" — blank first line, heading on line 2 (starts at index 1); content at 3.
+        // Deleting the blank line (range 0..1) leaves "# Title" with the caret back at content
+        // start (now index 2), still a heading.
+        #expect(backspace("\n# Title", at: 3)
+            == .replace(range: NSRange(location: 0, length: 1), text: "", caret: 2))
+    }
+
+    @Test("Heading after a blank line that sits below real content merges up, keeps `# `")
+    func headingMergesUpOverBlankLineBelowContent() {
+        // "intro\n\n# Title": blank middle line is range 6..7; heading starts at 7, content at 9.
+        #expect(backspace("intro\n\n# Title", at: 9)
+            == .replace(range: NSRange(location: 6, length: 1), text: "", caret: 8))
+    }
+
+    @Test("A whitespace-only previous line counts as blank")
+    func headingMergesUpOverWhitespaceOnlyLine() {
+        // "  \n# Title": the 2-space line (range 0..3 incl. \n) is blank; heading content at 5.
+        #expect(backspace("  \n# Title", at: 5)
+            == .replace(range: NSRange(location: 0, length: 3), text: "", caret: 2))
+    }
+
+    @Test("Quote / bullet after a blank line merge up too (not heading-specific)")
+    func blockMarkersMergeUpOverBlankLine() {
+        // "\n> hi": quote content at 3 → delete blank line, keep "> hi".
+        #expect(backspace("\n> hi", at: 3)
+            == .replace(range: NSRange(location: 0, length: 1), text: "", caret: 2))
+        // "\n- item": bullet content at 3 → delete blank line, keep "- item".
+        #expect(backspace("\n- item", at: 3)
+            == .replace(range: NSRange(location: 0, length: 1), text: "", caret: 2))
+    }
+
+    @Test("A NON-blank previous line still unwraps (no merge-up)")
+    func headingAfterContentStillUnwraps() {
+        // "intro\n# Title": previous line "intro" is not blank, so Backspace unwraps the heading.
+        let text = "intro\n# Title"   // heading starts at 6, content at 8.
+        #expect(backspace(text, at: 8) == .replace(range: NSRange(location: 6, length: 2), text: "", caret: 6))
+    }
+
     // MARK: - Lists
 
     @Test("Unordered `- ` unwraps")

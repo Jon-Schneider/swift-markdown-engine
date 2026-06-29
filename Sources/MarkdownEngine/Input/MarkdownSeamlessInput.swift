@@ -114,6 +114,16 @@ enum MarkdownSeamlessInput {
             // Markdown marker — never unwrap it. (Fenced code is already excluded
             // above.) Parsed lazily, only now that a prefix has matched.
             guard !isInLatexOrTable(ns: ns, location: caret) else { return .allowDefault }
+            // Merge-up over a blank line: if the line directly above is blank, Backspace
+            // deletes that blank line and KEEPS the block marker, instead of unwrapping it.
+            // In seamless mode the caret can't sit before the hidden marker (it normalizes
+            // to content start), so this is the only single gesture for "remove the blank
+            // line above, keep the heading/quote/list" — the natural editor expectation.
+            // Any other case (no blank line above, e.g. the block follows real content or is
+            // the first line) still unwraps.
+            if let mergeUp = mergeUpOverBlankLine(ns: ns, lineStart: lineStart, caret: caret) {
+                return mergeUp
+            }
             return unwrap(from: lineStart, toContentStart: contentStart)
         }
 
@@ -198,6 +208,22 @@ enum MarkdownSeamlessInput {
     private static func unwrap(from lineStart: Int, toContentStart contentStart: Int) -> SeamlessEditDecision {
         let removal = NSRange(location: lineStart, length: contentStart - lineStart)
         return .replace(range: removal, text: "", caret: lineStart)
+    }
+
+    /// If the line immediately above `lineStart` is blank (empty or whitespace-only), the edit
+    /// that deletes that whole blank line (its content + terminator), pulling the current block
+    /// line up while leaving its marker intact. `nil` when there's no line above or it isn't blank.
+    /// The caret keeps its offset within the current line (it stays at the same content start,
+    /// just shifted up by the removed line's length). One undoable `.replace`.
+    private static func mergeUpOverBlankLine(ns: NSString, lineStart: Int, caret: Int) -> SeamlessEditDecision? {
+        guard lineStart > 0 else { return nil }
+        // `lineRange(for:)` of the terminator just before `lineStart` spans the whole previous
+        // line including its line break, ending exactly at `lineStart` (CR/LF/CRLF tolerant).
+        let prevLine = ns.lineRange(for: NSRange(location: lineStart - 1, length: 0))
+        let prevText = ns.substring(with: prevLine)
+        guard prevText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let newCaret = prevLine.location + (caret - lineStart)
+        return .replace(range: prevLine, text: "", caret: newCaret)
     }
 
     // MARK: - Full-line hidden elements (delete)

@@ -411,6 +411,13 @@ public final class MarkdownUITextView: UITextView {
         // the caret inside the box, which would suppress the rendered glyph).
         if let finalSelection, let selRange = uiTextRange(for: finalSelection) {
             selectedTextRange = selRange
+            // Sync the seamless caret-normalization baseline to this programmatic caret move.
+            // Otherwise `previousCaretLocation` keeps the PRE-edit caret, and a deferred
+            // selection-change reads the new caret (which the edit may have shifted left as the
+            // document shrank) as a leftward arrow step at a block's content start — escaping the
+            // caret to the previous line. Surfaced by merge-up-over-blank-line Backspace and
+            // heading slash-inserts, where the final caret lands at a hidden marker's content start.
+            previousCaretLocation = finalSelection.location
         }
         isApplyingProgrammaticEdit = false
         restyleInPlace()
