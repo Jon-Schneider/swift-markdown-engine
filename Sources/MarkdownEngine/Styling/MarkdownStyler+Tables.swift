@@ -112,8 +112,20 @@ extension MarkdownStyler {
             // at the CURRENT container width (reserve only while narrow), so a
             // resize/rotation that turns this table wide stops reserving even though the
             // macOS width-change restyle won't re-render a narrow table. Keyed by source +
-            // base font size (same source + base font → same render). Wide-table
-            // reservation (its source wraps + a scroller strip) is a tracked follow-up.
+            // base font size (same source + base font → same render).
+            //
+            // WIDE tables get NO reveal reservation, BY DESIGN (decided 2026-06-29, measured
+            // live). A wide table's revealed pipe-source WRAPS — each long row spills to 2–3
+            // visual lines — so the revealed source is ~2.5× TALLER than the rendered grid
+            // (e.g. ~240pt source vs ~93pt grid in the demo). The narrow-table pad-up trick
+            // can't help: it only ADDS height, but here the source already overshoots the
+            // grid, so there is no deficit to fill. The ONLY way to make a wide-table reveal
+            // flicker-free would be to reserve that taller source height UNDER the rendered
+            // grid too (max(grid, source) in both states) — i.e. permanent dead whitespace
+            // below every wide table when not editing. That trades a transient enter/exit
+            // jump for permanent visual cruft, which is worse, so we accept the jump. The
+            // width-aware lookup above already returns nil for wide tables, so this needs no
+            // code — only this note, so the "follow-up" isn't reopened to rediscover the trap.
             ctx.blockRenderHeightCache?.store(
                 height: image.size.height, forSource: source,
                 fontSize: ctx.baseFont.pointSize, contentWidth: image.size.width
