@@ -460,8 +460,11 @@ extension NativeTextViewCoordinator {
     /// synced so the seamless caret-normalization baseline doesn't read a phantom step.
     @discardableResult
     private func applyTableNavigation(_ textView: NSTextView, _ decision: TableEditDecision) -> Bool {
-        let length = (textView.string as NSString).length
-        func clamp(_ loc: Int) -> Int { max(0, min(loc, length)) }
+        // Reads the LIVE string length on each call, so the `.replace` branch (which
+        // calls this AFTER `performEdit`) clamps against the post-edit length — an EOF
+        // exit/append targets a caret beyond the pre-edit length, and clamping against
+        // the old length would snap it back to the old EOF.
+        func clamp(_ loc: Int) -> Int { max(0, min(loc, (textView.string as NSString).length)) }
         switch decision {
         case .allowDefault:
             // Leave `pendingEditedRange` alone — it belongs to the real insertion the

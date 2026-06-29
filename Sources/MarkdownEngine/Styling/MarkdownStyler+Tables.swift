@@ -112,8 +112,15 @@ extension MarkdownStyler {
             // Not caching wide tables → the reveal branch misses → natural reflow (the
             // pre-feature behavior). Keyed by source + base font size (same source + base
             // font → same render). Wide-table reservation is a tracked follow-up.
+            //
+            // When wide, EVICT any previously-cached narrow height for this table: the
+            // key is only source+fontSize, so after a resize/rotation narrows→wide the
+            // stale narrow height would otherwise still be reserved on reveal. (A width
+            // change re-runs this render branch, so the eviction lands before any reveal.)
             if !isWide {
                 ctx.blockRenderHeightCache?.store(height: image.size.height, forSource: source, fontSize: ctx.baseFont.pointSize)
+            } else {
+                ctx.blockRenderHeightCache?.remove(forSource: source, fontSize: ctx.baseFont.pointSize)
             }
             let computedSourceID = stableTableSourceID(
                 for: source,

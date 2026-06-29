@@ -43,4 +43,12 @@ final class BlockRenderHeightCache {
         if heights.count >= capacity { heights.removeAll(keepingCapacity: true) }
         heights[Key(source: source, fontSize: fontSize)] = height
     }
+
+    /// Evict a cached height. Used when a block can no longer reserve safely (e.g. a
+    /// table that previously rendered narrow now renders wide): the key is only
+    /// source+fontSize, so without an explicit eviction the stale narrow height would
+    /// be reserved on reveal after a width change.
+    func remove(forSource source: String, fontSize: CGFloat) {
+        heights[Key(source: source, fontSize: fontSize)] = nil
+    }
 }
