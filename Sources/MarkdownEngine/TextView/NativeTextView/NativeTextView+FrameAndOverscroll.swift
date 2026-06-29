@@ -263,33 +263,74 @@ extension NativeTextView {
 
         recalcOverscroll(for: scrollView, targetWidth: newSize.width, debugTag: "setFrameSize")
 
-        // Width change → only wide-table paragraphs need restyling (their kern bakes in displayWidth).
+        // Width change → restyle the width-DEPENDENT table paragraphs (wide tables + any revealed
+        // narrow table whose reservation is now stale). See the method doc for why both.
         if widthChanged {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 if self.configuration.readingWidth == nil {
-                    self.restyleWideTableParagraphsForWidthChange()
+                    self.restyleWidthDependentTableParagraphsForWidthChange()
                 }
                 self.updateWideTableOverlays()
             }
         }
     }
 
-    /// Restyle only wide-table paragraphs via stamped anchor ranges; avoids re-tokenizing the doc.
-    private func restyleWideTableParagraphsForWidthChange() {
+    /// Restyle the width-DEPENDENT table paragraphs after a width change, via paragraph ranges only
+    /// (no whole-doc re-tokenize):
+    ///   • WIDE tables — their kern bakes in `displayWidth` + the scroller strip, so a resize must
+    ///     recompute it. Found by their stamped `.scrollableBlockFullRange` anchor.
+    ///   • An ACTIVE (revealed) NARROW table — its reveal-height reservation (the per-line floor that
+    ///     holds the content below steady) is valid only WHILE the table is narrow at the current
+    ///     width. A bare resize that crosses the narrow→wide threshold leaves that floor stale (it
+    ///     over-reserves once the revealed source wraps), and nothing else restyles it because a bare
+    ///     resize changes no selection/edit. A revealed table renders no image, so it carries no
+    ///     scrollable stamp — locate it via the coordinator's active token set instead. Restyling its
+    ///     paragraph lets the reveal branch's width-aware cache lookup drop the now-invalid reservation
+    ///     (or keep it if still narrow — the recompute is idempotent and paragraph-scoped, so doing it
+    ///     on every width change is cheap). Block-LaTeX reveal reservation is width-INDEPENDENT
+    ///     (`contentWidth == nil`), so it can't go stale on resize and is deliberately not collected.
+    private func restyleWidthDependentTableParagraphsForWidthChange() {
         guard let storage = textStorage,
               let coord = delegate as? NativeTextViewCoordinator else { return }
+        let tokens = coord.parsedDocument(for: self.string).tokens
+        let ranges = NativeTextView.widthDependentTableParagraphs(
+            in: storage, activeTokenIndices: coord.activeTokenIndices, tokens: tokens
+        )
+        guard !ranges.isEmpty else { return }
+        coord.restyleParagraphs(ranges, in: self)
+    }
+
+    /// The width-dependent table paragraphs whose styling a width change can invalidate:
+    ///   • WIDE tables — stamped with `.scrollableBlockFullRange` when rendered (their kern bakes in
+    ///     `displayWidth` + the scroller strip).
+    ///   • ACTIVE (revealed) tables — their reveal-height reservation is valid only while the table is
+    ///     narrow at the current width, but a revealed table renders no image so carries no stamp;
+    ///     located via `activeTokenIndices` instead. (Active block-LaTeX is excluded: its reservation
+    ///     is width-INDEPENDENT, so it can't go stale on resize.)
+    /// Deduped. Pure over its inputs so the resize-restyle scoping is unit-testable without driving
+    /// the async `setFrameSize` path.
+    static func widthDependentTableParagraphs(
+        in storage: NSTextStorage,
+        activeTokenIndices: Set<Int>,
+        tokens: [MarkdownToken]
+    ) -> [NSRange] {
         var ranges: [NSRange] = []
         var seen: Set<String> = []
-        let fullRange = NSRange(location: 0, length: storage.length)
-        storage.enumerateAttribute(.scrollableBlockFullRange, in: fullRange, options: []) { value, _, _ in
-            guard let v = value as? NSValue else { return }
-            let r = v.rangeValue
+        func add(_ r: NSRange) {
             let key = "\(r.location):\(r.length)"
             if seen.insert(key).inserted { ranges.append(r) }
         }
-        guard !ranges.isEmpty else { return }
-        coord.restyleParagraphs(ranges, in: self)
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.scrollableBlockFullRange, in: fullRange, options: []) { value, _, _ in
+            guard let v = value as? NSValue else { return }
+            add(v.rangeValue)
+        }
+        let nsText = storage.string as NSString
+        for idx in activeTokenIndices where idx >= 0 && idx < tokens.count && tokens[idx].kind == .table {
+            add(nsText.paragraphRange(for: tokens[idx].range))
+        }
+        return ranges
     }
 
     override func scrollRangeToVisible(_ range: NSRange) {
