@@ -142,10 +142,10 @@ enum MarkdownFormatting {
             return line.hasPrefix(String(repeating: "#", count: level) + " ")
         case .bulletList:
             let line = ns.substring(with: ns.lineRange(for: selection))
-            return line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") || line.hasPrefix("\t• ")
+            return line.range(of: bulletLinePattern, options: .regularExpression) != nil
         case .numberedList:
             let line = ns.substring(with: ns.lineRange(for: selection))
-            return line.range(of: #"^\d+\. "#, options: .regularExpression) != nil
+            return line.range(of: orderedLinePattern, options: .regularExpression) != nil
         case .blockquote:
             let line = ns.substring(with: ns.lineRange(for: selection))
             return isBlockquoteLine(line)
@@ -173,8 +173,8 @@ enum MarkdownFormatting {
         let line = ns.substring(with: ns.lineRange(for: selection))
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         let headingLevel = (1...6).first { trimmed.hasPrefix(String(repeating: "#", count: $0) + " ") }
-        let isBulletList = line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") || line.hasPrefix("\t• ")
-        let isNumberedList = line.range(of: #"^\d+\. "#, options: .regularExpression) != nil
+        let isBulletList = line.range(of: bulletLinePattern, options: .regularExpression) != nil
+        let isNumberedList = line.range(of: orderedLinePattern, options: .regularExpression) != nil
         let isBlockquote = isBlockquoteLine(line)
         let isCodeBlock = tokens.contains { $0.kind == .codeBlock && enclosesSelection($0.range, selection) }
         let isChecked = isCheckedTaskLine(trimmed)
@@ -530,10 +530,11 @@ enum MarkdownFormatting {
         let ns = text as NSString
 
         // Toggle off: caret inside an existing fenced block → replace the whole block with its
-        // code, dropping the newline that preceded the closing fence.
+        // code, dropping the line terminator that preceded the closing fence.
         if let token = enclosingToken(text: text, selection: selection, kinds: [.codeBlock]) {
-            var inner = ns.substring(with: token.contentRange)
-            if inner.hasSuffix("\n") { inner.removeLast() }
+            let terminator = trailingLineTerminatorLength(of: token.contentRange, in: ns)
+            let innerRange = NSRange(location: token.contentRange.location, length: token.contentRange.length - terminator)
+            let inner = ns.substring(with: innerRange)
             return FormattingEdit(
                 range: token.range, text: inner,
                 selection: NSRange(location: token.range.location, length: (inner as NSString).length)
@@ -541,10 +542,12 @@ enum MarkdownFormatting {
         }
 
         let lineRange = ns.lineRange(for: selection)
-        let block = ns.substring(with: lineRange)
-        let hasTrailingNewline = block.hasSuffix("\n")
-        let body = hasTrailingNewline ? String(block.dropLast()) : block
-        let trailingNewline = hasTrailingNewline ? "\n" : ""
+        // Split off the line's terminator (LF / CR / CRLF) so it's preserved after the closing
+        // fence rather than embedded in the fenced body.
+        let terminator = trailingLineTerminatorLength(of: lineRange, in: ns)
+        let bodyRange = NSRange(location: lineRange.location, length: lineRange.length - terminator)
+        let body = ns.substring(with: bodyRange)
+        let trailingNewline = terminator > 0 ? ns.substring(with: NSRange(location: NSMaxRange(bodyRange), length: terminator)) : ""
         let newText = "```\n" + body + "\n```" + trailingNewline
         let location = lineRange.location + 4   // after "```\n"
         let edit = FormattingEdit(
@@ -557,21 +560,34 @@ enum MarkdownFormatting {
         return verifiedWrap(edit, formsKind: .codeBlock, in: text, selection: selection)
     }
 
-    // MARK: - Task checkbox
+    /// The UTF-16 length (0, 1, or 2) of the line terminator at the end of `range` in `ns` — a
+    /// CRLF pair, or a lone LF/CR. Lets terminator handling work on CR/CRLF documents, not just LF.
+    private static func trailingLineTerminatorLength(of range: NSRange, in ns: NSString) -> Int {
+        let end = NSMaxRange(range)
+        guard end > range.location else { return 0 }
+        if range.length >= 2, ns.character(at: end - 2) == 0x0D, ns.character(at: end - 1) == 0x0A { return 2 }
+        let last = ns.character(at: end - 1)
+        return (last == 0x0A || last == 0x0D) ? 1 : 0
+    }
 
-    /// A list marker at line start: a bullet (`-`, `•`, `*`, `+`) or an ordered `N.`, after optional
-    /// indent — matching the engine's list marker set (`MarkdownListHandler` / the styler, which both
-    /// include the legacy `•` glyph and treat `\d+.` as a task-capable marker).
-    private static let listMarkerPrefix = #"^\s*([-•*+]|\d+\.) "#
+    // MARK: - List marker patterns (shared by detection + the list-structure commands)
+
+    /// A bullet line: `-`, `•` (the engine's legacy glyph), `*`, or `+`, after optional indent.
+    static let bulletLinePattern = #"^\s*[-•*+] "#
+    /// An ordered line: `N.` capped at 9 digits, matching `BlockParser.isListItem` / seamless input
+    /// (a 10+-digit run renders as plain text, so the commands must not treat it as a list).
+    static let orderedLinePattern = #"^\s*\d{1,9}\. "#
+    /// Any list marker (bullet or ordered) at line start.
+    private static let listMarkerPrefix = #"^\s*([-•*+]|\d{1,9}\.) "#
 
     /// A list line whose marker is immediately followed by a `[ ]`/`[x]`/`[X]` box (the engine
     /// accepts upper- or lower-case x as checked).
     private static func isTaskLine(_ line: String) -> Bool {
-        line.range(of: #"^\s*([-•*+]|\d+\.) \[[ xX]\]"#, options: .regularExpression) != nil
+        line.range(of: #"^\s*([-•*+]|\d{1,9}\.) \[[ xX]\]"#, options: .regularExpression) != nil
     }
 
     private static func isCheckedTaskLine(_ line: String) -> Bool {
-        line.range(of: #"^\s*([-•*+]|\d+\.) \[[xX]\]"#, options: .regularExpression) != nil
+        line.range(of: #"^\s*([-•*+]|\d{1,9}\.) \[[xX]\]"#, options: .regularExpression) != nil
     }
 
     /// Toggle a task checkbox on the caret's line. An existing task line flips `[ ]`↔`[x]`

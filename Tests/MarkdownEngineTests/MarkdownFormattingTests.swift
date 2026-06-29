@@ -333,6 +333,14 @@ struct MarkdownFormattingTests {
             == FormattingEdit(range: NSRange(location: 0, length: 0), text: "```\n\n```", selection: NSRange(location: 4, length: 0)))
     }
 
+    @Test("Code block unwrap strips a CRLF terminator, not just the LF")
+    func codeBlockUnwrapStripsCRLF() {
+        // A CRLF-terminated content line must not leave a stray \r after unwrapping.
+        let cleared = edit(.codeBlock, "```\r\ncode\r\n```", NSRange(location: 6, length: 0)).text
+        #expect(!cleared.contains("\r"))
+        #expect(cleared == "code")
+    }
+
     // MARK: - Task checkbox
 
     @Test("Toggle checkbox checks an unchecked task line (length-preserving)")
@@ -459,6 +467,25 @@ struct MarkdownFormattingTests {
         #expect(!MarkdownFormatting.isActive(.blockquote, text: "q", selection: NSRange(location: 0, length: 0)))
         #expect(MarkdownFormatting.isActive(.codeBlock, text: "```\nc\n```", selection: NSRange(location: 5, length: 0)))
         #expect(!MarkdownFormatting.isActive(.codeBlock, text: "c", selection: NSRange(location: 0, length: 0)))
+    }
+
+    @Test("Indented list lines are still recognized as lists (post-indent state)")
+    func indentedListIsDetected() {
+        // After Indent makes "\t- item", detection must still report a list so the toolbar/menu
+        // don't offer Bullet/Numbered to re-mangle it.
+        #expect(MarkdownFormatting.isActive(.bulletList, text: "\t- item", selection: NSRange(location: 2, length: 0)))
+        #expect(MarkdownFormatting.isActive(.numberedList, text: "\t1. item", selection: NSRange(location: 2, length: 0)))
+    }
+
+    @Test("A 10+ digit ordered-looking line is not treated as a list (parser parity)")
+    func longDigitRunIsNotAList() {
+        let plain = "1234567890. item"   // 10 digits — renders as plain text, not a list
+        let root = NSRange(location: 0, length: 0)
+        #expect(!MarkdownFormatting.isActive(.numberedList, text: plain, selection: root))
+        #expect(edit(.toggleCheckbox, plain, root).text == "- [ ] 1234567890. item")  // treated as plain
+        #expect(edit(.indent, plain, root) == FormattingEdit(range: root, text: "", selection: root))  // no-op
+        // A 9-digit run is within the cap and IS a list.
+        #expect(MarkdownFormatting.isActive(.numberedList, text: "123456789. item", selection: root))
     }
 
     @Test("isActive reflects a checked task line; indent/outdent are never 'on'")
