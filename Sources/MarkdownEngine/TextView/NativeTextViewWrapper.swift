@@ -118,6 +118,11 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     /// documentIds whose scroll offset to keep; others are forgotten. `nil` keeps all.
     public var retainedScrollDocumentIds: Set<String>?
 
+    /// The editor controller bound via `.controller(_:)`, through which the host observes the
+    /// `/` slash-menu context and issues block inserts. `internal(set)` so only `.controller(_:)`
+    /// assigns it (it isn't a constructor argument — keeps `init` source-compatible).
+    public internal(set) var boundController: MarkdownEditorController?
+
     public init(
         text: Binding<String>,
         isWikiLinkActive: Binding<Bool> = .constant(false),
@@ -292,6 +297,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         context.coordinator.onCaretRectChange = onCaretRectChange
         context.coordinator.onInlineSelectionChange = onInlineSelectionChange
         context.coordinator.onCodeBlockSelectionChange = onCodeBlockSelectionChange
+        boundController?.attach(context.coordinator)
 
         textView.recalcOverscroll(for: scrollView)
         textView.setPlaceholder(placeholder)
@@ -601,6 +607,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         context.coordinator.onCaretRectChange = onCaretRectChange
         context.coordinator.onInlineSelectionChange = onInlineSelectionChange
         context.coordinator.onCodeBlockSelectionChange = onCodeBlockSelectionChange
+        boundController?.attach(context.coordinator)
         context.coordinator.didInitialFormatting = true
     }
 

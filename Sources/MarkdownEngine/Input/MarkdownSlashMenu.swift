@@ -36,10 +36,15 @@ public struct SlashMenuContext: Equatable {
     public let query: String
     /// The full source range of the trigger including the leading `/`, for replacement on insert.
     public let sourceRange: NSRange
-    /// Caret rect in WINDOW coordinates, to anchor the menu (position an overlay in SwiftUI's
-    /// `.global` space — which equals the window only for a full-screen host; otherwise map it
-    /// through a known view's window). It reflects the editor's on-screen origin and scroll offset
-    /// at publish time, so it can lag a manual scroll while the menu stays open.
+    /// Caret rect to anchor the menu, in the EDITOR HOST'S OVERLAY coordinate space — which differs
+    /// by platform (same rect field, platform-specific space):
+    /// - **iOS:** WINDOW coordinates — position a SwiftUI overlay in `.global` space (which equals
+    ///   the window only for a full-screen host; otherwise map it through a known view's window).
+    /// - **macOS:** the editor view's LOCAL (scroll-content) space — anchor an overlay placed
+    ///   directly over the wrapper (AppKit window coords are y-flipped vs SwiftUI's `.global`, so
+    ///   view-local is the clean anchor here).
+    /// In both cases it reflects the on-screen caret position incl. scroll offset, captured at
+    /// publish time — so it can lag a manual scroll while the menu stays open.
     public let anchorRect: CGRect
 
     public init(query: String, sourceRange: NSRange, anchorRect: CGRect) {

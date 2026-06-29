@@ -190,6 +190,9 @@ extension NativeTextViewCoordinator {
             bottomTextView.recalcOverscroll(for: scrollView, debugTag: "textDidChange")
             (scrollView as? ClampedScrollView)?.clampToInsets()
         }
+        // Re-detect the `/` slash trigger after the restyle (the layout viewRect anchoring needs
+        // is now current); deduped, so an unrelated keystroke that doesn't change the trigger is free.
+        publishSlashMenuContext(tv)
         previousActiveTokenIndices = activeTokenIndices
     }
 
@@ -197,6 +200,9 @@ extension NativeTextViewCoordinator {
         guard let tv = notification.object as? NSTextView else { return }
         if isWritingToolsActive { return }
         let selRange = tv.selectedRange()
+        // Re-detect the slash trigger up front so it tracks caret moves AND clears when the caret
+        // leaves the `/command` (incl. the link-focus / image early-returns below). Deduped.
+        publishSlashMenuContext(tv)
         let currentEventType = NSApp.currentEvent?.type
         // Mouse-/Wake-Fokus auf Link: kein Preview, erst Navigation. Gilt für alle Nicht-Key-Events.
         if currentEventType != .keyDown,

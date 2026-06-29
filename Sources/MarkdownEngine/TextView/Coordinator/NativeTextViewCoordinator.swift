@@ -63,6 +63,12 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var onCaretRectChange: ((CGRect) -> Void)?
     var onInlineSelectionChange: ((InlineSelectionState?) -> Void)?
     var onCodeBlockSelectionChange: (([CodeBlockSelection]) -> Void)?
+    /// Hands the host the active `/` slash-command context (or nil). Set by the bound
+    /// `MarkdownEditorController` on attach; see `NativeTextViewCoordinator+SlashMenu`.
+    var onSlashMenuContextChange: ((SlashMenuContext?) -> Void)?
+    /// Last slash context handed to the host, to dedupe redundant publishes on the hot
+    /// text-/selection-change paths.
+    var lastPublishedSlashContext: SlashMenuContext?
     var didInitialFormatting: Bool = false
     /// One-shot guard so `updateCodeBlockSelection` only forces a full-document layout once per document.
     var didEnsureLayoutForCurrentDocument: Bool = false

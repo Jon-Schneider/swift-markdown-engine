@@ -22,6 +22,7 @@ import MarkdownEngineLatex
 
 struct ContentView: View {
     @State private var text: String = sampleMarkdown
+    @StateObject private var controller = MarkdownEditorController()
     @State private var showHeader = false
     @State private var headerExpanded = true
     /// Seamless-editing mode. Switching this at runtime restyles immediately —
@@ -40,6 +41,17 @@ struct ContentView: View {
             headerCollapsedHeight: 40,
             headerExpanded: headerExpanded
         )
+        .controller(controller)
+        // Slash-command menu: the engine publishes `slashMenuContext` when the caret sits in a
+        // `/command`; the host renders the menu anchored at the caret and applies a choice.
+        .overlay(alignment: .topLeading) {
+            if let context = controller.slashMenuContext {
+                SlashMenuOverlay(context: context) { block in
+                    // Bind the edit to the range the *visible* menu was built from.
+                    controller.insertBlock(block, replacing: context.sourceRange)
+                }
+            }
+        }
         .toolbar {
             ToolbarItemGroup {
                 // Markers: live switch between the historical reveal-on-edit
@@ -121,6 +133,102 @@ struct ContentView: View {
         #endif
 
         return config
+    }
+}
+
+/// The `/` block-insert menu — a floating card anchored at the caret. Driven entirely by the
+/// engine's published `SlashMenuContext` (query + caret rect): the host owns presentation, the
+/// engine owns detection and the edit. On macOS the context's `anchorRect` is already in the
+/// wrapper's local (scroll) space, so it maps straight into this overlay — no `.global` mapping.
+///
+/// Dismissal is driven by the engine's caret/text changes (typing past the `/`, moving the caret,
+/// or picking a block). A demo gap: it does NOT dismiss on focus loss to non-editor chrome (no
+/// Escape / resign-first-responder hook) — a real host would add one once verified not to race the
+/// row click. Rows are click-only (parity with iOS).
+private struct SlashMenuOverlay: View {
+    let context: SlashMenuContext
+    let onSelect: (MarkdownBlockInsert) -> Void
+
+    private static let cardWidth: CGFloat = 260
+    private static let rowHeight: CGFloat = 30
+    private static let maxVisibleRows = 8
+    private static let gap: CGFloat = 4
+    private static let margin: CGFloat = 8
+    private static let verticalPadding: CGFloat = 6
+
+    private var items: [MarkdownSlashMenuItem] {
+        MarkdownSlashMenu.items(matching: context.query)
+    }
+
+    private var listHeight: CGFloat {
+        CGFloat(min(max(items.count, 1), Self.maxVisibleRows)) * Self.rowHeight
+    }
+
+    private var cardHeight: CGFloat { listHeight + 2 * Self.verticalPadding }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let caret = context.anchorRect
+            let cardWidth = min(Self.cardWidth, max(120, proxy.size.width - 2 * Self.margin))
+            // No keyboard occlusion on macOS — default below the caret, flip above only when the
+            // card would overflow the bottom edge.
+            let belowY = caret.maxY + Self.gap
+            let aboveY = caret.minY - Self.gap - cardHeight
+            let fitsBelow = belowY + cardHeight <= proxy.size.height
+            let y = fitsBelow ? belowY : max(0, aboveY)
+            let x = min(max(0, caret.minX), max(0, proxy.size.width - cardWidth))
+
+            card
+                .frame(width: cardWidth)
+                .offset(x: x, y: y)
+        }
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if items.isEmpty {
+                Text("No matching blocks")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .frame(height: Self.rowHeight, alignment: .leading)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(items) { item in
+                            row(item)
+                        }
+                    }
+                }
+                .frame(height: listHeight)
+            }
+        }
+        .padding(.vertical, Self.verticalPadding)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: .separatorColor)))
+        .shadow(radius: 10, y: 3)
+    }
+
+    // Click-only (parity with iOS): no row carries a "selected" highlight, which would imply
+    // keyboard nav the demo doesn't wire up.
+    private func row(_ item: MarkdownSlashMenuItem) -> some View {
+        Button {
+            onSelect(item.block)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: item.systemImage)
+                    .frame(width: 20)
+                    .foregroundStyle(Color.accentColor)
+                Text(item.title)
+                    .foregroundStyle(Color.primary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: Self.rowHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
