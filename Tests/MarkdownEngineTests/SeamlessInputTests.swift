@@ -866,6 +866,17 @@ struct SeamlessCaretTests {
         #expect(normalize("![a](u)", proposed: 3, previous: 0) == 7)
     }
 
+    @Test("A link cell inside a REVEALED table is editable — its tail is not snapped")
+    func linkTailInsideRevealedTableNotSnapped() {
+        // Plan 1.1 makes tables revealable in seamless mode, so a table whose cell holds
+        // `[t](u)` shows that raw source for editing. The caret must be able to rest inside
+        // the `](u)` tail (it's drawn source here, not a hidden run) — `atomicInlineCaret`
+        // must NOT snap it out, unlike the same tail in ordinary prose.
+        let text = "| [t](u) | x |\n| --- | --- |\n| a | b |"
+        let tail = (("| [t](") as NSString).length   // inside the link's `](u)` tail
+        #expect(normalize(text, proposed: tail, previous: tail - 2) == tail)
+    }
+
     @Test("Short `**` markers are left to native motion (not snapped)")
     func shortInlineMarkersNotSnapped() {
         // `a**b**` — caret 2 (between the asterisks) is left where the system put it.

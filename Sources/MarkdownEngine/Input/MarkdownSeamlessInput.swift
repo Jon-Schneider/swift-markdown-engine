@@ -748,6 +748,13 @@ enum MarkdownSeamlessInput {
         let paragraph = ns.paragraphRange(for: NSRange(location: min(proposed, ns.length), length: 0))
         for run in atomicInlineRuns(in: InlineParser.parse(ns, range: paragraph))
         where proposed > run.location && proposed < NSMaxRange(run) {
+            // A link/image inside a revealed block-LaTeX (`$$…$$`) or table is literal
+            // source the caret has *entered to edit* — its `](url)` / `![…]` is drawn,
+            // not a hidden zero-width run — so snapping the caret out of it would make
+            // the source this reveal exposes uneditable (plan 1.1 made tables revealable
+            // in seamless mode). Gate it like the sibling block/backspace paths. Parsed
+            // lazily, only once an atomic run has actually matched at the caret.
+            guard !isInLatexOrTable(ns: ns, location: proposed) else { return nil }
             return proposed >= previous ? NSMaxRange(run) : run.location
         }
         return nil
