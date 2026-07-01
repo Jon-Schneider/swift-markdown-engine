@@ -101,7 +101,8 @@ public final class MarkdownUITextView: UITextView {
     public init(
         configuration: MarkdownEditorConfiguration = .default,
         fontName: String = "SF Pro",
-        fontSize: CGFloat = 16
+        fontSize: CGFloat = 16,
+        isEditable: Bool = true
     ) {
         self.configuration = configuration
         self.fontName = fontName
@@ -119,7 +120,14 @@ public final class MarkdownUITextView: UITextView {
 
         super.init(frame: .zero, textContainer: container)
 
-        isEditable = true
+        // Host-controlled read-only mode (macOS `NativeTextViewWrapper.isEditable` parity).
+        // `false` blocks typing outright; the styling suppression + mutation gate below make
+        // a read-only document render as clean styled text with tappable-but-immutable content.
+        // Note the platform divergence: macOS must set `insertionPointColor = .clear` because a
+        // selectable-but-non-editable NSTextView still blinks a caret. UITextView does NOT render
+        // an insertion caret when `isEditable == false` (only long-press selection handles for
+        // copy), so there is deliberately no iOS analog to clear.
+        self.isEditable = isEditable
         isSelectable = true
         backgroundColor = .clear
         applyTextContainerInset()
@@ -257,8 +265,10 @@ public final class MarkdownUITextView: UITextView {
         // Entering seamless (e.g. a runtime toggle) with the caret already inside
         // a now-hidden marker must pull it to the visible content, else the next
         // keystroke lands before the marker and breaks the block. Idempotent and
-        // line-scoped, so it's safe to run on every config apply.
-        if configuration.markers.visibility == .seamless, selectedRange.length == 0,
+        // line-scoped, so it's safe to run on every config apply. Skipped when read-only:
+        // an inert view has no "next keystroke" to protect, and must not silently move
+        // the user's selection (macOS never snaps a non-editable caret either).
+        if isEditable, configuration.markers.visibility == .seamless, selectedRange.length == 0,
            !isSnappingSeamlessCaret {
             let proposed = selectedRange.location
             let snapped = MarkdownSeamlessInput.normalizedCaret(
@@ -294,7 +304,10 @@ public final class MarkdownUITextView: UITextView {
     /// The `/` slash-command context for the caret, or nil. Only a zero-length caret triggers it
     /// (typing, not a selection); the menu opens on a `/` at line start or after whitespace.
     private func slashMenuContext(display: String) -> SlashMenuContext? {
-        guard selectedRange.length == 0,
+        // No block-insert menu on a read-only document (a caret parked on a literal `/foo`
+        // must not offer to insert). Editing is blocked anyway; this keeps the host UI honest.
+        guard isEditable,
+              selectedRange.length == 0,
               let trigger = MarkdownSlashMenu.trigger(in: display, caret: selectedRange.location)
         else { return nil }
         return SlashMenuContext(
@@ -316,6 +329,10 @@ public final class MarkdownUITextView: UITextView {
     /// The inline-link context for the caret, or nil. (Markdown links for now; wiki-links
     /// are a follow-up slice.)
     private func inlineLinkContext(tokens: [MarkdownToken], display: String) -> InlineLinkContext? {
+        // The inline-link context exists only to offer a link-EDIT affordance; a read-only
+        // document refuses the edit (`updateLinkAtCaret` → `applyUndoableEdit` no-ops), so
+        // never advertise it. Link *navigation* (tap) is a separate path and still works.
+        guard isEditable else { return nil }
         guard let token = tokens.first(where: { $0.kind == .link && selectionEnclosed(by: $0.range) }) else {
             return nil
         }
@@ -405,6 +422,12 @@ public final class MarkdownUITextView: UITextView {
     /// recorded ranges pointing at stale offsets — a later undo can then replay against
     /// a shifted document and raise `NSRangeException`. Restyles once afterward.
     private func applyUndoableEdit(replacing nsRange: NSRange, with string: String, finalSelection: NSRange?) {
+        // Read-only documents accept NO programmatic mutation — this is the single choke point
+        // for every edit (formatting, link/slash inserts, checkbox toggle, blockquote paste, cut),
+        // the iOS analog of macOS gating each edit behind `shouldChangeText(in:)` (which returns
+        // false when `!isEditable`). Loading content via `render()` bypasses this path, so a
+        // read-only view still displays its document; only in-place edits are refused.
+        guard isEditable else { return }
         guard let range = uiTextRange(for: nsRange) else { return }
         isApplyingProgrammaticEdit = true
         replace(range, withText: string)
@@ -450,6 +473,11 @@ public final class MarkdownUITextView: UITextView {
         UIFontMetrics(forTextStyle: .body).scaledValue(for: fontSize, compatibleWith: traitCollection)
     }
 
+    /// Caret index handed to the styler. Read-only documents pass `-1` (no caret) so a
+    /// tap/selection never reveals the raw token syntax under the caret — mirrors the macOS
+    /// restyle (`caretLocation = isEditable ? selectedRange().location : -1`).
+    private var stylingCaretLocation: Int { isEditable ? selectedRange.location : -1 }
+
     private func tokens(for display: String) -> [MarkdownToken] {
         if let cache = tokenCache, cache.text == display { return cache.tokens }
         let parsed = MarkdownTokenizer.parseTokensViaAST(in: display)
@@ -479,13 +507,14 @@ public final class MarkdownUITextView: UITextView {
         let parsed = tokens(for: display)
         let active = MarkdownDetection.computeActiveTokenIndices(
             selectionRange: selectedRange, tokens: parsed, in: ns,
+            suppressed: !isEditable,
             markerVisibility: configuration.markers.visibility
         )
         lastActiveTokens = active
 
         let styled = MarkdownStyler.styleAttributes(
             text: display, fontName: fontName, fontSize: effectiveFontSize, layoutBridge: layoutBridge,
-            caretLocation: selectedRange.location, activeTokenIndices: active,
+            caretLocation: stylingCaretLocation, activeTokenIndices: active,
             precomputedTokens: parsed,
             colorScheme: MarkdownColorScheme.resolved(from: traitCollection),
             configuration: configuration,
@@ -537,6 +566,7 @@ public final class MarkdownUITextView: UITextView {
         let parsed = tokens(for: display)
         let active = MarkdownDetection.computeActiveTokenIndices(
             selectionRange: selectedRange, tokens: parsed, in: ns,
+            suppressed: !isEditable,
             markerVisibility: configuration.markers.visibility
         )
         lastActiveTokens = active
@@ -545,7 +575,7 @@ public final class MarkdownUITextView: UITextView {
         // still run over all tokens but only get *applied* where they intersect a candidate.
         let styled = MarkdownStyler.styleAttributes(
             text: display, fontName: fontName, fontSize: effectiveFontSize, layoutBridge: layoutBridge,
-            caretLocation: selectedRange.location, activeTokenIndices: active,
+            caretLocation: stylingCaretLocation, activeTokenIndices: active,
             precomputedTokens: parsed,
             scopedRanges: paragraphs,
             colorScheme: MarkdownColorScheme.resolved(from: traitCollection),
@@ -807,6 +837,11 @@ public final class MarkdownUITextView: UITextView {
         restyleScoped(paragraphCandidates: [caretParagraph])
     }
 
+    /// Active-token set from the last restyle (the tokens whose markers are revealed).
+    /// Internal for read-only suppression tests: a read-only document keeps this empty
+    /// regardless of caret position, so no `**`/`_` markers ever show.
+    var activeTokenIndicesForTesting: Set<Int> { lastActiveTokens }
+
     /// View-coordinate rect of the first task-checkbox glyph, if any. Internal for testing.
     func firstCheckboxBoundingRect() -> CGRect? {
         guard let layoutBridge else { return nil }
@@ -936,7 +971,7 @@ extension MarkdownUITextView: UITextViewDelegate {
         candidates += ParagraphRestyleScoping.paragraphs(in: ns, intersecting: editedRange)
 
         let parsed = tokens(for: display)
-        let current = MarkdownDetection.computeActiveTokenIndices(selectionRange: selectedRange, tokens: parsed, in: ns, markerVisibility: configuration.markers.visibility)
+        let current = MarkdownDetection.computeActiveTokenIndices(selectionRange: selectedRange, tokens: parsed, in: ns, suppressed: !isEditable, markerVisibility: configuration.markers.visibility)
         let preEdit = pendingPreEditActiveTokens ?? lastActiveTokens
         pendingPreEditActiveTokens = nil
         candidates += ParagraphRestyleScoping.renderedBlockParagraphs(in: ns, tokens: parsed)
@@ -978,7 +1013,10 @@ extension MarkdownUITextView: UITextViewDelegate {
         // zone so it rests at the visible content (not before/inside `> `/`# `).
         // Character motion itself stays native (grapheme-correct); this only
         // post-adjusts, and inspects just the caret's line (no document parse).
-        if !isSnappingSeamlessCaret,
+        // Read-only views skip it: there's no editing to protect and the promise is
+        // that a selection the user makes is never silently moved (macOS parity).
+        if isEditable,
+           !isSnappingSeamlessCaret,
            configuration.markers.visibility == .seamless,
            selectedRange.length == 0 {
             let proposed = selectedRange.location
@@ -999,6 +1037,7 @@ extension MarkdownUITextView: UITextViewDelegate {
         let parsed = tokens(for: display)
         let current = MarkdownDetection.computeActiveTokenIndices(
             selectionRange: selectedRange, tokens: parsed, in: ns,
+            suppressed: !isEditable,
             markerVisibility: configuration.markers.visibility
         )
         let previous = lastActiveTokens
