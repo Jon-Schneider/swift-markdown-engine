@@ -29,6 +29,11 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
     /// Called when an image is pasted, with the PNG bytes. Persist it and return a path/URL
     /// to reference (or nil to decline); the editor inserts `![](returnedPath)`.
     public var onPasteImage: ((Data) -> String?)?
+    /// Insert arbitrary literal markdown at the caret by setting this to a non-nil value;
+    /// the engine splices it in verbatim, advances the caret past it, and then clears the
+    /// binding. Mirrors the macOS `NativeTextViewWrapper(pendingInlineInsertion:)`.
+    /// See ``InlineInsertionRequest``.
+    @Binding public var pendingInlineInsertion: InlineInsertionRequest?
 
     /// Optional controller for selection-state observation + formatting commands, bound via
     /// the `.controller(_:)` modifier (see `MarkdownEditorController`).
@@ -38,6 +43,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         text: String,
         configuration: MarkdownEditorConfiguration = .default,
         isEditable: Bool = true,
+        pendingInlineInsertion: Binding<InlineInsertionRequest?> = .constant(nil),
         onTextChange: ((String) -> Void)? = nil,
         onLinkTap: ((URL) -> Void)? = nil,
         onPasteImage: ((Data) -> String?)? = nil
@@ -45,6 +51,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         self.text = text
         self.configuration = configuration
         self.isEditable = isEditable
+        self._pendingInlineInsertion = pendingInlineInsertion
         self.onTextChange = onTextChange
         self.onLinkTap = onLinkTap
         self.onPasteImage = onPasteImage
@@ -84,7 +91,30 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         // (both contexts return nil when read-only) to withdraw the dead affordance. Deferred
         // off the SwiftUI view-update pass — mutating @Published inside it is a runtime warning.
         if editabilityChanged {
-            DispatchQueue.main.async { [weak view] in view?.publishHostStateNow() }
+            DispatchQueue.main.async { [weak view] in
+                // Setting `isEditable = false` blocks the caret but does NOT dismiss an
+                // already-raised keyboard, so a live edit→read toggle would strand it. Resign
+                // first responder on disable so the keyboard drops. Deferred with the republish
+                // to keep first-responder mutation out of the SwiftUI update pass.
+                if let view, !view.isEditable, view.isFirstResponder {
+                    view.resignFirstResponder()
+                }
+                view?.publishHostStateNow()
+            }
+        }
+        // Host-driven inline insertion: splice the requested markdown at the caret, then
+        // clear the binding so it isn't re-applied. `applyInsertionIfNew` dedups by request
+        // id, so a duplicate update pass before the async reset doesn't double-insert, while
+        // a genuinely new request with identical markdown still applies.
+        if let request = pendingInlineInsertion {
+            view.applyInsertionIfNew(request)
+            DispatchQueue.main.async {
+                if self.pendingInlineInsertion?.id == request.id {
+                    self.pendingInlineInsertion = nil
+                }
+            }
+        } else {
+            view.resetInsertionDedup()
         }
     }
 }

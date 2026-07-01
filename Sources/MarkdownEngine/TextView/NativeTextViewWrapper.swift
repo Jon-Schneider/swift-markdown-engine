@@ -56,6 +56,10 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     /// Push a replacement into the editor by setting this to a non-nil value;
     /// the engine applies it on the next update and then clears the binding.
     @Binding public var pendingInlineReplacement: InlineReplacementRequest?
+    /// Insert arbitrary literal markdown at the caret by setting this to a non-nil
+    /// value; the engine splices it in verbatim, advances the caret past it, and then
+    /// clears the binding. See ``InlineInsertionRequest``.
+    @Binding public var pendingInlineInsertion: InlineInsertionRequest?
     /// The full editor configuration (theme + services + style toggles). Engine
     /// embedders construct this themselves and pass it in; the wrapper does
     /// not read UserDefaults or know about app-specific colors/services.
@@ -127,6 +131,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         text: Binding<String>,
         isWikiLinkActive: Binding<Bool> = .constant(false),
         pendingInlineReplacement: Binding<InlineReplacementRequest?> = .constant(nil),
+        pendingInlineInsertion: Binding<InlineInsertionRequest?> = .constant(nil),
         configuration: MarkdownEditorConfiguration = .default,
         fontName: String = "SF Pro",
         fontSize: CGFloat = 16,
@@ -147,6 +152,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         self._text = text
         self._isWikiLinkActive = isWikiLinkActive
         self._pendingInlineReplacement = pendingInlineReplacement
+        self._pendingInlineInsertion = pendingInlineInsertion
         self.configuration = configuration
         self.fontName = fontName
         self.fontSize = fontSize
@@ -515,9 +521,20 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
                 context.coordinator.restyleParagraphs([fullRange], in: textView)
             }
         }
+        let wasEditable = textView.isEditable
         textView.isEditable = isEditable
         textView.isSelectable = true
         textView.insertionPointColor = isEditable ? context.coordinator.configuration.theme.bodyText : .clear
+        // Clearing `isEditable` stops edits and blanks the caret color, but a focused
+        // NSTextView stays first responder — so a live edit→read toggle would leave the
+        // field holding focus. Resign on the transition so focus drops, matching the iOS
+        // wrapper. Deferred to keep first-responder mutation out of the SwiftUI update pass.
+        if wasEditable && !isEditable {
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView, textView.window?.firstResponder === textView else { return }
+                textView.window?.makeFirstResponder(nil)
+            }
+        }
         let fontChanged = (context.coordinator.fontName != fontName) || (context.coordinator.fontSize != fontSize)
         if let pendingInlineReplacement {
             if pendingInlineReplacement.documentId == documentId,
@@ -530,6 +547,33 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
                 }
             }
             return
+        }
+        if let request = pendingInlineInsertion {
+            // `applyInsertionIfNew` dedups by request id, so a duplicate update pass before
+            // the reset doesn't double-insert, while a genuinely new request carrying
+            // identical markdown still applies.
+            let documentCurrent = !isNodeSwitch && context.coordinator.lastSyncedText == text
+            if documentCurrent {
+                // The view already holds this document; splice now.
+                context.coordinator.applyInsertionIfNew(request, to: textView)
+                DispatchQueue.main.async {
+                    if self.pendingInlineInsertion?.id == request.id {
+                        self.pendingInlineInsertion = nil
+                    }
+                }
+                return
+            }
+            // A document/text change is coalesced into this pass. Applying now would splice
+            // into the OUTGOING content (and clear the request). Fall through so the text-sync
+            // / rebuild below runs first, then apply against the freshly-synced content on the
+            // next runloop. `applyInsertionIfNew` dedups by id, so this can't double-apply.
+            DispatchQueue.main.async {
+                guard self.pendingInlineInsertion?.id == request.id else { return }
+                context.coordinator.applyInsertionIfNew(request, to: textView)
+                self.pendingInlineInsertion = nil
+            }
+        } else {
+            context.coordinator.resetInsertionDedup()
         }
         if context.coordinator.didInitialFormatting
             && context.coordinator.lastSyncedText == text

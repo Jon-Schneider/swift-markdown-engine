@@ -246,6 +246,68 @@ extension NativeTextViewCoordinator {
         restyleTextView(textView, paragraphCandidates: paragraphs, tokens: tokens)
     }
 
+    /// Insert an arbitrary literal markdown string at the current caret, verbatim.
+    ///
+    /// A thin caret-relative façade over `applyInlineReplacement`: it resolves the target
+    /// range itself (the current selection when a caret has been established — which
+    /// survives focus loss — else the end of the document as the final fallback) and hands
+    /// off to the shared insertion path with `isImageEmbedMode: true` so the fragment is
+    /// spliced in untransformed. This is the macOS backing for `pendingInlineInsertion`.
+    func applyInlineInsertion(_ markdown: String, to textView: NSTextView) {
+        let documentLength = (textView.string as NSString).length
+        let caret = textView.selectedRange()
+        let establishedCaret = (textView as? NativeTextView)?.didEstablishCaret ?? false
+        let target: NSRange
+        if establishedCaret,
+           caret.location != NSNotFound,
+           caret.location + caret.length <= documentLength {
+            target = caret
+        } else {
+            target = NSRange(location: documentLength, length: 0)
+        }
+        let request = InlineReplacementRequest(
+            documentId: documentId ?? "",
+            selection: WikiLinkSelection(displayRange: target, storageRange: nil, placeholder: ""),
+            storageFragment: markdown,
+            isImageEmbedMode: true
+        )
+        let before = textView.string
+        applyInlineReplacement(request, to: textView)
+        // Only correct the caret when the splice actually happened. `applyInlineReplacement`
+        // bails at `shouldChangeText` (inserting nothing) on a read-only view; without this
+        // guard the override below would jump the selection to end-of-document on a refused
+        // insert. iOS guards `isEditable` in `applyUndoableEdit` for the same reason. Compare
+        // content, not length: replacing a selection with an equal-length fragment is a real
+        // edit that a length check would miss.
+        guard textView.string != before else { return }
+        // `applyInlineReplacement` derives the post-insert caret from the wiki-DISPLAY length
+        // of the fragment (`caretRangeAfterReplacing` → `makeDisplayState`, which strips `|id`
+        // from any `[[Name|id]]`). For a verbatim insert that would land the caret INSIDE the
+        // run. Re-place it at the true inserted length so the caret sits just past the run,
+        // matching iOS. A no-op for markdown without wiki syntax (the common case), where the
+        // display length already equals the verbatim length.
+        let end = min(target.location + (markdown as NSString).length,
+                      (textView.string as NSString).length)
+        if textView.selectedRange() != NSRange(location: end, length: 0) {
+            textView.setSelectedRange(NSRange(location: end, length: 0))
+        }
+    }
+
+    /// Apply `request` unless it repeats the last-applied request id (dedup across a
+    /// duplicate `updateNSView` pass before the binding resets). Returns whether it
+    /// inserted. Drives the wrapper's `pendingInlineInsertion` handling.
+    @discardableResult
+    func applyInsertionIfNew(_ request: InlineInsertionRequest, to textView: NSTextView) -> Bool {
+        guard lastAppliedInsertionID != request.id else { return false }
+        lastAppliedInsertionID = request.id
+        applyInlineInsertion(request.markdown, to: textView)
+        return true
+    }
+
+    /// Clear the insertion dedup id when the binding goes nil, so a later request carrying
+    /// the same markdown (but a new id) is not mistaken for the one just applied.
+    func resetInsertionDedup() { lastAppliedInsertionID = nil }
+
     func applyInlineReplacement(_ request: InlineReplacementRequest, to textView: NSTextView) {
         lastAppliedInlineReplacementID = request.id
 

@@ -88,6 +88,11 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var wtUndoneDuringSession: Bool = false
     var wtPostUndoSnapshot: String?
     var lastAppliedInlineReplacementID: UUID?
+    /// Id of the last `pendingInlineInsertion` applied, used to avoid re-applying the same
+    /// request on a duplicate `updateNSView` pass before the binding resets to nil — while
+    /// still applying a genuinely new request that carries identical markdown. Cleared when
+    /// the binding is observed nil.
+    var lastAppliedInsertionID: UUID?
     var activeTokenIndices: Set<Int> = []
     var previousActiveTokenIndices: Set<Int> = []
     var wikiLinkMetadata: [WikiLinkService.RangeKey: WikiLinkService.LinkMetadata] = [:]

@@ -27,6 +27,21 @@ final class NativeTextView: NSTextView {
     /// Coalesces wide-table overlay updates to once per runloop (resize fires many per frame).
     var pendingWideTableOverlayUpdate = false
     var suppressAutoRevealOnce: Bool = false
+    /// True once the view has become first responder at least once, i.e. a real caret
+    /// has been established. `applyInlineInsertion` uses this to choose between the
+    /// current/last-known caret and the end-of-document final fallback.
+    private(set) var didEstablishCaret = false
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { didEstablishCaret = true }
+        return became
+    }
+
+    /// Mark a caret as established (as if the view had become first responder) so
+    /// `applyInlineInsertion` targets the current selection instead of the end-of-document
+    /// fallback. Internal for tests that can't enter the responder chain without a window.
+    func establishCaretForTesting() { didEstablishCaret = true }
 
     // MARK: Configuration
     var configuration: MarkdownEditorConfiguration = .default {

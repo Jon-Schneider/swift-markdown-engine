@@ -31,6 +31,25 @@ public final class MarkdownUITextView: UITextView {
     /// re-renders only on a genuine external change, never wiping in-place edits).
     public private(set) var lastRenderedSource: String?
 
+    /// True once the view has become first responder at least once, i.e. a real caret
+    /// has been established. `insertMarkdown` uses this to choose between the
+    /// current/last-known caret (which persists across resign) and the end-of-document
+    /// final fallback.
+    private(set) var didEstablishCaret = false
+
+    /// Id of the last `pendingInlineInsertion` applied, so the wrapper can skip re-applying
+    /// the *same* request on a duplicate `updateUIView` pass that lands before the binding
+    /// resets to nil — while still applying a genuinely new request that happens to carry
+    /// identical markdown. Cleared by the wrapper when the binding is observed nil.
+    private var lastAppliedInsertionID: UUID?
+
+    @discardableResult
+    public override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { didEstablishCaret = true }
+        return became
+    }
+
     /// Called when the user's edits change the document, with the text in STORAGE
     /// form (wiki-links re-encoded to `[[Name|id]]`). Lets the SwiftUI host persist
     /// edits — without it, edits would live only inside the view and be lost.
@@ -372,6 +391,47 @@ public final class MarkdownUITextView: UITextView {
         let urlEnd = linkSource.index(before: linkSource.endIndex)
         return urlStart <= urlEnd ? String(linkSource[urlStart..<urlEnd]) : ""
     }
+
+    /// Insert an arbitrary literal markdown string at the current caret, verbatim.
+    ///
+    /// Host-driven inline insertion (e.g. an attachment reference produced by a toolbar
+    /// picker). The string is spliced in untransformed, replacing any selection, and the
+    /// caret advances to just past it. Routes through the shared `applyUndoableEdit` path,
+    /// so it restyles, emits `onTextChange`, and pushes a single undo step. Read-only
+    /// documents refuse it (the `applyUndoableEdit` `isEditable` guard).
+    ///
+    /// The target is the current selection when a caret has been established (which
+    /// survives focus loss, e.g. a picker sheet stealing first responder), else the end of
+    /// the document as the final fallback. Applies whether or not the view is first
+    /// responder. Backs the wrapper's `pendingInlineInsertion`.
+    public func insertMarkdown(_ markdown: String) {
+        let length = (textStorage.string as NSString).length
+        let selection = selectedRange
+        let target: NSRange
+        if didEstablishCaret, selection.location != NSNotFound, NSMaxRange(selection) <= length {
+            target = selection
+        } else {
+            target = NSRange(location: length, length: 0)
+        }
+        let caret = target.location + (markdown as NSString).length
+        applyUndoableEdit(replacing: target, with: markdown,
+                          finalSelection: NSRange(location: caret, length: 0))
+    }
+
+    /// Apply `request` unless it repeats the last-applied request id (dedup across a
+    /// duplicate SwiftUI update pass that lands before the binding resets). Returns whether
+    /// it inserted. Drives the wrapper's `pendingInlineInsertion` handling.
+    @discardableResult
+    func applyInsertionIfNew(_ request: InlineInsertionRequest) -> Bool {
+        guard lastAppliedInsertionID != request.id else { return false }
+        lastAppliedInsertionID = request.id
+        insertMarkdown(request.markdown)
+        return true
+    }
+
+    /// Clear the insertion dedup id when the binding goes nil, so a later request carrying
+    /// the same markdown (but a new id) is not mistaken for the one just applied.
+    func resetInsertionDedup() { lastAppliedInsertionID = nil }
 
     /// Insert `[text](url)` at the selection. A non-empty selection becomes the link text.
     func insertMarkdownLink(text: String?, url: String) {
@@ -841,6 +901,11 @@ public final class MarkdownUITextView: UITextView {
     /// Internal for read-only suppression tests: a read-only document keeps this empty
     /// regardless of caret position, so no `**`/`_` markers ever show.
     var activeTokenIndicesForTesting: Set<Int> { lastActiveTokens }
+
+    /// Mark a caret as established (as if the view had become first responder) so
+    /// `insertMarkdown` targets the current selection instead of the end-of-document
+    /// fallback. Internal for tests that can't enter the responder chain without a window.
+    func establishCaretForTesting() { didEstablishCaret = true }
 
     /// View-coordinate rect of the first task-checkbox glyph, if any. Internal for testing.
     func firstCheckboxBoundingRect() -> CGRect? {
