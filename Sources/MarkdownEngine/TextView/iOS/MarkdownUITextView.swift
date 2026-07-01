@@ -70,6 +70,10 @@ public final class MarkdownUITextView: UITextView {
     /// however it likes and returns a path/URL to reference (or nil to decline and fall
     /// back to the default paste); the editor then inserts `![](returnedPath)`.
     public var onPasteImage: ((Data) -> String?)?
+    /// Called when editing begins/ends (i.e. this view becomes/resigns first responder),
+    /// reporting the live focus state back to the SwiftUI host's `focus` binding. Wired by
+    /// `MarkdownUITextViewWrapper`; see its `focus` parameter.
+    var onFocusChange: ((Bool) -> Void)?
     private var wikiLinkMetadata: [WikiLinkService.RangeKey: WikiLinkService.LinkMetadata] = [:]
 
     // Retained TextKit-2 stack pieces (the container/layout-manager back-refs are weak).
@@ -924,6 +928,18 @@ public final class MarkdownUITextView: UITextView {
 // MARK: - UITextViewDelegate (editing + live restyle)
 
 extension MarkdownUITextView: UITextViewDelegate {
+
+    /// Report focus back to the host binding when editing starts/ends — covers both a
+    /// host-driven `becomeFirstResponder()` and the user tapping the field or dismissing the
+    /// keyboard. `MarkdownUITextViewWrapper.makeFocusReporter` dedups against the binding's
+    /// current value, so the reconcile echo this triggers settles in one pass.
+    public func textViewDidBeginEditing(_ textView: UITextView) {
+        onFocusChange?(true)
+    }
+
+    public func textViewDidEndEditing(_ textView: UITextView) {
+        onFocusChange?(false)
+    }
 
     public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         if isApplyingProgrammaticEdit { return true }

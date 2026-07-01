@@ -76,6 +76,15 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     public var documentId: String
     /// When `false` the editor renders read-only with no caret.
     public var isEditable: Bool
+    /// Optional host-driven focus. Reconciled against the text view's live first-responder
+    /// state on **every** update (not just on the binding's edge), so a focus request that
+    /// lands before the field is in a window — or is dropped mid-scroll — is retried on a later
+    /// pass rather than lost. `true` makes the field first responder; `false` resigns it. The
+    /// live first-responder state is also written back into the binding from
+    /// ``NativeTextView``'s `becomeFirstResponder`/`resignFirstResponder` overrides (the true
+    /// focus transitions — NOT the NSText edit-session notifications, which would miss a
+    /// click-to-focus with no typing). Mirrors the iOS `MarkdownUITextViewWrapper(focus:)`.
+    public var focus: Binding<Bool>?
     /// Optional paste hook. Return a Markdown image-embed string (e.g.
     /// `"![[my-image]]"`) to insert at the caret, or `nil` to fall through
     /// to the system's default plain-text paste.
@@ -137,6 +146,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         fontSize: CGFloat = 16,
         documentId: String = "default",
         isEditable: Bool = true,
+        focus: Binding<Bool>? = nil,
         onPasteImage: ((NSPasteboard) -> String?)? = nil,
         onLinkClick: ((String) -> Void)? = nil,
         onCaretRectChange: ((CGRect) -> Void)? = nil,
@@ -158,6 +168,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         self.fontSize = fontSize
         self.documentId = documentId
         self.isEditable = isEditable
+        self.focus = focus
         self.onPasteImage = onPasteImage
         self.onLinkClick = onLinkClick
         self.onCaretRectChange = onCaretRectChange
@@ -303,6 +314,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         context.coordinator.onCaretRectChange = onCaretRectChange
         context.coordinator.onInlineSelectionChange = onInlineSelectionChange
         context.coordinator.onCodeBlockSelectionChange = onCodeBlockSelectionChange
+        context.coordinator.onFocusChange = makeFocusReporter()
         boundController?.attach(context.coordinator)
 
         textView.recalcOverscroll(for: scrollView)
@@ -367,6 +379,30 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     public func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.nativeTextView else { return }
         reconcileHeader(textView: textView, context: context)
+
+        // Host-driven focus. Wired + reconciled up front so the many early returns below
+        // (Writing Tools, pending replacement/insertion, the unchanged-content short-circuit)
+        // can't skip it — focus must reconcile on EVERY update, matching the iOS wrapper.
+        context.coordinator.onFocusChange = makeFocusReporter()   // refresh with this pass's binding
+        if let focus {
+            let wantsFocus = focus.wrappedValue
+            let isFirstResponder = textView.window?.firstResponder === textView
+            if wantsFocus, !isFirstResponder, isEditable {
+                // Deferred off the SwiftUI update pass (first-responder mutation mid-update
+                // re-enters `updateNSView`), which also lets a just-mounted view attach to its
+                // window before we focus it — so a request arriving before mount lands next pass.
+                DispatchQueue.main.async { [weak textView] in
+                    guard let textView, textView.isEditable,
+                          textView.window?.firstResponder !== textView else { return }
+                    textView.window?.makeFirstResponder(textView)
+                }
+            } else if !wantsFocus, isFirstResponder {
+                DispatchQueue.main.async { [weak textView] in
+                    guard let textView, textView.window?.firstResponder === textView else { return }
+                    textView.window?.makeFirstResponder(nil)
+                }
+            }
+        }
 
         let isNodeSwitch = context.coordinator.documentId != documentId
 
@@ -684,6 +720,18 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         coordinator.userPrefersAutomaticSpellingCorrection = configuration.spellChecking.automaticSpellingCorrection
         coordinator.onSpellCheckingPolicyChanged = onSpellCheckingPolicyChanged
         return coordinator
+    }
+
+    /// Build the write-back closure the coordinator calls when editing begins/ends, so the
+    /// host binding tracks the live first-responder state (click-to-focus, focus loss).
+    /// Captures this pass's `focus` binding by value; guards against a redundant write (and the
+    /// resulting reconcile echo) by comparing before assigning. Returns nil when no focus
+    /// binding is supplied. Mirrors the iOS `MarkdownUITextViewWrapper.makeFocusReporter`.
+    private func makeFocusReporter() -> ((Bool) -> Void)? {
+        guard let focus else { return nil }
+        return { isFocused in
+            if focus.wrappedValue != isFocused { focus.wrappedValue = isFocused }
+        }
     }
 }
 // MARK: - Scrolling header view

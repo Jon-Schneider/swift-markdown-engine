@@ -34,8 +34,29 @@ final class NativeTextView: NSTextView {
 
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
-        if became { didEstablishCaret = true }
+        if became {
+            didEstablishCaret = true
+            // Report focus GAIN to the host `focus` binding. Driven from the first-responder
+            // transition itself — NOT the `textDidBeginEditing`/`textDidEndEditing` NSText
+            // notifications, which fire around an *editing session* (first mutation … edit end),
+            // so a click-to-focus with no typing would never report, and a focus stolen back by
+            // the reconcile would leave the binding stuck `true`. The coordinator (our delegate)
+            // owns the reporter; it dedups against the binding, so a host-driven focus that lands
+            // us here writes back the same value and doesn't loop.
+            (delegate as? NativeTextViewCoordinator)?.onFocusChange?(true)
+        }
         return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        // Report focus LOSS. Crucial for the reconcile: when the user clicks away, this writes
+        // `false` back so the next `updateNSView` pass does NOT see a stale `true` and yank first
+        // responder back from wherever they just clicked.
+        if resigned {
+            (delegate as? NativeTextViewCoordinator)?.onFocusChange?(false)
+        }
+        return resigned
     }
 
     /// Mark a caret as established (as if the view had become first responder) so

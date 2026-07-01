@@ -34,6 +34,17 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
     /// binding. Mirrors the macOS `NativeTextViewWrapper(pendingInlineInsertion:)`.
     /// See ``InlineInsertionRequest``.
     @Binding public var pendingInlineInsertion: InlineInsertionRequest?
+    /// Optional host-driven focus. Reconciled against the text view's live first-responder
+    /// state on **every** update (not just on the binding's edge), so a focus request that
+    /// lands before the field is in a window — or is dropped mid-scroll — is retried on a
+    /// later pass rather than lost. `true` makes the field first responder (raising the
+    /// keyboard); `false` resigns it. The wrapper also writes the live editing state back into
+    /// the binding from `textViewDidBeginEditing`/`textViewDidEndEditing`, so tapping the field
+    /// (or the keyboard dismissing) is reported to the host. Mirrors the macOS
+    /// `NativeTextViewWrapper(focus:)`. A plain `Binding<Bool>` (not `@FocusState`) because a
+    /// host `@FocusState` doesn't reach into the wrapped `UITextView` unless bridged here.
+    /// `public` to match the macOS `NativeTextViewWrapper.focus` surface.
+    public var focus: Binding<Bool>?
 
     /// Optional controller for selection-state observation + formatting commands, bound via
     /// the `.controller(_:)` modifier (see `MarkdownEditorController`).
@@ -44,6 +55,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         configuration: MarkdownEditorConfiguration = .default,
         isEditable: Bool = true,
         pendingInlineInsertion: Binding<InlineInsertionRequest?> = .constant(nil),
+        focus: Binding<Bool>? = nil,
         onTextChange: ((String) -> Void)? = nil,
         onLinkTap: ((URL) -> Void)? = nil,
         onPasteImage: ((Data) -> String?)? = nil
@@ -52,6 +64,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         self.configuration = configuration
         self.isEditable = isEditable
         self._pendingInlineInsertion = pendingInlineInsertion
+        self.focus = focus
         self.onTextChange = onTextChange
         self.onLinkTap = onLinkTap
         self.onPasteImage = onPasteImage
@@ -62,6 +75,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         view.onTextChange = onTextChange
         view.onLinkTap = onLinkTap
         view.onPasteImage = onPasteImage
+        view.onFocusChange = makeFocusReporter()
         view.render(markdown: text)
         boundController?.attach(view)
         return view
@@ -76,6 +90,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         view.onTextChange = onTextChange   // capture the latest closure each SwiftUI pass
         view.onLinkTap = onLinkTap
         view.onPasteImage = onPasteImage
+        view.onFocusChange = makeFocusReporter()   // refresh the write-back with this pass's binding
         boundController?.attach(view)
         if view.lastRenderedSource != text {
             // Source changed from outside → full reload.
@@ -102,6 +117,26 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
                 view?.publishHostStateNow()
             }
         }
+        // Host-driven focus: reconcile the requested first-responder state against the view's
+        // LIVE state every update (not just on the binding's edge). A request that lands before
+        // the field is in a window (the "m reveals the composer" case) or is dropped mid-scroll
+        // is retried on the next pass rather than lost. First-responder mutation is deferred off
+        // the SwiftUI update pass (mutating it inline is a runtime warning / can re-enter update),
+        // which also lets a just-mounted view finish entering its window before we focus it.
+        if let focus {
+            let wantsFocus = focus.wrappedValue
+            if wantsFocus, !view.isFirstResponder, isEditable {
+                DispatchQueue.main.async { [weak view] in
+                    guard let view, !view.isFirstResponder, view.isEditable else { return }
+                    view.becomeFirstResponder()
+                }
+            } else if !wantsFocus, view.isFirstResponder {
+                DispatchQueue.main.async { [weak view] in
+                    guard let view, view.isFirstResponder else { return }
+                    view.resignFirstResponder()
+                }
+            }
+        }
         // Host-driven inline insertion: splice the requested markdown at the caret, then
         // clear the binding so it isn't re-applied. `applyInsertionIfNew` dedups by request
         // id, so a duplicate update pass before the async reset doesn't double-insert, while
@@ -115,6 +150,18 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
             }
         } else {
             view.resetInsertionDedup()
+        }
+    }
+
+    /// Build the write-back closure the text view calls when it begins/ends editing, so the
+    /// host binding tracks the live first-responder state (tap-to-focus, keyboard dismissal).
+    /// Captures the current pass's `focus` binding by value; guards against a redundant write
+    /// (and the resulting reconcile echo) by comparing before assigning. Returns nil when no
+    /// focus binding is supplied, so an un-bound wrapper does no work.
+    private func makeFocusReporter() -> ((Bool) -> Void)? {
+        guard let focus else { return nil }
+        return { isFocused in
+            if focus.wrappedValue != isFocused { focus.wrappedValue = isFocused }
         }
     }
 }

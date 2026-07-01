@@ -63,6 +63,11 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var layoutBridge: LayoutBridge?
     var layoutDelegate: MarkdownLayoutManagerDelegate?
     var onLinkClick: ((String) -> Void)?
+    /// Reports the live first-responder state back to the host's `focus` binding. Fired from
+    /// ``NativeTextView``'s `becomeFirstResponder`/`resignFirstResponder` overrides (the true
+    /// focus transitions), NOT the NSText edit-session notifications. Set by
+    /// ``NativeTextViewWrapper`` each update; see its `focus` parameter.
+    var onFocusChange: ((Bool) -> Void)?
     var onCaretRectChange: ((CGRect) -> Void)?
     var onInlineSelectionChange: ((InlineSelectionState?) -> Void)?
     var onCodeBlockSelectionChange: (([CodeBlockSelection]) -> Void)?
