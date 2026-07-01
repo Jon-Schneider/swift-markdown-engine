@@ -46,7 +46,7 @@ extension MarkdownStyler {
             let forceCollapsed = ctx.configuration.markers.visibility == .seamless
             let isActive = ctx.activeTokenIndices.contains(idx) && !forceCollapsed
 
-            let request = EmbeddedImageRequest(name: url)
+            let request = EmbeddedImageRequest(reference: url)
             guard let image = ctx.services.images.image(for: request) else {
                 appendSecondaryMarkers(for: token, to: &attrs, theme: ctx.configuration.theme)
                 continue

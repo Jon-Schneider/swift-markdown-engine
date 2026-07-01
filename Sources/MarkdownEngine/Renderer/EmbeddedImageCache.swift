@@ -85,7 +85,7 @@ public struct ImageEmbedReference: Sendable {
     /// Convert to the engine-side request shape consumed by `EmbeddedImageProvider`.
     public var providerRequest: EmbeddedImageRequest {
         EmbeddedImageRequest(
-            name: name,
+            reference: name,
             id: nodeID?.uuidString,
             requestedWidth: requestedWidth
         )

@@ -86,15 +86,18 @@ public protocol EmbeddedImageProvider: Sendable {
 
 /// What the engine asks an `EmbeddedImageProvider` for.
 public struct EmbeddedImageRequest: Sendable, Equatable {
-    /// Display name of the embed (the part before any `|`).
-    public let name: String
+    /// The raw reference the embed points at. For a standard markdown image
+    /// `![alt](destination)` this is the verbatim destination string (e.g.
+    /// `shipyard-attachment://<id>`). For a wiki-embed `![[name|id|width]]`
+    /// this is the display name (the part before any `|`).
+    public let reference: String
     /// Optional explicit identifier supplied as `![[name|id]]`.
     public let id: String?
     /// Optional explicit width supplied as `![[name|...|width]]`.
     public let requestedWidth: CGFloat?
 
-    public init(name: String, id: String? = nil, requestedWidth: CGFloat? = nil) {
-        self.name = name
+    public init(reference: String, id: String? = nil, requestedWidth: CGFloat? = nil) {
+        self.reference = reference
         self.id = id
         self.requestedWidth = requestedWidth
     }
