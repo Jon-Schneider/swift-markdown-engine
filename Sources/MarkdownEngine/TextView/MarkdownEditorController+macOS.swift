@@ -9,15 +9,21 @@
 //  a `@StateObject`, hand it to the wrapper via `.controller(_:)`, observe its `@Published`
 //  state, and call its command methods from the UI.
 //
-//  Today it carries the `/` slash-command menu (publish `slashMenuContext`, apply via
-//  `insertBlock`); macOS formatting still flows through the right-click context menu, so the
-//  surface is intentionally narrower than iOS's controller (which also drives a toolbar).
+//  It carries the `/` slash-command menu (publish `slashMenuContext`, apply via `insertBlock`)
+//  AND — at iOS parity — a formatting toolbar surface: `applyFormatting` / `insertLink` and a
+//  published `selectionState`, so a single cross-platform host toolbar drives both platforms.
+//  The right-click context menu stays; this is additive.
 //
 
 import SwiftUI
 
 @MainActor
 public final class MarkdownEditorController: ObservableObject {
+
+    /// Formatting active at the current selection — drive a toolbar's button highlights from this
+    /// (Bold lit when `isBold`, the active heading level, etc.). Updated live as the caret moves and
+    /// the document changes. Same shape as the iOS controller, so one host toolbar reads both.
+    @Published public private(set) var selectionState = MarkdownSelectionState()
 
     /// The active `/` slash command at the caret, or `nil`. Observe this to show/hide the
     /// block-insert menu anchored at `anchorRect`; filter rows with
@@ -40,15 +46,36 @@ public final class MarkdownEditorController: ObservableObject {
         coordinator.onSlashMenuContextChange = { [weak self] context in
             self?.updateSlashMenuContext(context)
         }
+        coordinator.onSelectionStateChange = { [weak self] state in
+            self?.updateSelectionState(state)
+        }
         // Publish initial state so freshly-shown host UI isn't stale.
         coordinator.publishSlashMenuContextNow()
+        coordinator.publishSelectionStateNow()
     }
 
     private func updateSlashMenuContext(_ context: SlashMenuContext?) {
         if slashMenuContext != context { slashMenuContext = context }
     }
 
+    private func updateSelectionState(_ state: MarkdownSelectionState) {
+        if selectionState != state { selectionState = state }
+    }
+
     // MARK: Commands (called by the host's UI)
+
+    /// Apply (toggle) a formatting command to the current selection — wire to a toolbar button.
+    /// Bold/Italic toggle; Heading/List apply. Same signature as iOS, so one cross-platform toolbar
+    /// drives both.
+    public func applyFormatting(_ command: MarkdownFormattingCommand) {
+        coordinator?.applyFormatting(command)
+    }
+
+    /// Insert a markdown link `[text](url)` at the selection. If text is selected it becomes the
+    /// link text (and `text` is ignored); otherwise `text` (or the URL) is used.
+    public func insertLink(text: String? = nil, url: String) {
+        coordinator?.insertMarkdownLink(text: text, url: url)
+    }
 
     /// Insert `block` from the slash menu, replacing the active `/command`. Pass the source range
     /// from the current `slashMenuContext` (defaults to it); a no-op if there's no active trigger.

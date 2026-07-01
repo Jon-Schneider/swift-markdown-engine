@@ -652,6 +652,16 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         context.coordinator.onInlineSelectionChange = onInlineSelectionChange
         context.coordinator.onCodeBlockSelectionChange = onCodeBlockSelectionChange
         boundController?.attach(context.coordinator)
+        // Reaching here means this pass REBUILT the text storage (the early-return above fires when
+        // content is unchanged), via `rebuildTextStorageAndStyle` — a node switch, a same-document
+        // external text reload (host replaces `text` without changing `documentId`, e.g. a disk/remote
+        // refresh), or the initial mount. Those rebuilds bypass `textDidChange`, and `attach` is
+        // bind-once so its initial publish doesn't re-fire on a reused coordinator. So republish the
+        // toolbar's formatting state for the new contents — the macOS analog of iOS's `render()`
+        // publish (the 4th publish hook). Reset the dedup first so a state equal to the previously
+        // published one (e.g. from the outgoing document, or the pre-reload contents) isn't suppressed.
+        context.coordinator.lastPublishedSelectionState = nil
+        context.coordinator.publishSelectionStateNow()
         context.coordinator.didInitialFormatting = true
     }
 

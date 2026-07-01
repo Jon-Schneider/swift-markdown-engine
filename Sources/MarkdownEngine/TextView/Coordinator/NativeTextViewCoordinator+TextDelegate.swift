@@ -193,6 +193,9 @@ extension NativeTextViewCoordinator {
         // Re-detect the `/` slash trigger after the restyle (the layout viewRect anchoring needs
         // is now current); deduped, so an unrelated keystroke that doesn't change the trigger is free.
         publishSlashMenuContext(tv)
+        // Refresh the toolbar's formatting state — an edit under a stationary caret (e.g. toggling
+        // emphasis with the selection collapsed) changes the active state without moving the caret.
+        publishSelectionState(tv)
         previousActiveTokenIndices = activeTokenIndices
     }
 
@@ -203,6 +206,10 @@ extension NativeTextViewCoordinator {
         // Re-detect the slash trigger up front so it tracks caret moves AND clears when the caret
         // leaves the `/command` (incl. the link-focus / image early-returns below). Deduped.
         publishSlashMenuContext(tv)
+        // Publish the toolbar's formatting state on EVERY caret move, up front like the slash
+        // context so it still fires through the link-focus / seamless-caret early-returns below.
+        // Deduped, and a re-entrant seamless-caret snap republishes the corrected position.
+        publishSelectionState(tv)
         let currentEventType = NSApp.currentEvent?.type
         // Mouse-/Wake-Fokus auf Link: kein Preview, erst Navigation. Gilt für alle Nicht-Key-Events.
         if currentEventType != .keyDown,

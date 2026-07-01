@@ -72,6 +72,12 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// Last slash context handed to the host, to dedupe redundant publishes on the hot
     /// text-/selection-change paths.
     var lastPublishedSlashContext: SlashMenuContext?
+    /// Hands the host the formatting state at the caret (for a toolbar's active-button state).
+    /// Set by the bound `MarkdownEditorController` on attach; see `NativeTextViewCoordinator+Formatting`.
+    var onSelectionStateChange: ((MarkdownSelectionState) -> Void)?
+    /// Last selection state handed to the host, to dedupe redundant publishes on the hot
+    /// text-/selection-change paths (mirrors `lastPublishedSlashContext`).
+    var lastPublishedSelectionState: MarkdownSelectionState?
     var didInitialFormatting: Bool = false
     /// One-shot guard so `updateCodeBlockSelection` only forces a full-document layout once per document.
     var didEnsureLayoutForCurrentDocument: Bool = false

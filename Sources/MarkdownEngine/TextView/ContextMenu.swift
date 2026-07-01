@@ -200,21 +200,12 @@ extension NativeTextViewWrapper.Coordinator {
     }
 
     /// Apply a `MarkdownFormattingCommand` through the shared cross-platform core
-    /// (`MarkdownFormatting.edit`). The older bold/italic/heading/list handlers keep their
-    /// bespoke logic; newer commands route here so there's a single source of truth for them.
+    /// (`MarkdownFormatting.edit`). Routes through the coordinator's single `applyFormatting`
+    /// apply-flow (see `NativeTextViewCoordinator+Formatting`), which the host toolbar also uses,
+    /// so context-menu and toolbar formatting stay identical. The older bold/italic/heading/list
+    /// handlers keep their bespoke logic.
     private func applyMarkdownCommand(_ command: MarkdownFormattingCommand) {
-        guard let tv = textView else { return }
-        let edit = MarkdownFormatting.edit(for: command, text: tv.string, selection: tv.selectedRange())
-        // A no-op edit (e.g. Clear Formatting with nothing to clear) replaces the selection
-        // with itself — harmless, but skip it so it doesn't litter the undo stack.
-        let current = (tv.string as NSString).substring(with: edit.range)
-        guard current != edit.text else { return }
-        if tv.shouldChangeText(in: edit.range, replacementString: edit.text) {
-            tv.replaceCharacters(in: edit.range, with: edit.text)
-            tv.didChangeText()
-            tv.setSelectedRange(edit.selection)
-            DispatchQueue.main.async { self.text = tv.string }
-        }
+        applyFormatting(command)
     }
 
     @objc func didMarkdownStrikethrough(_ sender: Any?) {
