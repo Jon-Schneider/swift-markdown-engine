@@ -332,7 +332,13 @@ enum MarkdownASTStyler {
             let multiplier = ctx.config.headings.fontMultiplier(for: level)
             let headingBase = PlatformFont(name: ctx.fontName, size: ctx.baseFont.pointSize * multiplier)
                 ?? .systemFont(ofSize: ctx.baseFont.pointSize * multiplier)
-            let headingFont = adding(.boldTrait, to: headingBase)
+            // Default is `.bold` at every level; keep the historical symbolic-trait
+            // path for that case so default headings are byte-identical, and only
+            // route through the weight descriptor when a different weight is set.
+            let weight = ctx.config.headings.fontWeight(for: level)
+            let headingFont = weight == .bold
+                ? adding(.boldTrait, to: headingBase)
+                : headingBase.withWeightCompat(weight)
             let lineHeight = ceil(headingFont.ascender - headingFont.descender + headingFont.leading) + 1
             let headingPara = NSMutableParagraphStyle()
             headingPara.minimumLineHeight = lineHeight

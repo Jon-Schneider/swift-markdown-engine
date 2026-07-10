@@ -186,6 +186,16 @@ extension PlatformFont {
     func withPointSizeCompat(_ size: CGFloat) -> PlatformFont {
         .from(descriptor: fontDescriptor, size: size, fallback: self)
     }
+
+    /// A copy of this font at the given `weight`, keeping family and size.
+    /// Applies the weight through the descriptor's trait dictionary so it works
+    /// for both named and system fonts; falls back to `self` if it can't apply.
+    func withWeightCompat(_ weight: PlatformFont.Weight) -> PlatformFont {
+        let descriptor = fontDescriptor.addingAttributes([
+            .traits: [PlatformFontDescriptor.TraitKey.weight: weight],
+        ])
+        return .from(descriptor: descriptor, size: pointSize, fallback: self)
+    }
 }
 
 #if os(macOS)

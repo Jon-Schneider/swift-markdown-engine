@@ -13,6 +13,11 @@
 //  override individual fields without forking the engine.
 //
 
+#if canImport(UIKit)
+import UIKit
+#else
+import AppKit
+#endif
 import Foundation
 
 // MARK: - Top-level Configuration
@@ -363,13 +368,20 @@ public struct HeadingStyle: Sendable {
     public var fontMultipliers: [CGFloat]
     /// Top spacing in `em` units per heading level (1...6).
     public var topSpacingEm: [CGFloat]
+    /// Font weight per heading level (1...6). Defaults to `.bold` at every
+    /// level, matching the engine's historical "headings are bold" behavior.
+    /// Apple Notes varies weight by level (e.g. bold title, semibold
+    /// subheading), which this array makes possible.
+    public var fontWeights: [PlatformFont.Weight]
 
     public init(
         fontMultipliers: [CGFloat] = [2.0, 1.5, 1.17, 1.0, 0.83, 0.67],
-        topSpacingEm: [CGFloat] = [0.35, 0.30, 0.25, 0.20, 0.15, 0.10]
+        topSpacingEm: [CGFloat] = [0.35, 0.30, 0.25, 0.20, 0.15, 0.10],
+        fontWeights: [PlatformFont.Weight] = [.bold, .bold, .bold, .bold, .bold, .bold]
     ) {
         self.fontMultipliers = fontMultipliers
         self.topSpacingEm = topSpacingEm
+        self.fontWeights = fontWeights
     }
 
     public func fontMultiplier(for level: Int) -> CGFloat {
@@ -380,6 +392,11 @@ public struct HeadingStyle: Sendable {
     public func topSpacingEm(for level: Int) -> CGFloat {
         let index = max(1, min(level, topSpacingEm.count)) - 1
         return topSpacingEm[index]
+    }
+
+    public func fontWeight(for level: Int) -> PlatformFont.Weight {
+        let index = max(1, min(level, fontWeights.count)) - 1
+        return fontWeights[index]
     }
 
     public static let `default` = HeadingStyle()
