@@ -85,6 +85,10 @@ public final class AttachmentResolver {
     @discardableResult
     public func insert(reference: String) -> Bool {
         guard !didResolve else { return false }
+        // An empty reference is treated as a cancel (the placeholder is removed, nothing inserted) —
+        // mirroring how a synchronous `.insert("")` normalizes to `.consumed`, so a host can't splice
+        // an empty `![]()` / empty-target link.
+        guard !reference.isEmpty else { cancel(); return false }
         didResolve = true
         guard let host, let id else {
             earlyCall = .insert(reference)  // not armed yet; flushed by arm()

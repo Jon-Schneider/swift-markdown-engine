@@ -33,24 +33,41 @@ extension NativeTextViewCoordinator: PendingAttachmentHost {
     @MainActor
     func resolvePendingMarker(_ id: UUID, with reference: String) -> Bool {
         guard let entry = pendingAttachmentResolvers[id] else { return false }
-        entry.timeout?.cancel()
-        pendingAttachmentResolvers[id] = nil
-        guard let textView, let range = pendingMarkerRange(for: id, in: textView) else { return false }
+        guard let textView, let range = pendingMarkerRange(for: id, in: textView) else {
+            // Marker already gone (undone / never inserted): nothing to place. Drop the entry.
+            dropPendingEntry(id)
+            return false
+        }
         let replacement = PendingAttachmentMarker.blockPaddedReplacement(
             entry.item.markdown(forReference: reference),
             isImage: entry.item.isImage,
             in: textView.string as NSString, at: range
         )
-        return applyPendingReplacement(range: range, with: replacement, actionName: "Insert Attachment", to: textView)
+        // Only consume the entry (and cancel its backstop timeout) once the edit actually applied.
+        // On a read-only view `applyPendingReplacement` no-ops; keeping the entry + timeout lets a
+        // later editable moment (or the timeout) clean the chip up instead of stranding it forever.
+        guard applyPendingReplacement(range: range, with: replacement, actionName: "Insert Attachment", to: textView) else {
+            return false
+        }
+        dropPendingEntry(id)
+        return true
     }
 
     @MainActor
     func cancelPendingMarker(_ id: UUID) {
-        guard let entry = pendingAttachmentResolvers[id] else { return }
-        entry.timeout?.cancel()
+        guard pendingAttachmentResolvers[id] != nil else { return }
+        guard let textView, let range = pendingMarkerRange(for: id, in: textView) else {
+            dropPendingEntry(id)
+            return
+        }
+        // Same retain-until-applied rule as resolve, so a read-only view doesn't leave a stuck chip.
+        guard applyPendingReplacement(range: range, with: "", actionName: "Remove Attachment", to: textView) else { return }
+        dropPendingEntry(id)
+    }
+
+    private func dropPendingEntry(_ id: UUID) {
+        pendingAttachmentResolvers[id]?.timeout?.cancel()
         pendingAttachmentResolvers[id] = nil
-        guard let textView, let range = pendingMarkerRange(for: id, in: textView) else { return }
-        applyPendingReplacement(range: range, with: "", actionName: "Remove Attachment", to: textView)
     }
 
     /// Drop all resolvers and their timers WITHOUT touching the buffer — used when the buffer is

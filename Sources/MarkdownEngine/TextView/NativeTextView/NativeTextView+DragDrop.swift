@@ -95,9 +95,17 @@ extension NativeTextView {
                 // reference wraps per the item's real kind (`![](ref)` / `[name](ref)`).
                 let uuid = UUID()
                 let marker = PendingAttachmentMarker.markdown(uuid: uuid, alt: item.suggestedName)
-                caret = insertDroppedMarkdown(marker, isImage: false, at: caret)
+                let caretBefore = min(max(caret, 0), (string as NSString).length)
+                let lengthBefore = (string as NSString).length
+                _ = insertDroppedMarkdown(marker, isImage: false, at: caretBefore)
                 (delegate as? NativeTextViewCoordinator)?
                     .registerPendingAttachment(resolver, for: item, id: uuid)
+                // Registration arms the resolver synchronously, so a host that resolves inside its
+                // hook replaces the just-inserted marker in place NOW — shrinking the buffer under
+                // this loop. Recompute the caret from the net length delta at `caretBefore` so a
+                // subsequent item in a multi-item drop lands correctly instead of at the stale
+                // marker-end offset. (No synchronous resolve → delta == marker length, as before.)
+                caret = caretBefore + ((string as NSString).length - lengthBefore)
             case .consumed, .declined:
                 continue
             }

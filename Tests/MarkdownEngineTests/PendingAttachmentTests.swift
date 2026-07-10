@@ -128,6 +128,16 @@ struct PendingAttachmentValueTests {
         #expect(resolver.insert(reference: "store://x") == false)
     }
 
+    @Test("insert(reference: \"\") is treated as cancel, not an empty ![]()")
+    func resolverEmptyInsertCancels() {
+        let host = SpyHost()
+        let resolver = AttachmentResolver()
+        resolver.arm(host: host, id: UUID())
+        #expect(resolver.insert(reference: "") == false)
+        #expect(host.resolved.isEmpty, "an empty reference must not be forwarded as an insert")
+        #expect(host.cancelled.count == 1, "an empty reference cancels the placeholder")
+    }
+
     // MARK: selection preservation
 
     @Test("a resolve edit BEFORE the caret shifts the caret by the length delta")
@@ -358,6 +368,46 @@ struct MacOSPendingAttachmentTests {
         try await Task.sleep(for: .milliseconds(250))
         #expect(!view.string.contains("x-mde-pending"), "the timeout must remove the stale marker")
         #expect(resolver.insert(reference: "late") == false)
+    }
+
+    @Test("a multi-item drop with a synchronous resolve lands later items at the right offset")
+    func multiItemDropSynchronousResolve() {
+        let coordinator = makeCoordinator()
+        let view = makeTextView("")
+        coordinator.textView = view
+        view.delegate = coordinator
+
+        var calls = 0
+        view.onDropAttachment = { _ in
+            calls += 1
+            if calls == 1 {
+                let r = AttachmentResolver()
+                r.insert(reference: "store://1")   // resolve synchronously inside the hook (buffered)
+                return .pending(r)
+            }
+            return .insert("store://2")
+        }
+        view.insertDroppedItems([imageItem(), imageItem()], at: 0)
+
+        // Item 1's marker resolves in place to a block-padded image; item 2 must land AFTER it, not at
+        // the stale (much longer) marker-end offset. Without the caret recompute this misplaces/fails.
+        #expect(view.string == "![](store://1)\n![](store://2)")
+    }
+
+    @Test("resolving on a read-only view retains the entry so the backstop timeout can still clean up")
+    func resolveOnReadOnlyRetainsForTimeout() async throws {
+        let coordinator = makeCoordinator()
+        let view = makeTextView("abc")
+        let (resolver, _) = stageMarker(in: view, coordinator: coordinator, at: 3, timeout: 0.1)
+
+        view.isEditable = false
+        #expect(resolver.insert(reference: "store://x") == false, "a read-only resolve can't apply")
+        #expect(view.string.contains("x-mde-pending"),
+                "the entry must NOT be consumed while the marker is still stuck (no strand)")
+
+        view.isEditable = true
+        try await Task.sleep(for: .milliseconds(300))   // retained timeout fires; now editable → cleans up
+        #expect(!view.string.contains("x-mde-pending"), "the retained timeout removes the chip once editable")
     }
 
     @Test("teardown cancels pending resolvers so a later resolve no-ops")
