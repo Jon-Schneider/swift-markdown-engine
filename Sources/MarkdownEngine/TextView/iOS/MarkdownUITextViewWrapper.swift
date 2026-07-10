@@ -26,9 +26,16 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
     public var onTextChange: ((String) -> Void)?
     /// Called when the user taps a link (markdown link / auto-detected URL / wiki-link).
     public var onLinkTap: ((URL) -> Void)?
-    /// Called when an image is pasted, with the PNG bytes. Persist it and return a path/URL
-    /// to reference (or nil to decline); the editor inserts `![](returnedPath)`.
-    public var onPasteImage: ((Data) -> String?)?
+    /// Called when an image is pasted, with the PNG bytes. Return an
+    /// ``AttachmentDisposition``: `.insert(ref)` inserts `![](ref)`, `.consumed` takes
+    /// ownership (insert nothing, no fall-through), `.declined` falls back to the default paste.
+    public var onPasteImage: ((Data) -> AttachmentDisposition)?
+    /// Called for each image/file dropped onto the editor. The editor intercepts the dropped
+    /// content (keeping native text-move behavior) so an attachment can't corrupt the Markdown
+    /// source. Without this hook a dropped attachment inserts nothing. With it, return
+    /// `.insert(ref)` to embed `![](ref)` (image, inserted inline on iOS) or `[name](ref)`
+    /// (other file), `.consumed` to stage it yourself, or `.declined` to skip.
+    public var onDropAttachment: ((DroppedItem) -> AttachmentDisposition)?
     /// Insert arbitrary literal markdown at the caret by setting this to a non-nil value;
     /// the engine splices it in verbatim, advances the caret past it, and then clears the
     /// binding. Mirrors the macOS `NativeTextViewWrapper(pendingInlineInsertion:)`.
@@ -58,7 +65,8 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         focus: Binding<Bool>? = nil,
         onTextChange: ((String) -> Void)? = nil,
         onLinkTap: ((URL) -> Void)? = nil,
-        onPasteImage: ((Data) -> String?)? = nil
+        onPasteImage: ((Data) -> AttachmentDisposition)? = nil,
+        onDropAttachment: ((DroppedItem) -> AttachmentDisposition)? = nil
     ) {
         self.text = text
         self.configuration = configuration
@@ -68,6 +76,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         self.onTextChange = onTextChange
         self.onLinkTap = onLinkTap
         self.onPasteImage = onPasteImage
+        self.onDropAttachment = onDropAttachment
     }
 
     public func makeUIView(context: Context) -> MarkdownUITextView {
@@ -75,6 +84,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         view.onTextChange = onTextChange
         view.onLinkTap = onLinkTap
         view.onPasteImage = onPasteImage
+        view.onDropAttachment = onDropAttachment
         view.onFocusChange = makeFocusReporter()
         view.render(markdown: text)
         boundController?.attach(view)
@@ -90,6 +100,7 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         view.onTextChange = onTextChange   // capture the latest closure each SwiftUI pass
         view.onLinkTap = onLinkTap
         view.onPasteImage = onPasteImage
+        view.onDropAttachment = onDropAttachment
         view.onFocusChange = makeFocusReporter()   // refresh the write-back with this pass's binding
         boundController?.attach(view)
         if view.lastRenderedSource != text {

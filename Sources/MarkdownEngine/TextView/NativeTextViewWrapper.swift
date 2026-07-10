@@ -85,10 +85,17 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     /// focus transitions — NOT the NSText edit-session notifications, which would miss a
     /// click-to-focus with no typing). Mirrors the iOS `MarkdownUITextViewWrapper(focus:)`.
     public var focus: Binding<Bool>?
-    /// Optional paste hook. Return a Markdown image-embed string (e.g.
-    /// `"![[my-image]]"`) to insert at the caret, or `nil` to fall through
-    /// to the system's default plain-text paste.
-    public var onPasteImage: ((NSPasteboard) -> String?)?
+    /// Optional image-paste hook. Inspect the pasteboard and return an
+    /// ``AttachmentDisposition``: `.insert(ref)` to embed `![](ref)`, `.consumed` to take
+    /// ownership and insert nothing (e.g. staging bytes asynchronously), or `.declined` to
+    /// fall through to the system's default plain-text paste.
+    public var onPasteImage: ((NSPasteboard) -> AttachmentDisposition)?
+    /// Optional drop hook for images/files dragged onto the editor. Without it, native rich
+    /// drops (which would splice an `NSTextAttachment` / file path into the Markdown source)
+    /// are neutralized: the drop is swallowed and nothing is inserted. With it, each dropped
+    /// item is routed here — return `.insert(ref)` to embed `![](ref)` (image) or
+    /// `[name](ref)` (other file), `.consumed` to stage it yourself, or `.declined` to skip.
+    public var onDropAttachment: ((DroppedItem) -> AttachmentDisposition)?
 
     /// Fires when the user clicks a `[[Name]]` link. The argument is the
     /// resolved opaque identifier (or the display name when no resolver
@@ -147,7 +154,8 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         documentId: String = "default",
         isEditable: Bool = true,
         focus: Binding<Bool>? = nil,
-        onPasteImage: ((NSPasteboard) -> String?)? = nil,
+        onPasteImage: ((NSPasteboard) -> AttachmentDisposition)? = nil,
+        onDropAttachment: ((DroppedItem) -> AttachmentDisposition)? = nil,
         onLinkClick: ((String) -> Void)? = nil,
         onCaretRectChange: ((CGRect) -> Void)? = nil,
         onInlineSelectionChange: ((InlineSelectionState?) -> Void)? = nil,
@@ -170,6 +178,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         self.isEditable = isEditable
         self.focus = focus
         self.onPasteImage = onPasteImage
+        self.onDropAttachment = onDropAttachment
         self.onLinkClick = onLinkClick
         self.onCaretRectChange = onCaretRectChange
         self.onInlineSelectionChange = onInlineSelectionChange
@@ -277,6 +286,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         textView.isAutomaticDataDetectionEnabled = true
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.onPasteImage = onPasteImage
+        textView.onDropAttachment = onDropAttachment
         if #available(macOS 15.1, *) {
             textView.writingToolsBehavior = .complete
         }
@@ -452,6 +462,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         }
 
         textView.onPasteImage = onPasteImage
+        textView.onDropAttachment = onDropAttachment
         textView.setPlaceholder(placeholder)
         // Sync heightBehavior across all three layers (scroll view, text view,
         // coordinator) so a runtime switch fully reconfigures.

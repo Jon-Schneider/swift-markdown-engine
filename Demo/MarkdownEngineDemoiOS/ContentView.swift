@@ -77,7 +77,17 @@ struct ContentView: View {
                     let url = FileManager.default.temporaryDirectory
                         .appendingPathComponent("pasted-\(UUID().uuidString).png")
                     try? data.write(to: url)
-                    return url.path
+                    return .insert(url.path)
+                },
+                onDropAttachment: { item in
+                    // Host owns storage: persist the dropped bytes and return a reference.
+                    // The editor inserts ![](path) for an image or [name](path) otherwise.
+                    guard let data = item.data else { return .declined }
+                    let ext = item.isImage ? "png" : (item.fileURL?.pathExtension ?? "bin")
+                    let url = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("dropped-\(UUID().uuidString).\(ext)")
+                    try? data.write(to: url)
+                    return .insert(url.path)
                 }
             )
             .controller(controller)

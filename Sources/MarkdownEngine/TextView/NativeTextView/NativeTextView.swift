@@ -102,7 +102,9 @@ final class NativeTextView: NSTextView {
     var minOverscrollPoints: CGFloat = MarkdownEditorConfiguration.default.overscroll.minPoints
 
     // MARK: Editor wiring
-    var onPasteImage: ((NSPasteboard) -> String?)?
+    var onPasteImage: ((NSPasteboard) -> AttachmentDisposition)?
+    /// Host hook for image/file drops onto the editor. See `NativeTextView+DragDrop.swift`.
+    var onDropAttachment: ((DroppedItem) -> AttachmentDisposition)?
     weak var layoutBridge: LayoutBridge?
     var baseFont: NSFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
 

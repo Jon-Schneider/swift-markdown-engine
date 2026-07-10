@@ -22,10 +22,9 @@ extension NativeTextView {
 
         let pasteboard = NSPasteboard.general
 
-        if let imageEmbed = onPasteImage?(pasteboard), !imageEmbed.isEmpty {
-            insertBlockEmbed(imageEmbed)
-            return
-        }
+        // Image paste: route to the host and act on its disposition. `.insert`/`.consumed`
+        // stop here; only `.declined` continues to the normal text paste below.
+        if handleImagePaste(from: pasteboard) { return }
 
         // Recover HTML tables only when plain text lacks table delimiters —
         // otherwise the source already provided a usable text representation.
@@ -57,6 +56,33 @@ extension NativeTextView {
         }
 
         pasteAsPlainText(sender)
+    }
+
+    /// Route an image paste to the host `onPasteImage` and act on its disposition. Returns
+    /// whether the paste was *handled* — `.insert(ref)` (embed `![](ref)`) OR `.consumed`
+    /// (host is staging asynchronously). In BOTH cases the caller must NOT fall through to the
+    /// string flavor, which is what fixes the double-insert when a source carries both image
+    /// bytes and a URL string (browser "Copy Image"). `.declined` (or no image / no handler)
+    /// returns false so the normal text paste runs.
+    ///
+    /// NOTE (breaking vs. the old `String?` hook): the host now returns a bare storage
+    /// REFERENCE which the engine wraps as `![](ref)` — it no longer returns a full embed
+    /// string that was inserted verbatim. Gated on `canPasteImage`, so the hook only fires for
+    /// image pastes (matching iOS `hasImages`), not every paste. Internal so tests can drive it
+    /// with a synthetic pasteboard.
+    func handleImagePaste(from pasteboard: NSPasteboard) -> Bool {
+        guard let onPasteImage, PasteboardImageReader.canPasteImage(from: pasteboard) else {
+            return false
+        }
+        switch onPasteImage(pasteboard).normalized {
+        case .insert(let reference):
+            insertBlockEmbed("![](\(reference))")
+            return true
+        case .consumed:
+            return true
+        case .declined:
+            return false
+        }
     }
 
     /// Insert pasted text, extending the `>` prefix to every line when the

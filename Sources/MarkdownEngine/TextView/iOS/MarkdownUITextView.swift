@@ -66,10 +66,22 @@ public final class MarkdownUITextView: UITextView {
     /// Called when the `/` slash-command context at the caret changes (opened / filtered / closed),
     /// so the host can show the block-insert menu. Wired by `MarkdownEditorController`.
     var onSlashMenuContextChange: ((SlashMenuContext?) -> Void)?
-    /// Called when an image is pasted, with the image's PNG bytes. The host persists it
-    /// however it likes and returns a path/URL to reference (or nil to decline and fall
-    /// back to the default paste); the editor then inserts `![](returnedPath)`.
-    public var onPasteImage: ((Data) -> String?)?
+    /// Called when an image is pasted, with the image's PNG bytes. Return an
+    /// ``AttachmentDisposition``: `.insert(ref)` embeds `![](ref)`, `.consumed` takes
+    /// ownership and inserts nothing (e.g. async staging — and, unlike the old `nil`, does
+    /// NOT fall through to the default paste, so a source carrying both image bytes and a
+    /// URL string can't double-insert), `.declined` falls back to the default paste.
+    public var onPasteImage: ((Data) -> AttachmentDisposition)?
+    /// Called for each image/file dropped onto the editor. The editor keeps `UITextView`'s
+    /// built-in drop interaction (so intra-view text moves keep native MOVE) but substitutes
+    /// each dropped item's *content* via `UITextPasteDelegate`, so an image/file can never
+    /// land as an `NSTextAttachment` and corrupt the Markdown source. Without this hook, a
+    /// dropped attachment inserts nothing. With it, return `.insert(ref)` to embed `![](ref)`
+    /// (image) or `[name](ref)` (other file), `.consumed` to stage it yourself, or `.declined`
+    /// to skip. Note: an image drop inserts an inline `![](ref)` at the drop point (the paste
+    /// transform gives no offset for macOS-style own-line block padding). See
+    /// `MarkdownUITextView+DragDrop.swift`.
+    public var onDropAttachment: ((DroppedItem) -> AttachmentDisposition)?
     /// Called when editing begins/ends (i.e. this view becomes/resigns first responder),
     /// reporting the live focus state back to the SwiftUI host's `focus` binding. Wired by
     /// `MarkdownUITextViewWrapper`; see its `focus` parameter.
@@ -84,6 +96,14 @@ public final class MarkdownUITextView: UITextView {
     private var lastContentSizeCategory: UIContentSizeCategory = .unspecified
     /// Suppresses delegate re-entrancy while we mutate storage / set text ourselves.
     private var isApplyingProgrammaticEdit = false
+    /// True only while a live drop session is being handled, so the `UITextPasteDelegate`
+    /// transform diverts dropped attachments while leaving ordinary pastes to `paste(_:)`.
+    /// Set by the `UITextDropDelegate`; see `MarkdownUITextView+DragDrop.swift`.
+    var isHandlingDrop = false
+    /// Whether the in-flight drop originated inside this app (a local drag — e.g. moving
+    /// selected text within the editor). Local text drags keep native MOVE; external text is
+    /// forced to plain, U+FFFC-stripped, so a rich-text drag can't corrupt the source.
+    var currentDropIsLocal = false
     /// Active token set from the last restyle — selection changes only restyle when it shifts.
     private var lastActiveTokens: Set<Int> = []
     /// Token cache keyed by exact text, so caret moves don't re-parse an unchanged document.
@@ -186,6 +206,17 @@ public final class MarkdownUITextView: UITextView {
         // see plan 2.2's downgrade note.
         isFindInteractionEnabled = true
         delegate = self
+
+        // Own the CONTENT of drops without discarding the built-in interaction's move +
+        // drop-caret behavior. `UITextView`'s default drop inserts images/files as
+        // `NSTextAttachment`/attributed text, corrupting the plain-Markdown source; the
+        // `UITextPasteDelegate` transform lets us substitute a Markdown reference (or plain,
+        // U+FFFC-stripped text) per item, while local text drags keep native MOVE semantics.
+        // The `UITextDropDelegate` only scopes that transform to live drop sessions (so paste
+        // stays governed by `paste(_:)`/`onPasteImage`) and records whether the drag is local.
+        // See `MarkdownUITextView+DragDrop.swift`.
+        textDropDelegate = self
+        pasteDelegate = self
 
         let layoutDelegate = MarkdownLayoutManagerDelegate()
         layoutDelegate.context = self
@@ -475,7 +506,7 @@ public final class MarkdownUITextView: UITextView {
 
     // MARK: - Undoable edits
 
-    private func uiTextRange(for nsRange: NSRange) -> UITextRange? {
+    func uiTextRange(for nsRange: NSRange) -> UITextRange? {
         guard let start = position(from: beginningOfDocument, offset: nsRange.location),
               let end = position(from: start, offset: nsRange.length) else { return nil }
         return textRange(from: start, to: end)
@@ -485,7 +516,7 @@ public final class MarkdownUITextView: UITextView {
     /// manager records it. Direct `textStorage` mutation would leave the undo stack's
     /// recorded ranges pointing at stale offsets — a later undo can then replay against
     /// a shifted document and raise `NSRangeException`. Restyles once afterward.
-    private func applyUndoableEdit(replacing nsRange: NSRange, with string: String, finalSelection: NSRange?) {
+    func applyUndoableEdit(replacing nsRange: NSRange, with string: String, finalSelection: NSRange?) {
         // Read-only documents accept NO programmatic mutation — this is the single choke point
         // for every edit (formatting, link/slash inserts, checkbox toggle, blockquote paste, cut),
         // the iOS analog of macOS gating each edit behind `shouldChangeText(in:)` (which returns
@@ -703,6 +734,8 @@ public final class MarkdownUITextView: UITextView {
         if onPasteImage != nil, UIPasteboard.general.hasImages,
            let data = UIPasteboard.general.image?.pngData(),
            insertPastedImage(data) {
+            // Handled (inserted OR consumed): never fall through to the string paste below,
+            // which would double-insert when the source carries both bytes and a URL string.
             return
         }
         // Multi-line text paste inside a blockquote → keep the quote markers.
@@ -754,21 +787,28 @@ public final class MarkdownUITextView: UITextView {
                           finalSelection: NSRange(location: range.location, length: 0))
     }
 
-    /// Hand `imageData` to the host's `onPasteImage`; if it returns a reference, insert
-    /// `![](reference)` at the selection through the undoable edit path. Returns whether an
-    /// image was inserted. Internal so tests can exercise it without the pasteboard.
+    /// Hand `imageData` to the host's `onPasteImage` and act on its disposition. Returns
+    /// whether the paste was *handled* (either an `![](ref)` was inserted or the host
+    /// `.consumed` it) — the caller uses that to decide whether to fall through to the
+    /// default text paste. `.declined` (or no handler) returns false so it falls through.
+    /// Internal so tests can exercise it without the pasteboard.
     @discardableResult
     func insertPastedImage(_ imageData: Data) -> Bool {
-        guard let onPasteImage, let reference = onPasteImage(imageData), !reference.isEmpty else {
+        guard let onPasteImage else { return false }
+        switch onPasteImage(imageData).normalized {
+        case .insert(let reference):
+            let markdown = "![](\(reference))"
+            let insertLocation = selectedRange.location
+            applyUndoableEdit(
+                replacing: selectedRange, with: markdown,
+                finalSelection: NSRange(location: insertLocation + (markdown as NSString).length, length: 0)
+            )
+            return true
+        case .consumed:
+            return true
+        case .declined:
             return false
         }
-        let markdown = "![](\(reference))"
-        let insertLocation = selectedRange.location
-        applyUndoableEdit(
-            replacing: selectedRange, with: markdown,
-            finalSelection: NSRange(location: insertLocation + (markdown as NSString).length, length: 0)
-        )
-        return true
     }
 
     // MARK: - Formatting commands

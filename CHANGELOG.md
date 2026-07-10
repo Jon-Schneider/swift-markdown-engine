@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (attachment drop & paste)
+- First-class image/file **drop** support so a native drop can no longer corrupt the
+  Markdown source. A rich `NSTextView`/`UITextView` otherwise performs its own drop,
+  splicing an `NSTextAttachment` (U+FFFC) or file-path text into the backing store —
+  which round-trips to storage. The editor now intercepts image/file drops on the text
+  view itself (a host-level SwiftUI `.onDrop` can't win — the text view is the frontmost
+  registered destination) and routes each item to a new host hook:
+  - `NativeTextViewWrapper(onDropAttachment:)` / `MarkdownUITextViewWrapper(onDropAttachment:)`,
+    called with a `DroppedItem` (pre-read `data` with a main-thread size guard, plus
+    `fileURL` for the large / security-scoped case, `suggestedName`, `isImage`, `type`).
+  - The host returns an `AttachmentDisposition`; the engine wraps the returned reference
+    as `![](ref)` (image) or `[name](ref)` (other file). With no hook set, attachment
+    drops are neutralized (nothing inserted) so the source is never corrupted. Dropped
+    plain text still inserts as text, and intra-editor text drag-to-move is preserved.
+  - Platform divergence: on macOS an image drop is padded onto its own line (block embed);
+    on iOS it inserts an inline `![](ref)` at the drop point (the `UITextPasteDelegate`
+    transform exposes no drop offset for the own-line math). On iOS the `DroppedItem` always
+    carries a `fileURL` (files are copied to a temp location); on macOS `fileURL` is the
+    original dropped URL. In both cases `data` is pre-read only up to a 20 MB guard.
+
+### Changed (breaking: paste hook return type & payload)
+- `onPasteImage` now returns `AttachmentDisposition` instead of `String?`. The old `nil`
+  conflated "I handled it, insert nothing" with "I decline, do your default" — the
+  ambiguity behind a paste double-insert. Migrate the return value:
+  - `nil` → `.declined` (falls through to the default text paste).
+  - a reference/embed string → `.insert(ref)` — **but note the payload also changed**: the
+    engine now wraps the returned value as `![](ref)`, so pass the bare storage reference.
+    On **macOS** the old hook inserted the returned string *verbatim* (you returned a full
+    `![](…)` / `![[…]]` embed); returning that same full string now yields `![](![[…]])`.
+    Return just the reference. (iOS already returned a bare reference, so iOS callers only
+    change the enum wrapper.)
+  - `.consumed` — new: you're staging bytes asynchronously; inserts nothing AND does not
+    fall through to the default text paste (this is the paste double-insert fix).
+  - `.insert("")` is treated as `.consumed` (never inserts an empty `![]()`).
+- macOS `onPasteImage` is now gated on `PasteboardImageReader.canPasteImage` (matching iOS
+  `hasImages`), so it fires only for image pastes rather than every paste. A host that used
+  it to intercept non-image pastes must move that logic elsewhere.
+
+### Fixed (attachment drop & paste)
+- Native drag-and-drop of an image/file onto the editor corrupted the stored Markdown
+  (silent U+FFFC / stray file path that persisted and synced). Drops are now intercepted
+  and routed to `onDropAttachment` (see above); no corruption regardless of whether a
+  hook is set.
+- A synchronous `onPasteImage` had no way to say "consumed, insert nothing", so a source
+  carrying both image bytes and a URL string (e.g. a browser "Copy Image") double-inserted
+  by falling through to the string flavor. `.consumed` now stops that fall-through.
+
 ### Added
 - Broadened per-element styling configuration for an Apple Notes-grade look, all
   backward-compatible (defaults reproduce previous rendering):
