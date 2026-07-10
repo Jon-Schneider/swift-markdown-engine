@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Broadened per-element styling configuration for an Apple Notes-grade look, all
+  backward-compatible (defaults reproduce previous rendering):
+  - Checkboxes: `CheckboxStyle.uncheckedSymbolName` / `checkedSymbolName`;
+    `Theme.checkboxCheckedTint` / `checkboxUncheckedTint` / `completedTaskText`
+    (dims completed items).
+  - Headings: `HeadingStyle.fontWeights` (per level) and optional
+    `bottomSpacingEm` (dedicated bottom spacing).
+  - Inline code: `InlineCodeStyle.cornerRadius` / `horizontalPadding` (drawn
+    rounded pill) and `Theme.inlineCodeText`.
+  - Code blocks: `CodeBlockStyle.cornerRadius` / `backgroundHorizontalInset`.
+  - Ordered lists: `Theme.orderedListNumberColor` and
+    `ListStyle.orderedNumberWeight`.
+  - Body: `ParagraphStyle.lineSpacing`.
+  - Links: `LinkStyle.underlinesResolvedLinks`.
+  - Images: `ImageEmbedStyle.cornerRadius`.
+  - Added `PlatformFont.withWeightCompat` and a cross-platform rounded-rect path
+    helper to support the above.
+
+### Fixed
+- `CheckboxStyle.sizeFromFontHeightFactor` / `sizeFromMarkerWidthFactor` /
+  `iconInsetFraction` and `InlineCodeStyle.fontSizeScale` were declared but
+  ignored by the render path; they now take effect (defaults unchanged).
+
+### Added (bullets & blockquotes)
 - Configurable bullet and blockquote styling, so the rendered look (e.g. an
   Apple Notes match) can be tuned without editing engine source:
   - `ListStyle.bulletGlyph` (default `•`) and `ListStyle.bulletGlyphSizeScale`
