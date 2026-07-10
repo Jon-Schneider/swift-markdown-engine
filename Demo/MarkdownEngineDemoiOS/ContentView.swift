@@ -2,9 +2,8 @@
 //  ContentView.swift
 //  MarkdownEngineDemoiOS
 //
-//  Hosts the Phase 2a read-only iOS Markdown view (`MarkdownUITextViewWrapper`).
-//  No bridge products: code blocks render with a plain background (no syntax
-//  coloring), LaTeX/tables are not rendered on iOS yet (later Phase 2 passes).
+//  Hosts the iOS Markdown view (`MarkdownUITextViewWrapper`) — editable, with a
+//  live "Editable" toggle exercising read-only mode (macOS parity).
 //
 
 import SwiftUI
@@ -26,6 +25,9 @@ struct ContentView: View {
     /// In seamless mode, whether Backspace at content start unwraps the whole
     /// hidden marker (on) or does a plain native delete (off).
     @State private var backspaceUnwrap = true
+    /// Read-only toggle (matches macOS). Off → no caret/keyboard and raw markers
+    /// never reveal on tap/selection, while the text stays selectable and links tappable.
+    @State private var isEditable = true
 
     private var configuration: MarkdownEditorConfiguration {
         var config = MarkdownEditorConfiguration.default
@@ -58,6 +60,11 @@ struct ContentView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
+            // Read-only switch (macOS parity): flips the wrapper's `isEditable`.
+            Toggle("Editable", isOn: $isEditable)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+
             // Seamless-only: Backspace-to-unwrap vs. plain native delete.
             if markerVisibility == .seamless {
                 Toggle("Backspace unwraps markers", isOn: $backspaceUnwrap)
@@ -68,6 +75,7 @@ struct ContentView: View {
             MarkdownUITextViewWrapper(
                 text: text,
                 configuration: configuration,
+                isEditable: isEditable,
                 onTextChange: { edited in
                     text = edited   // write-back: edits round-trip into the model
                 },

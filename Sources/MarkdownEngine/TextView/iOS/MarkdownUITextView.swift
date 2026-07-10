@@ -21,6 +21,21 @@ public final class MarkdownUITextView: UITextView {
     public var fontName: String
     public var fontSize: CGFloat
 
+    /// When `false` the view renders read-only: no caret or keyboard, and raw Markdown
+    /// markers never reveal on tap/selection (the text stays selectable for copy/find and
+    /// links stay tappable). Mirrors the macOS `NativeTextViewWrapper.isEditable`. Toggling
+    /// re-styles so the suppression takes effect immediately.
+    public override var isEditable: Bool {
+        get { super.isEditable }
+        set {
+            let changed = newValue != super.isEditable
+            super.isEditable = newValue
+            // `layoutBridge` is nil until `init` finishes wiring the TextKit-2 stack, so a
+            // set during initialization can't restyle yet (init runs its own first restyle).
+            if changed, layoutBridge != nil { restyleInPlace() }
+        }
+    }
+
     /// Resolved base body font (updated on each restyle). Part of `MarkdownFragmentContext`.
     public var baseFont: PlatformFont
     /// TextKit-2 measurement bridge. Part of `MarkdownFragmentContext`.
@@ -101,7 +116,8 @@ public final class MarkdownUITextView: UITextView {
     public init(
         configuration: MarkdownEditorConfiguration = .default,
         fontName: String = "SF Pro",
-        fontSize: CGFloat = 16
+        fontSize: CGFloat = 16,
+        isEditable: Bool = true
     ) {
         self.configuration = configuration
         self.fontName = fontName
@@ -119,7 +135,9 @@ public final class MarkdownUITextView: UITextView {
 
         super.init(frame: .zero, textContainer: container)
 
-        isEditable = true
+        // `super.isEditable` (not the overridden setter): `layoutBridge` is still nil here,
+        // so the setter would no-op the restyle anyway, but keep it explicit.
+        super.isEditable = isEditable
         isSelectable = true
         backgroundColor = .clear
         applyTextContainerInset()
@@ -405,6 +423,11 @@ public final class MarkdownUITextView: UITextView {
     /// recorded ranges pointing at stale offsets — a later undo can then replay against
     /// a shifted document and raise `NSRangeException`. Restyles once afterward.
     private func applyUndoableEdit(replacing nsRange: NSRange, with string: String, finalSelection: NSRange?) {
+        // Read-only refuses every programmatic mutation, matching macOS where all edits funnel
+        // through `shouldChangeText(in:)` (false when not editable). This is the shared chokepoint
+        // for the controller surface — formatting commands, slash-block inserts, link insert/update,
+        // pasted-image insertion, and seamless cut — so guarding it here closes them all at once.
+        guard isEditable else { return }
         guard let range = uiTextRange(for: nsRange) else { return }
         isApplyingProgrammaticEdit = true
         replace(range, withText: string)
@@ -457,6 +480,11 @@ public final class MarkdownUITextView: UITextView {
         return parsed
     }
 
+    /// Caret position fed into styling. Read-only (`!isEditable`) reports no caret, so no
+    /// token reveals its raw markers on tap/selection — mirrors the macOS `caretLocation =
+    /// textView.isEditable ? … : -1` in `NativeTextViewCoordinator+Restyling`.
+    private var stylingCaretLocation: Int { isEditable ? selectedRange.location : -1 }
+
     /// Re-apply Markdown styling to the current text as ATTRIBUTE edits only — the
     /// string and the selection are untouched, so the caret stays put. Mirrors the
     /// macOS restyle (`beginEditing`/`setAttributes`/`addAttribute`/`endEditing`).
@@ -479,13 +507,14 @@ public final class MarkdownUITextView: UITextView {
         let parsed = tokens(for: display)
         let active = MarkdownDetection.computeActiveTokenIndices(
             selectionRange: selectedRange, tokens: parsed, in: ns,
+            suppressed: !isEditable,
             markerVisibility: configuration.markers.visibility
         )
         lastActiveTokens = active
 
         let styled = MarkdownStyler.styleAttributes(
             text: display, fontName: fontName, fontSize: effectiveFontSize, layoutBridge: layoutBridge,
-            caretLocation: selectedRange.location, activeTokenIndices: active,
+            caretLocation: stylingCaretLocation, activeTokenIndices: active,
             precomputedTokens: parsed,
             colorScheme: MarkdownColorScheme.resolved(from: traitCollection),
             configuration: configuration,
@@ -537,6 +566,7 @@ public final class MarkdownUITextView: UITextView {
         let parsed = tokens(for: display)
         let active = MarkdownDetection.computeActiveTokenIndices(
             selectionRange: selectedRange, tokens: parsed, in: ns,
+            suppressed: !isEditable,
             markerVisibility: configuration.markers.visibility
         )
         lastActiveTokens = active
@@ -545,7 +575,7 @@ public final class MarkdownUITextView: UITextView {
         // still run over all tokens but only get *applied* where they intersect a candidate.
         let styled = MarkdownStyler.styleAttributes(
             text: display, fontName: fontName, fontSize: effectiveFontSize, layoutBridge: layoutBridge,
-            caretLocation: selectedRange.location, activeTokenIndices: active,
+            caretLocation: stylingCaretLocation, activeTokenIndices: active,
             precomputedTokens: parsed,
             scopedRanges: paragraphs,
             colorScheme: MarkdownColorScheme.resolved(from: traitCollection),
@@ -737,9 +767,12 @@ public final class MarkdownUITextView: UITextView {
     }
 
     /// Open a `.link` at `point` (view coords) via `onLinkTap`. Makes links tappable
-    /// even while editing (a plain tap otherwise just places the caret).
-    private func handleLinkTap(at point: CGPoint) {
-        guard let onLinkTap, let layoutBridge else { return }
+    /// even while editing (a plain tap otherwise just places the caret) — and, deliberately,
+    /// while read-only (no `isEditable` guard: opening a link mutates nothing). Internal so
+    /// iOS-simulator integration tests can drive it.
+    @discardableResult
+    func handleLinkTap(at point: CGPoint) -> Bool {
+        guard let onLinkTap, let layoutBridge else { return false }
         let containerPoint = CGPoint(x: point.x - textContainerInset.left,
                                      y: point.y - textContainerInset.top)
         var fraction: CGFloat = 0
@@ -747,12 +780,15 @@ public final class MarkdownUITextView: UITextView {
             for: containerPoint, in: textContainer, fractionOfDistanceBetweenInsertionPoints: &fraction
         )
         guard index != NSNotFound, index < textStorage.length,
-              let link = textStorage.attribute(.link, at: index, effectiveRange: nil) else { return }
+              let link = textStorage.attribute(.link, at: index, effectiveRange: nil) else { return false }
         if let url = link as? URL {
             onLinkTap(url)
+            return true
         } else if let string = link as? String, let url = URL(string: string) {
             onLinkTap(url)
+            return true
         }
+        return false
     }
 
     /// Toggle a task checkbox if `point` (in view coordinates) lands on one,
@@ -760,7 +796,10 @@ public final class MarkdownUITextView: UITextView {
     /// checkbox was hit. Internal so iOS-simulator integration tests can drive it.
     @discardableResult
     func toggleCheckbox(at point: CGPoint) -> Bool {
-        guard let layoutBridge else { return false }
+        // Toggling rewrites `[ ]`↔`[x]` in the source — an edit. Read-only blocks it (the tap
+        // then falls through to link handling), matching macOS where `shouldChangeText` refuses
+        // the edit on a non-editable view.
+        guard isEditable, let layoutBridge else { return false }
         // The boundingRect hit-test needs current layout (a prior edit may have left
         // it dirty), otherwise the checkbox's rect comes back empty and we miss it.
         if let tlm = textLayoutManager { tlm.ensureLayout(for: tlm.documentRange) }
@@ -936,7 +975,7 @@ extension MarkdownUITextView: UITextViewDelegate {
         candidates += ParagraphRestyleScoping.paragraphs(in: ns, intersecting: editedRange)
 
         let parsed = tokens(for: display)
-        let current = MarkdownDetection.computeActiveTokenIndices(selectionRange: selectedRange, tokens: parsed, in: ns, markerVisibility: configuration.markers.visibility)
+        let current = MarkdownDetection.computeActiveTokenIndices(selectionRange: selectedRange, tokens: parsed, in: ns, suppressed: !isEditable, markerVisibility: configuration.markers.visibility)
         let preEdit = pendingPreEditActiveTokens ?? lastActiveTokens
         pendingPreEditActiveTokens = nil
         candidates += ParagraphRestyleScoping.renderedBlockParagraphs(in: ns, tokens: parsed)
@@ -999,6 +1038,7 @@ extension MarkdownUITextView: UITextViewDelegate {
         let parsed = tokens(for: display)
         let current = MarkdownDetection.computeActiveTokenIndices(
             selectionRange: selectedRange, tokens: parsed, in: ns,
+            suppressed: !isEditable,
             markerVisibility: configuration.markers.visibility
         )
         let previous = lastActiveTokens
