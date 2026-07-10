@@ -171,6 +171,22 @@ enum PendingAttachmentMarker {
         return result as String
     }
 
+    /// Wrap a resolved IMAGE reference so it lands on its own line — matching a synchronous image
+    /// drop (`insertDroppedMarkdown`), so a mid-paragraph resolved image embeds instead of rendering
+    /// as a dimmed inline link. A newline is added before/after only when the adjacent character
+    /// isn't already one. Non-images (inline `[name](ref)` links) are returned unchanged. `range` is
+    /// the marker range being replaced within `text`. This padding is applied AT RESOLVE, whose emit
+    /// is a genuine host-visible change — unlike the bare, emit-suppressed pending placeholder.
+    static func blockPaddedReplacement(_ markdown: String, isImage: Bool, in text: NSString, at range: NSRange) -> String {
+        guard isImage else { return markdown }
+        var prefix = ""
+        var suffix = ""
+        if range.location > 0, text.character(at: range.location - 1) != 0x0A { prefix = "\n" }
+        let after = NSMaxRange(range)
+        if after < text.length, text.character(at: after) != 0x0A { suffix = "\n" }
+        return prefix + markdown + suffix
+    }
+
     /// Shift `selection` to stay put relative to the user's intent after replacing `editRange` with
     /// `replacementLength` characters: unchanged if the edit is after it, shifted by the length delta
     /// if the edit is before it, collapsed just past the edit if it overlapped (the caret was inside

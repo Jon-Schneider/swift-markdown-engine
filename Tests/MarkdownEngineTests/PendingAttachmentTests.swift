@@ -255,7 +255,8 @@ struct MacOSPendingAttachmentTests {
 
         _ = resolver.insert(reference: "store://z")
         try await Task.sleep(for: .milliseconds(80))
-        #expect(box.value == "hello![](store://z) world", "resolve emits the real reference")
+        // Resolve emits the real reference — the image block-padded onto its own line.
+        #expect(box.value == "hello\n![](store://z)\n world", "resolve emits the real reference")
         #expect(!box.value.contains("x-mde-pending"))
     }
 
@@ -266,7 +267,26 @@ struct MacOSPendingAttachmentTests {
         let (resolver, _) = stageMarker(in: view, coordinator: coordinator, at: 3)
 
         #expect(resolver.insert(reference: "store://final") == true)
-        #expect(view.string == "abc![](store://final)")
+        // The resolved IMAGE is block-padded onto its own line (matching a synchronous image drop)
+        // so it embeds rather than rendering as a dimmed inline link.
+        #expect(view.string == "abc\n![](store://final)")
+    }
+
+    @Test("a resolved FILE stays inline (no block padding — unlike an image)")
+    func resolvedFileIsInline() {
+        let coordinator = makeCoordinator()
+        let view = makeTextView("abc")
+        coordinator.textView = view
+        let uuid = UUID()
+        let marker = PendingAttachmentMarker.markdown(uuid: uuid, alt: "report.pdf")
+        view.setSelectedRange(NSRange(location: 3, length: 0))
+        view.insertText(marker, replacementRange: NSRange(location: 3, length: 0))
+        let resolver = AttachmentResolver()
+        let file = DroppedItem(data: nil, fileURL: nil, suggestedName: "report.pdf", isImage: false, type: nil)
+        coordinator.registerPendingAttachment(resolver, for: file, id: uuid)
+
+        _ = resolver.insert(reference: "store://f")
+        #expect(view.string == "abc[report.pdf](store://f)", "a file link stays inline")
     }
 
     @Test("resolve preserves the user's caret when it was moved before the marker")
@@ -290,7 +310,7 @@ struct MacOSPendingAttachmentTests {
         view.setSelectedRange(NSRange(location: 0, length: 0))
         view.insertText("XY", replacementRange: NSRange(location: 0, length: 0))   // shifts marker
         _ = resolver.insert(reference: "store://x")
-        #expect(view.string == "XYabc![](store://x)")
+        #expect(view.string == "XYabc\n![](store://x)")
     }
 
     @Test("cancel removes the marker from the buffer")
@@ -360,7 +380,10 @@ struct MacOSPendingAttachmentTests {
 
         #expect(first.resolver.insert(reference: "store://1") == true)
         #expect(second.resolver.insert(reference: "store://2") == true)
-        #expect(view.string == "ab![](store://1)![](store://2)")
+        // Each resolves independently to its own reference; no pending markers remain.
+        #expect(view.string.contains("![](store://1)"))
+        #expect(view.string.contains("![](store://2)"))
+        #expect(!view.string.contains("x-mde-pending"))
     }
 
     // MARK: rendering
@@ -379,6 +402,31 @@ struct MacOSPendingAttachmentTests {
         // the pending branch short-circuited before the provider was ever consulted.
         let hasChip = attrs.contains { $0.attributes[.latexImage] != nil }
         #expect(hasChip, "the pending marker must render a loading chip on a .latexImage anchor")
+    }
+
+    @Test("a MID-PARAGRAPH pending marker still renders a chip and hides its raw URL (inline)")
+    func pendingChipRendersInlineMidParagraph() {
+        // The regression from bare insertion: a non-standalone marker fell to the standalone renderer,
+        // which declined it and left the raw `x-mde-pending:UUID` URL visible. Inline rendering fixes it.
+        let uuid = UUID()
+        let marker = PendingAttachmentMarker.markdown(uuid: uuid, alt: "photo.png")
+        let text = "hello \(marker) world"
+        let attrs = MarkdownStyler.styleAttributes(
+            text: text, fontName: NSFont.systemFont(ofSize: 14).fontName, fontSize: 14,
+            caretLocation: 0, activeTokenIndices: [],
+            colorScheme: .light,
+            configuration: MarkdownEditorConfiguration(services: MarkdownEditorServices(images: NilImageProvider()))
+        )
+        #expect(attrs.contains { $0.attributes[.latexImage] != nil },
+                "a mid-paragraph pending marker must still render a chip")
+        // The URL substring must be collapsed to clear (not shown as raw text).
+        let urlRange = (text as NSString).range(of: "x-mde-pending:\(uuid.uuidString)")
+        let urlVisible = attrs.contains { styled in
+            NSIntersectionRange(styled.range, urlRange).length > 0
+                && (styled.attributes[.foregroundColor] as? PlatformColor) != PlatformColor.clear
+                && styled.attributes[.latexImage] == nil
+        }
+        #expect(!urlVisible, "the raw pending URL must be hidden, not rendered as visible text")
     }
 }
 
@@ -429,7 +477,7 @@ struct IOSPendingAttachmentTests {
         let (resolver, _) = stageMarker(in: view, at: 3)
         #expect(resolver.insert(reference: "store://final") == true)
         await settle()
-        #expect(view.text == "abc![](store://final)")
+        #expect(view.text == "abc\n![](store://final)")   // resolved image block-padded onto its own line
     }
 
     @Test("resolve preserves the user's caret when it was moved before the marker")
@@ -439,7 +487,7 @@ struct IOSPendingAttachmentTests {
         view.selectedRange = NSRange(location: 1, length: 0)
         _ = resolver.insert(reference: "store://x")
         await settle()
-        #expect(view.text == "abc![](store://x)", "the resolve must actually land")
+        #expect(view.text == "abc\n![](store://x)", "the resolve must actually land")
         #expect(view.selectedRange == NSRange(location: 1, length: 0),
                 "the caret must not be yanked to the resolved attachment")
     }
@@ -467,7 +515,7 @@ struct IOSPendingAttachmentTests {
 
         _ = resolver.insert(reference: "store://z")
         await settle()
-        #expect(emitted.last == "abc![](store://z)")
+        #expect(emitted.last == "abc\n![](store://z)")
         #expect(emitted.allSatisfy { !$0.contains("x-mde-pending") })
     }
 

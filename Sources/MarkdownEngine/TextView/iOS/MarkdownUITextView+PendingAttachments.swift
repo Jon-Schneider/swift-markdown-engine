@@ -43,8 +43,12 @@ extension MarkdownUITextView: PendingAttachmentHost {
         entry.timeout?.cancel()
         pendingAttachmentResolvers[id] = nil
         guard let range = pendingMarkerRange(for: id) else { return false }
-        applyPendingReplacement(range: range, with: entry.item.markdown(forReference: reference))
-        return true
+        let replacement = PendingAttachmentMarker.blockPaddedReplacement(
+            entry.item.markdown(forReference: reference),
+            isImage: entry.item.isImage,
+            in: textStorage.string as NSString, at: range
+        )
+        return applyPendingReplacement(range: range, with: replacement)
     }
 
     @MainActor
@@ -86,10 +90,14 @@ extension MarkdownUITextView: PendingAttachmentHost {
     /// Replace `range` with `replacement` through the undoable edit path, preserving the user's
     /// live selection (shifted only when the edit lies before it) rather than parking the caret at
     /// the insertion — the caret-theft this feature exists to prevent.
+    /// Returns whether the replacement was actually applied (`false` on an out-of-range edit or a
+    /// read-only view — `applyUndoableEdit` no-ops when `!isEditable` — so a caller reports the
+    /// reference as unhandled rather than silently dropped).
     @MainActor
-    private func applyPendingReplacement(range: NSRange, with replacement: String) {
+    @discardableResult
+    private func applyPendingReplacement(range: NSRange, with replacement: String) -> Bool {
         let currentLength = (textStorage.string as NSString).length
-        guard range.location != NSNotFound, NSMaxRange(range) <= currentLength else { return }
+        guard isEditable, range.location != NSNotFound, NSMaxRange(range) <= currentLength else { return false }
         let newLength = currentLength - range.length + (replacement as NSString).length
         let adjusted = PendingAttachmentMarker.adjustedSelection(
             selectedRange,
@@ -98,6 +106,7 @@ extension MarkdownUITextView: PendingAttachmentHost {
             maxLength: newLength
         )
         applyUndoableEdit(replacing: range, with: replacement, finalSelection: adjusted)
+        return true
     }
 }
 #endif

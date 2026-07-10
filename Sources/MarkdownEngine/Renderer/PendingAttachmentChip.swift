@@ -24,6 +24,7 @@ enum PendingAttachmentChip {
         let alt: String
         let fontSize: CGFloat
         let width: Int
+        let colorScheme: MarkdownColorScheme
         let text: String
         let fill: String
         let border: String
@@ -38,18 +39,21 @@ enum PendingAttachmentChip {
     private static let cacheCap = 64
 
     private static let horizontalPadding: CGFloat = 10
-    private static let verticalPadding: CGFloat = 6
+    private static let verticalPadding: CGFloat = 3
     private static let symbolGap: CGFloat = 6
 
-    /// A chip image sized to fit within `maxWidth`. Colors are passed in resolved (from the
-    /// editor theme) so the renderer stays free-function/testable and the cache key can capture
-    /// them. Cached by content + size + colors.
+    /// A chip image sized to fit within `maxWidth`. Colors are passed in resolved (from the editor
+    /// theme) so the renderer stays free-function/testable. `colorScheme` is part of the cache key
+    /// because the default theme's `mutedText` is a DYNAMIC catalog color whose `.description` is
+    /// identical in light and dark — without it, a light→dark flip would return the stale light
+    /// raster. Cached by content + size + scheme + colors.
     static func render(
         alt: String,
         baseFont: PlatformFont,
         textColor: PlatformColor,
         fillColor: PlatformColor,
         borderColor: PlatformColor,
+        colorScheme: MarkdownColorScheme,
         maxWidth: CGFloat
     ) -> PlatformImage {
         let labelFont = PlatformFont.systemFont(ofSize: max(baseFont.pointSize * 0.9, 11))
@@ -57,6 +61,7 @@ enum PendingAttachmentChip {
             alt: alt,
             fontSize: labelFont.pointSize,
             width: Int(maxWidth.rounded()),
+            colorScheme: colorScheme,
             text: textColor.description,
             fill: fillColor.description,
             border: borderColor.description

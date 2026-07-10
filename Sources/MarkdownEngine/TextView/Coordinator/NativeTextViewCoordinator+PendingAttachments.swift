@@ -36,9 +36,12 @@ extension NativeTextViewCoordinator: PendingAttachmentHost {
         entry.timeout?.cancel()
         pendingAttachmentResolvers[id] = nil
         guard let textView, let range = pendingMarkerRange(for: id, in: textView) else { return false }
-        let replacement = entry.item.markdown(forReference: reference)
-        applyPendingReplacement(range: range, with: replacement, actionName: "Insert Attachment", to: textView)
-        return true
+        let replacement = PendingAttachmentMarker.blockPaddedReplacement(
+            entry.item.markdown(forReference: reference),
+            isImage: entry.item.isImage,
+            in: textView.string as NSString, at: range
+        )
+        return applyPendingReplacement(range: range, with: replacement, actionName: "Insert Attachment", to: textView)
     }
 
     @MainActor
@@ -80,16 +83,19 @@ extension NativeTextViewCoordinator: PendingAttachmentHost {
     /// live selection (shifted only when the edit lies before it). Deliberately does NOT call
     /// `makeFirstResponder` / park the caret at the insertion — that caret-theft is the very bug
     /// this feature fixes, so resolution stays out of the user's way.
+    /// Returns whether the replacement was actually applied (`false` on an out-of-range edit or a
+    /// read-only view, so a caller reports the reference as unhandled rather than silently dropped).
     @MainActor
-    func applyPendingReplacement(range: NSRange, with replacement: String, actionName: String, to textView: NSTextView) {
+    @discardableResult
+    func applyPendingReplacement(range: NSRange, with replacement: String, actionName: String, to textView: NSTextView) -> Bool {
         let currentText = textView.string as NSString
-        guard range.location != NSNotFound, NSMaxRange(range) <= currentText.length else { return }
+        guard range.location != NSNotFound, NSMaxRange(range) <= currentText.length else { return false }
 
         let selection = textView.selectedRange()
         textView.breakUndoCoalescing()
         isProgrammaticEdit = true
         defer { isProgrammaticEdit = false }
-        guard textView.shouldChangeText(in: range, replacementString: replacement) else { return }
+        guard textView.shouldChangeText(in: range, replacementString: replacement) else { return false }
         textView.textStorage?.replaceCharacters(in: range, with: replacement)
         textView.didChangeText()
         textView.undoManager?.setActionName(actionName)
@@ -103,6 +109,7 @@ extension NativeTextViewCoordinator: PendingAttachmentHost {
             maxLength: newLength
         )
         textView.setSelectedRange(adjusted)
+        return true
     }
 }
 

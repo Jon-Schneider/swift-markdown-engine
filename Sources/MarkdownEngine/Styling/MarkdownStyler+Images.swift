@@ -38,9 +38,14 @@ extension MarkdownStyler {
             let urlRange = NSRange(location: urlStart, length: urlLength)
             let url = ctx.nsText.substring(with: urlRange)
 
-            // Pending async-drop placeholder (`![name](x-mde-pending:UUID)`): render a static
-            // loading chip in the image slot WITHOUT consulting the image provider. Always
-            // collapsed (never reveals the raw marker on caret entry — the UUID URL is noise).
+            // Pending async-drop placeholder (`![name](x-mde-pending:UUID)`): render a loading chip
+            // WITHOUT consulting the image provider. Rendered INLINE (like inline `$LaTeX$`), NOT as
+            // a standalone block: the marker is inserted bare so the emit chokepoint strips it back
+            // to the exact pre-drop text, so it is not alone on its paragraph and the standalone
+            // renderer would decline it — leaking the raw `x-mde-pending:UUID` URL as visible text.
+            // The whole `![name](url)` source is collapsed onto a single anchor char carrying the
+            // chip; the rest is zero-widthed. (The resolved image is block-padded on resolve so it
+            // embeds normally.)
             if PendingAttachmentMarker.isPendingURL(url) != nil {
                 let altStart = NSMaxRange(token.markerRanges[0])
                 let altLength = max(token.markerRanges[1].location - altStart, 0)
@@ -48,7 +53,7 @@ extension MarkdownStyler {
                     ? ctx.nsText.substring(with: NSRange(location: altStart, length: altLength))
                     : ""
                 let pendingConfig = ctx.configuration.imageEmbed
-                let chipMaxWidth: CGFloat = {
+                let containerWidth: CGFloat = {
                     if let tc = ctx.layoutBridge?.firstTextContainer {
                         let w = tc.size.width - tc.lineFragmentPadding * 2
                         if w > 0 && w < pendingConfig.unreasonableMaxWidth { return w }
@@ -62,32 +67,30 @@ extension MarkdownStyler {
                     textColor: mutedColor,
                     fillColor: ctx.codeBackgroundColor,
                     borderColor: mutedColor.withAlphaComponent(0.3),
-                    maxWidth: chipMaxWidth
+                    colorScheme: ctx.colorScheme,
+                    maxWidth: min(containerWidth, 260)   // compact — it sits inline within a line
                 )
-                let chipBounds = CGRect(x: 0, y: 0, width: chip.size.width, height: chip.size.height)
-                let pendingRawContent = ctx.nsText.substring(with: token.range)
-                let chipRendered = appendRenderedStandaloneBlock(
-                    for: token,
-                    rawContent: pendingRawContent,
-                    image: chip,
-                    imageBounds: chipBounds,
-                    paragraphSpacingBefore: pendingConfig.paragraphSpacing,
-                    paragraphSpacing: pendingConfig.paragraphSpacing,
-                    alignment: .left,
-                    mode: .collapsedSource(markerTexts: ["![", "]", "(", ")"]),
-                    imageEmbedRoundable: true,
-                    ctx: ctx,
-                    attrs: &attrs
-                )
-                if chipRendered {
-                    let urlText = ctx.nsText.substring(with: urlRange)
-                    attrs.append((urlRange, [
+                // Center the chip on the line's cap-height midline (see the inline-draw geometry in
+                // `MarkdownTextLayoutFragment.drawLatexImages`, where `bounds.origin.y` is the descent).
+                let descent = (chip.size.height - ctx.baseFont.capHeight) / 2
+                let chipBounds = CGRect(x: 0, y: descent, width: chip.size.width, height: chip.size.height)
+                let anchorRange = NSRange(location: token.range.location, length: 1)
+                let anchorChar = ctx.nsText.substring(with: anchorRange)
+                attrs.append((anchorRange, [
+                    .latexImage: chip,
+                    .latexBounds: NSValue(cgRect: chipBounds),
+                    .foregroundColor: PlatformColor.clear,
+                    .font: ctx.latexMarkerFont,
+                    .kern: chip.size.width - HeadingHelpers.textWidth(anchorChar, font: ctx.latexMarkerFont)
+                ]))
+                if token.range.length > 1 {
+                    let restRange = NSRange(location: token.range.location + 1, length: token.range.length - 1)
+                    let restText = ctx.nsText.substring(with: restRange)
+                    attrs.append((restRange, [
                         .foregroundColor: PlatformColor.clear,
                         .font: ctx.latexMarkerFont,
-                        .kern: -HeadingHelpers.textWidth(urlText, font: ctx.latexMarkerFont)
+                        .kern: -HeadingHelpers.textWidth(restText, font: ctx.latexMarkerFont)
                     ]))
-                } else {
-                    appendSecondaryMarkers(for: token, to: &attrs, theme: ctx.configuration.theme)
                 }
                 continue
             }
