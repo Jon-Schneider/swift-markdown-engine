@@ -272,6 +272,30 @@ struct FontWeightCompatTests {
         #expect(heavy.familyName == base.familyName)
         #expect(heavy.pointSize == 17)
     }
+
+    @Test("a bold BASE font can be re-weighted LIGHTER (bold trait doesn't win)")
+    func boldBaseHonorsLighterWeight() throws {
+        // Regression guard: folding a numeric weight while keeping the base's bold
+        // symbolic trait would leave a bold base stuck bold. The fix strips
+        // `.boldTrait` first, so a lighter requested weight actually resolves.
+        let plain = try #require(NSFont(name: "Helvetica Neue", size: 14))
+        let boldBase = NSFontManager.shared.convert(plain, toHaveTrait: .boldFontMask)
+        let regular = boldBase.withWeightCompat(.regular)
+        let boldWidth = ("Weight 123" as NSString).size(withAttributes: [.font: boldBase]).width
+        let regularWidth = ("Weight 123" as NSString).size(withAttributes: [.font: regular]).width
+        #expect(regularWidth < boldWidth)
+        #expect(!regular.fontDescriptor.symbolicTraits.contains(.bold))
+    }
+
+    @Test("a bold-ITALIC base re-weighted to regular keeps italic, drops bold")
+    func boldItalicBaseKeepsItalicDropsBold() throws {
+        let plain = try #require(NSFont(name: "Helvetica Neue", size: 14))
+        let boldItalic = NSFontManager.shared.convert(plain, toHaveTrait: [.boldFontMask, .italicFontMask])
+        let regularItalic = boldItalic.withWeightCompat(.regular)
+        // Italic survives (a non-weight trait), bold does not (weight owns it).
+        #expect(regularItalic.fontDescriptor.symbolicTraits.contains(.italic))
+        #expect(!regularItalic.fontDescriptor.symbolicTraits.contains(.bold))
+    }
 }
 
 /// Heading `fontWeights` and list `orderedNumberWeight` must reach the render

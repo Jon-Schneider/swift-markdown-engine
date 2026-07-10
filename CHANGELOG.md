@@ -25,12 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Images: `ImageEmbedStyle.cornerRadius`.
   - Added `PlatformFont.withWeightCompat` and a cross-platform rounded-rect path
     helper to support the above.
-  - Known limitation (macOS): the SwiftUI wrapper applies the full configuration
-    at mount, but changing a styling knob or theme color *after* mount does not
-    re-render until the next edit (a pre-existing macOS-wide behavior — theme
-    colors already behaved this way). iOS live-updates via `reapplyConfiguration`.
-    Set styling config when constructing the editor. Live macOS reconfiguration
-    is a tracked follow-up.
+  - Known limitation (macOS): the SwiftUI wrapper reads the full configuration
+    only at mount. Changing a styling knob or theme color *after* mount has no
+    effect until the editor is reconstructed — not even on a subsequent edit,
+    because the coordinator keeps its mount-time configuration and restyling
+    reads that stale copy (a pre-existing macOS-wide behavior — theme colors
+    already behaved this way; only a few fields such as `heightBehavior`,
+    marker visibility, and services are re-synced live). iOS live-updates via
+    `reapplyConfiguration`. Set styling config when constructing the editor.
+    Live macOS reconfiguration is a tracked follow-up.
 
 ### Fixed
 - `CheckboxStyle.sizeFromFontHeightFactor` / `sizeFromMarkerWidthFactor` /
