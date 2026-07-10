@@ -46,6 +46,10 @@ public struct MarkdownEditorTheme: Sendable {
     public var orderedListNumberColor: PlatformColor?
     /// Foreground color for heading marker glyphs (`#`, `##`, …).
     public var headingMarker: PlatformColor
+    /// Foreground color for inline `` `code` `` text. `nil` (the default)
+    /// leaves inline code at the surrounding text color; set it to tint code
+    /// (e.g. a pink/red as some editors do).
+    public var inlineCodeText: PlatformColor?
     /// Fill color for unordered-list bullet glyphs. `nil` (the default) falls
     /// back to ``bodyText`` so the bullet tracks body ink; set it to give
     /// bullets their own color (e.g. Apple Notes' muted gray dot).
@@ -109,6 +113,7 @@ public struct MarkdownEditorTheme: Sendable {
         disabledText: PlatformColor = .platformTertiaryLabel,
         orderedListNumberColor: PlatformColor? = nil,
         headingMarker: PlatformColor = .gray,
+        inlineCodeText: PlatformColor? = nil,
         bulletColor: PlatformColor? = nil,
         blockquoteBarColor: PlatformColor? = nil,
         checkboxCheckedTint: PlatformColor? = nil,
@@ -127,6 +132,7 @@ public struct MarkdownEditorTheme: Sendable {
         self.disabledText = disabledText
         self.orderedListNumberColor = orderedListNumberColor
         self.headingMarker = headingMarker
+        self.inlineCodeText = inlineCodeText
         self.bulletColor = bulletColor
         self.blockquoteBarColor = blockquoteBarColor
         self.checkboxCheckedTint = checkboxCheckedTint

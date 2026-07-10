@@ -556,7 +556,18 @@ enum MarkdownASTStyler {
                 styleInlines(children, font: font, ctx: ctx, into: &attrs)
 
             case .code(let range, let contentRange):
-                attrs.append((contentRange, [.font: ctx.inlineCodeFont, .backgroundColor: ctx.codeBackground]))
+                var codeContentAttrs: [NSAttributedString.Key: Any] = [.font: ctx.inlineCodeFont]
+                // A rounded pill is drawn by the layout fragment via a custom
+                // attribute; the flat default keeps the plain `.backgroundColor` run.
+                if ctx.config.inlineCode.usesPill {
+                    codeContentAttrs[.inlineCodePill] = ctx.codeBackground
+                } else {
+                    codeContentAttrs[.backgroundColor] = ctx.codeBackground
+                }
+                if let codeText = ctx.theme.inlineCodeText {
+                    codeContentAttrs[.foregroundColor] = codeText
+                }
+                attrs.append((contentRange, codeContentAttrs))
                 // Suppress spell-check underlines on inline `code` spans (markers + content).
                 attrs.append((range, [.spellingState: 0]))
                 let revealCodeMarkers = ctx.revealMarker(range)

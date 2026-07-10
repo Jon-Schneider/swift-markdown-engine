@@ -307,10 +307,28 @@ public struct CodeBlockStyle: Sendable {
 public struct InlineCodeStyle: Sendable {
     /// Inline-code reuses the code block font size scale by default.
     public var fontSizeScale: CGFloat
+    /// Corner radius (points) of the inline-code background. Default `0`, which
+    /// keeps the historical flat `.backgroundColor` run. Any value > 0 switches
+    /// inline code to a drawn rounded "pill" behind the text.
+    public var cornerRadius: CGFloat
+    /// Horizontal padding (points) added to each side of the inline-code
+    /// background pill. Visual only — it widens the pill without reflowing the
+    /// surrounding text. Default `0`. A value > 0 also enables pill drawing.
+    public var horizontalPadding: CGFloat
 
-    public init(fontSizeScale: CGFloat = 0.85) {
+    public init(
+        fontSizeScale: CGFloat = 0.85,
+        cornerRadius: CGFloat = 0,
+        horizontalPadding: CGFloat = 0
+    ) {
         self.fontSizeScale = fontSizeScale
+        self.cornerRadius = cornerRadius
+        self.horizontalPadding = horizontalPadding
     }
+
+    /// Whether inline code should be drawn as a rounded pill (vs. the flat
+    /// `.backgroundColor` run). True when either the radius or padding is set.
+    public var usesPill: Bool { cornerRadius > 0 || horizontalPadding > 0 }
 
     public static let `default` = InlineCodeStyle()
 }

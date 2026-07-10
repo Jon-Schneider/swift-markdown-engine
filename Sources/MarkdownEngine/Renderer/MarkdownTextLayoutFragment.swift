@@ -35,6 +35,9 @@ extension NSAttributedString.Key {
     /// Marks a bullet-list marker char (`-`/`*`/`+`) whose glyph is hidden so
     /// the fragment can paint a `•` in its place. Set to `true`.
     static let bulletMarker = NSAttributedString.Key("BulletListMarker")
+    /// PlatformColor — inline-code background drawn as a rounded pill (instead
+    /// of the flat `.backgroundColor` run). Value is the fill color.
+    static let inlineCodePill = NSAttributedString.Key("InlineCodePill")
     /// CGFloat — natural image width; presence flags block as overlay-rendered.
     static let scrollableBlockNaturalWidth = NSAttributedString.Key("ScrollableBlockNaturalWidth")
     /// Int — hash of source text; key for overlay reconcile + offset persistence.
@@ -98,6 +101,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
         // 2. LaTeX images (behind text — hidden markers are invisible anyway)
         drawLatexImages(at: point, in: context)
+
+        // 2b. Inline-code pills (rounded background behind inline code text)
+        drawInlineCodePills(at: point, in: context)
 
         // 3. Normal text
         super.draw(at: point, in: context)
@@ -406,6 +412,43 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                     context.restoreGState()
                 } else {
                     image.draw(in: drawRect)
+                }
+            }
+        }
+    }
+
+    // MARK: - Inline Code Pills
+
+    /// Paint a rounded background behind every inline-code span carrying the
+    /// `.inlineCodePill` attribute. Uses TextKit 2 segment enumeration so a
+    /// span that soft-wraps gets one pill per visual line. `horizontalPadding`
+    /// widens each pill visually (it does not reflow text). Only runs when the
+    /// consumer opted into a pill (radius/padding > 0); otherwise inline code
+    /// keeps the flat `.backgroundColor` run and this is a no-op.
+    private func drawInlineCodePills(at point: CGPoint, in context: CGContext) {
+        guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return }
+        guard let ltm = textLayoutManager,
+              let contentStorage = ltm.textContentManager as? NSTextContentStorage else { return }
+        let style = renderingContext?.configuration.inlineCode ?? .default
+        let radius = max(0, style.cornerRadius)
+        let padding = max(0, style.horizontalPadding)
+        guard radius > 0 || padding > 0 else { return }
+
+        // Segment frames share the container coordinate space with
+        // `layoutFragmentFrame`; shift into this fragment's draw space.
+        let dx = point.x - layoutFragmentFrame.origin.x
+        let dy = point.y - layoutFragmentFrame.origin.y
+
+        withFlippedDrawingContext(context) {
+            ts.enumerateAttribute(.inlineCodePill, in: range, options: []) { value, attrRange, _ in
+                guard let color = value as? PlatformColor,
+                      let textRange = TextStylingService.textRange(from: attrRange, in: contentStorage) else { return }
+                color.setFill()
+                ltm.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segmentFrame, _, _ in
+                    let rect = segmentFrame.offsetBy(dx: dx, dy: dy).insetBy(dx: -padding, dy: 0)
+                    guard !rect.isNull, !rect.isEmpty else { return true }
+                    platformRoundedRectPath(rect, cornerRadius: radius).fill()
+                    return true
                 }
             }
         }
