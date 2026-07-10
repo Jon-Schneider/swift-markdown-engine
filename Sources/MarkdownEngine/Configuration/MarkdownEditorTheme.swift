@@ -50,6 +50,17 @@ public struct MarkdownEditorTheme: Sendable {
     /// back to ``mutedText`` at 50% alpha — the historical look; set it to
     /// pin the bar to a specific color/alpha.
     public var blockquoteBarColor: PlatformColor?
+    /// Tint for a checked task checkbox. `nil` (the default) falls back to
+    /// ``bodyText``. Apple Notes uses a warm yellow (`.systemYellow`).
+    public var checkboxCheckedTint: PlatformColor?
+    /// Tint for an unchecked task checkbox. `nil` (the default) falls back to
+    /// ``mutedText``.
+    public var checkboxUncheckedTint: PlatformColor?
+    /// Foreground color applied to the text of a COMPLETED task item (in
+    /// addition to the strikethrough). `nil` (the default) leaves the text at
+    /// its normal color, matching historical behavior; set it to dim completed
+    /// items the way Apple Notes does (e.g. ``mutedText``).
+    public var completedTaskText: PlatformColor?
 
     // MARK: Links
 
@@ -95,6 +106,9 @@ public struct MarkdownEditorTheme: Sendable {
         headingMarker: PlatformColor = .gray,
         bulletColor: PlatformColor? = nil,
         blockquoteBarColor: PlatformColor? = nil,
+        checkboxCheckedTint: PlatformColor? = nil,
+        checkboxUncheckedTint: PlatformColor? = nil,
+        completedTaskText: PlatformColor? = nil,
         link: PlatformColor = .platformLink,
         incompleteLink: PlatformColor = .systemBlue,
         findMatchHighlight: PlatformColor = .systemYellow,
@@ -109,6 +123,9 @@ public struct MarkdownEditorTheme: Sendable {
         self.headingMarker = headingMarker
         self.bulletColor = bulletColor
         self.blockquoteBarColor = blockquoteBarColor
+        self.checkboxCheckedTint = checkboxCheckedTint
+        self.checkboxUncheckedTint = checkboxUncheckedTint
+        self.completedTaskText = completedTaskText
         self.link = link
         self.incompleteLink = incompleteLink
         self.findMatchHighlight = findMatchHighlight
@@ -133,6 +150,18 @@ public struct MarkdownEditorTheme: Sendable {
     /// of buried in the layout-fragment renderer.
     public var resolvedBlockquoteBarColor: PlatformColor {
         blockquoteBarColor ?? mutedText.withAlphaComponent(0.5)
+    }
+
+    /// Effective checked-checkbox tint: ``checkboxCheckedTint`` when set, else
+    /// ``bodyText`` (the historical tint).
+    public var resolvedCheckboxCheckedTint: PlatformColor {
+        checkboxCheckedTint ?? bodyText
+    }
+
+    /// Effective unchecked-checkbox tint: ``checkboxUncheckedTint`` when set,
+    /// else ``mutedText`` (the historical tint).
+    public var resolvedCheckboxUncheckedTint: PlatformColor {
+        checkboxUncheckedTint ?? mutedText
     }
 
     /// System-native palette built from `NSColor` dynamic system colors.

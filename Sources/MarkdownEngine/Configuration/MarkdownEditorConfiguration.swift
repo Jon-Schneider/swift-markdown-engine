@@ -468,19 +468,29 @@ public struct CheckboxStyle: Sendable {
     public var sizeFromMarkerWidthFactor: CGFloat
     /// Inset applied inside the checkbox bounding box before drawing the icon.
     public var iconInsetFraction: CGFloat
+    /// SF Symbol name drawn for an unchecked box. Default `"square"`; Apple
+    /// Notes uses `"circle"`.
+    public var uncheckedSymbolName: String
+    /// SF Symbol name drawn for a checked box. Default `"checkmark.square.fill"`;
+    /// Apple Notes uses `"checkmark.circle.fill"`.
+    public var checkedSymbolName: String
 
     public init(
         minimumExtraSpacing: CGFloat = 2.0,
         extraSpacingPerFontPointFraction: CGFloat = 0.18,
         sizeFromFontHeightFactor: CGFloat = 1.2,
         sizeFromMarkerWidthFactor: CGFloat = 1.2,
-        iconInsetFraction: CGFloat = 0.01
+        iconInsetFraction: CGFloat = 0.01,
+        uncheckedSymbolName: String = "square",
+        checkedSymbolName: String = "checkmark.square.fill"
     ) {
         self.minimumExtraSpacing = minimumExtraSpacing
         self.extraSpacingPerFontPointFraction = extraSpacingPerFontPointFraction
         self.sizeFromFontHeightFactor = sizeFromFontHeightFactor
         self.sizeFromMarkerWidthFactor = sizeFromMarkerWidthFactor
         self.iconInsetFraction = iconInsetFraction
+        self.uncheckedSymbolName = uncheckedSymbolName
+        self.checkedSymbolName = checkedSymbolName
     }
 
     public static let `default` = CheckboxStyle()

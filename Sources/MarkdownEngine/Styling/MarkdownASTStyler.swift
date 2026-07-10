@@ -197,10 +197,17 @@ enum MarkdownASTStyler {
             if spacer.length > 0 { attrs.append((spacer, [.foregroundColor: PlatformColor.clear])) }
             attrs.append((box, [.taskCheckbox: item.checked, .foregroundColor: PlatformColor.clear]))
             if item.checked, NSMaxRange(item.range) > NSMaxRange(box) {
-                attrs.append((NSRange(location: NSMaxRange(box), length: NSMaxRange(item.range) - NSMaxRange(box)), [
+                let completedRange = NSRange(location: NSMaxRange(box), length: NSMaxRange(item.range) - NSMaxRange(box))
+                var completedAttrs: [NSAttributedString.Key: Any] = [
                     .strikethroughStyle: NSUnderlineStyle.single.rawValue,
                     .strikethroughColor: ctx.theme.strikethroughColor,
-                ]))
+                ]
+                // Optionally dim completed-item text (Apple Notes does this);
+                // nil leaves the text at its normal color (historical default).
+                if let dimmed = ctx.theme.completedTaskText {
+                    completedAttrs[.foregroundColor] = dimmed
+                }
+                attrs.append((completedRange, completedAttrs))
             }
         } else if !item.ordered {
             let syntax = NSRange(location: item.marker.location,
