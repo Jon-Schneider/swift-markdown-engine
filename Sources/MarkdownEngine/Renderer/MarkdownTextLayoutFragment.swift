@@ -372,6 +372,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     private func drawLatexImages(at point: CGPoint, in context: CGContext) {
         guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return }
 
+        let imageCornerRadius = max(0, renderingContext?.configuration.imageEmbed.cornerRadius ?? 0)
         withFlippedDrawingContext(context) {
             ts.enumerateAttribute(.latexImage, in: range, options: []) { [weak self] value, attrRange, _ in
                 guard let self, let image = value as? PlatformImage else { return }
@@ -398,7 +399,14 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                                       y: pos.baselineY + descent - imageBounds.height,
                                       width: imageBounds.width, height: imageBounds.height)
                 }
-                image.draw(in: drawRect)
+                if imageCornerRadius > 0 {
+                    context.saveGState()
+                    platformRoundedRectPath(drawRect, cornerRadius: imageCornerRadius).addClip()
+                    image.draw(in: drawRect)
+                    context.restoreGState()
+                } else {
+                    image.draw(in: drawRect)
+                }
             }
         }
     }

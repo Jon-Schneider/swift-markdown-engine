@@ -449,19 +449,26 @@ public struct ImageEmbedStyle: Sendable {
     public var paragraphSpacing: CGFloat
     /// Gap between the source line and the rendered image (visibleSource mode).
     public var imageGap: CGFloat
+    /// Corner radius (points) applied when drawing a rendered image. Default `0`
+    /// (square, historical). Set it to round embedded images like Apple Notes.
+    /// (Applies to raster embeds; LaTeX formula images rarely reach the corners,
+    /// so it is effectively a no-op for them.)
+    public var cornerRadius: CGFloat
 
     public init(
         minimumWidth: CGFloat = 50,
         fallbackMaxWidth: CGFloat = 650,
         unreasonableMaxWidth: CGFloat = 1_000_000,
         paragraphSpacing: CGFloat = 8,
-        imageGap: CGFloat = 8
+        imageGap: CGFloat = 8,
+        cornerRadius: CGFloat = 0
     ) {
         self.minimumWidth = minimumWidth
         self.fallbackMaxWidth = fallbackMaxWidth
         self.unreasonableMaxWidth = unreasonableMaxWidth
         self.paragraphSpacing = paragraphSpacing
         self.imageGap = imageGap
+        self.cornerRadius = cornerRadius
     }
 
     public static let `default` = ImageEmbedStyle()
