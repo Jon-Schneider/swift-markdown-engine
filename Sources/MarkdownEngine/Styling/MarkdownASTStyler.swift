@@ -203,7 +203,7 @@ enum MarkdownASTStyler {
         ps.paragraphSpacingBefore = 0
         ps.tabStops = []
         ps.defaultTabInterval = ctx.config.lists.indentPerLevel
-        ps.firstLineHeadIndent = ctx.config.lists.indentPerLevel
+        ps.firstLineHeadIndent = ctx.config.lists.firstLineIndentPerLevel ?? ctx.config.lists.indentPerLevel
         ps.headIndent = ctx.config.lists.indentPerLevel + depthIndent + markerWidth + extraSpacing
         attrs.append((line, [.paragraphStyle: ps]))
 

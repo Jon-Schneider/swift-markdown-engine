@@ -350,6 +350,13 @@ public struct ListStyle: Sendable {
     public var tableNavigationEnabled: Bool
     /// Indent (in points) that one nesting level adds to the list item.
     public var indentPerLevel: CGFloat
+    /// Indent (in points) of a list item's FIRST line — the bullet/number line —
+    /// when you want it to differ from `indentPerLevel`. `nil` (the default) keeps
+    /// `firstLineHeadIndent == indentPerLevel` (historical behavior). Set it below
+    /// `indentPerLevel` to pull the marker toward the margin while wrapped lines keep
+    /// hanging under the text; above it for a traditional first-line indent. Applies
+    /// to the item's own level only — deeper nesting still adds `indentPerLevel` per level.
+    public var firstLineIndentPerLevel: CGFloat?
     /// Maximum nesting level reachable by pressing Tab inside a list.
     public var maximumNestingLevel: Int
     /// Extra line height added on top of the default to give list items room.
@@ -376,6 +383,7 @@ public struct ListStyle: Sendable {
         autoClosePairsEnabled: Bool = true,
         tableNavigationEnabled: Bool = true,
         indentPerLevel: CGFloat = 27.5,
+        firstLineIndentPerLevel: CGFloat? = nil,
         maximumNestingLevel: Int = 3,
         extraLineHeight: CGFloat = 2,
         bulletGlyph: String = "•",
@@ -386,6 +394,7 @@ public struct ListStyle: Sendable {
         self.autoClosePairsEnabled = autoClosePairsEnabled
         self.tableNavigationEnabled = tableNavigationEnabled
         self.indentPerLevel = indentPerLevel
+        self.firstLineIndentPerLevel = firstLineIndentPerLevel
         self.maximumNestingLevel = maximumNestingLevel
         self.extraLineHeight = extraLineHeight
         self.bulletGlyph = bulletGlyph
