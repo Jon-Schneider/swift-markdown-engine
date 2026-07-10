@@ -42,6 +42,14 @@ public struct MarkdownEditorTheme: Sendable {
     public var disabledText: PlatformColor
     /// Foreground color for heading marker glyphs (`#`, `##`, …).
     public var headingMarker: PlatformColor
+    /// Fill color for unordered-list bullet glyphs. `nil` (the default) falls
+    /// back to ``bodyText`` so the bullet tracks body ink; set it to give
+    /// bullets their own color (e.g. Apple Notes' muted gray dot).
+    public var bulletColor: PlatformColor?
+    /// Fill color for the vertical blockquote bar. `nil` (the default) falls
+    /// back to ``mutedText`` at 50% alpha — the historical look; set it to
+    /// pin the bar to a specific color/alpha.
+    public var blockquoteBarColor: PlatformColor?
 
     // MARK: Links
 
@@ -85,6 +93,8 @@ public struct MarkdownEditorTheme: Sendable {
         mutedText: PlatformColor = .platformSecondaryLabel,
         disabledText: PlatformColor = .platformTertiaryLabel,
         headingMarker: PlatformColor = .gray,
+        bulletColor: PlatformColor? = nil,
+        blockquoteBarColor: PlatformColor? = nil,
         link: PlatformColor = .platformLink,
         incompleteLink: PlatformColor = .systemBlue,
         findMatchHighlight: PlatformColor = .systemYellow,
@@ -97,6 +107,8 @@ public struct MarkdownEditorTheme: Sendable {
         self.mutedText = mutedText
         self.disabledText = disabledText
         self.headingMarker = headingMarker
+        self.bulletColor = bulletColor
+        self.blockquoteBarColor = blockquoteBarColor
         self.link = link
         self.incompleteLink = incompleteLink
         self.findMatchHighlight = findMatchHighlight

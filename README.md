@@ -209,6 +209,30 @@ configuration.lists.helpersEnabled = false
 configuration.safeAreaInsets = SafeAreaInsets(top: 56)   // headroom under a translucent toolbar
 ```
 
+#### Bullets & blockquotes (Apple Notes look)
+
+The bullet glyph/size and the blockquote bar geometry are configurable, and
+their colors live in the theme (both default to the historical look, so
+`.default` is unchanged):
+
+```swift
+// Bullets: smaller, muted-gray dot like Apple Notes
+configuration.lists.bulletGlyph = "•"
+configuration.lists.bulletGlyphSizeScale = 0.7   // fraction of the line font
+configuration.theme.bulletColor = .platformSecondaryLabel   // nil = bodyText
+
+// Blockquote: thinner bar, tighter indent, custom tint
+configuration.blockquote.barWidth = 3
+configuration.blockquote.indentPerLevel = 18   // moves bar + text together
+configuration.blockquote.extraLineHeight = 4
+configuration.theme.blockquoteBarColor = .platformTertiaryLabel   // nil = mutedText @ 50%
+```
+
+The colors above use the engine's `platform…` cross-platform aliases (see
+`Platform.swift`); pass any `PlatformColor` you like. `bulletGlyphSizeScale`
+optically centers the dot on the text as it shrinks, and `indentPerLevel` is
+shared by the painted bar and the quoted text so they move together.
+
 ### Wiki-Links & Replacement State
 
 Two optional bindings on `NativeTextViewWrapper` let you observe
