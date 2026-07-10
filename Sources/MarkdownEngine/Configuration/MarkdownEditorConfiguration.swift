@@ -497,25 +497,40 @@ public struct CheckboxStyle: Sendable {
 public struct BlockquoteStyle: Sendable {
     /// Extra height (points) added to the default line height for blockquote lines.
     public var extraLineHeight: CGFloat
-    /// Horizontal space (points) each nesting level occupies. Both the painted
-    /// bar gutter and the quoted-text indent derive from this single value, so
-    /// overriding it moves them together in every normal render path. (The
-    /// painter reads it live from the render context and the styler bakes it
-    /// into the paragraph style, so the two only diverge in the degraded case
-    /// where a fragment draws with a torn-down context and falls back to the
-    /// default.)
+    /// Width (points) of each nesting column — the per-level step applied to
+    /// both the painted bar gutter and the quoted-text indent, so overriding it
+    /// moves them together in every normal render path. Position *within* the
+    /// column is set by ``barLeadingInset`` / ``textLeadingInset``. (The painter
+    /// reads this live from the render context and the styler bakes it into the
+    /// paragraph style, so the two only diverge in the degraded case where a
+    /// fragment draws with a torn-down context and falls back to the default.)
     public var indentPerLevel: CGFloat
     /// Width (points) of each painted vertical quote bar.
     public var barWidth: CGFloat
+    /// Left offset (points) of each bar from the left edge of its own nesting
+    /// column. Independent of ``indentPerLevel`` so the bar's position within
+    /// its column and the column width can be tuned separately. Keep
+    /// `barLeadingInset + barWidth <= indentPerLevel` or a bar will overrun
+    /// into the next level's column.
+    public var barLeadingInset: CGFloat
+    /// Gap (points) between the innermost nesting column's left edge and the
+    /// start of the quoted text — i.e. text indent is
+    /// `level * indentPerLevel + textLeadingInset`. Independent of
+    /// ``barLeadingInset`` so the bar-to-text gap is directly controllable.
+    public var textLeadingInset: CGFloat
 
     public init(
         extraLineHeight: CGFloat = 0,
         indentPerLevel: CGFloat = 18,
-        barWidth: CGFloat = 3
+        barWidth: CGFloat = 3,
+        barLeadingInset: CGFloat = 4.5,
+        textLeadingInset: CGFloat = 9
     ) {
         self.extraLineHeight = extraLineHeight
         self.indentPerLevel = indentPerLevel
         self.barWidth = barWidth
+        self.barLeadingInset = barLeadingInset
+        self.textLeadingInset = textLeadingInset
     }
 
     public static let `default` = BlockquoteStyle()

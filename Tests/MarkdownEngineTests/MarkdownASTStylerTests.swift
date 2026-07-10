@@ -209,7 +209,8 @@ struct BlockquoteIndentConfigTests {
     @Test("default blockquote indent reproduces the historical 18pt geometry")
     func defaultGeometryUnchanged() {
         let attrs = style("> quote", .default)
-        // textIndent = level*indentPerLevel + indentPerLevel*0.5 = 1*18 + 9 = 27.
+        // textIndent = level*indentPerLevel + textLeadingInset = 1*18 + 9 = 27,
+        // matching the pre-config `1*18 + 18*0.5` the defaults were chosen from.
         #expect(headIndent(in: attrs, at: 4) == 27)
     }
 
@@ -218,8 +219,9 @@ struct BlockquoteIndentConfigTests {
         var config = MarkdownEditorConfiguration.default
         config.blockquote.indentPerLevel = 24
         let attrs = style("> quote", config)
-        // 1*24 + 24*0.5 = 36.
-        #expect(headIndent(in: attrs, at: 4) == 36)
+        // 1*24 + textLeadingInset(9) = 33. textLeadingInset is now independent
+        // of indentPerLevel (previously a coupled 0.5*indent half-step).
+        #expect(headIndent(in: attrs, at: 4) == 33)
     }
 
     @Test("indent scales with nesting level")
@@ -227,9 +229,19 @@ struct BlockquoteIndentConfigTests {
         var config = MarkdownEditorConfiguration.default
         config.blockquote.indentPerLevel = 20
         let attrs = style(">> deep", config)
-        // level 2: 2*20 + 20*0.5 = 50; "deep" begins after ">> ".
+        // level 2: 2*20 + textLeadingInset(9) = 49; "deep" begins after ">> ".
         let pos = (">> deep" as NSString).range(of: "deep").location
-        #expect(headIndent(in: attrs, at: pos) == 50)
+        #expect(headIndent(in: attrs, at: pos) == 49)
+    }
+
+    @Test("textLeadingInset controls the bar-to-text gap independently of indentPerLevel")
+    func textLeadingInsetIsIndependent() {
+        var config = MarkdownEditorConfiguration.default
+        config.blockquote.indentPerLevel = 18   // unchanged column width
+        config.blockquote.textLeadingInset = 20 // widen the gap only
+        let attrs = style("> quote", config)
+        // 1*18 + 20 = 38 — the column width didn't move, just the text gap.
+        #expect(headIndent(in: attrs, at: 4) == 38)
     }
 }
 

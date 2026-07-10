@@ -464,7 +464,8 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         let theme = configuration.theme
         let indentPerLevel = configuration.blockquote.indentPerLevel
         let barWidth = configuration.blockquote.barWidth
-        let barColor = theme.blockquoteBarColor ?? theme.mutedText.withAlphaComponent(0.5)
+        let barLeadingInset = configuration.blockquote.barLeadingInset
+        let barColor = theme.resolvedBlockquoteBarColor
 
         withFlippedDrawingContext(context) {
             barColor.setFill()
@@ -483,7 +484,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                     // tb.origin.y is already relative to this layout fragment.
                     let barY = point.y + tb.origin.y
                     for i in 0..<level {
-                        let barX = leftEdge + CGFloat(i) * indentPerLevel + indentPerLevel * 0.25
+                        let barX = leftEdge + CGFloat(i) * indentPerLevel + barLeadingInset
                         PlatformBezierPath(rect: CGRect(
                             x: barX, y: barY, width: barWidth, height: tb.height
                         )).fill()
@@ -509,7 +510,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
         let configuration = renderingContext?.configuration ?? .default
         let theme = configuration.theme
-        let bulletColor = theme.bulletColor ?? theme.bodyText
+        let bulletColor = theme.resolvedBulletColor
         // An empty glyph would hide the (already-suppressed) marker entirely,
         // leaving list structure invisible — fall back to the default dot.
         let glyphString = configuration.lists.bulletGlyph.isEmpty ? "•" : configuration.lists.bulletGlyph

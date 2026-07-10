@@ -13,10 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ListStyle.bulletGlyph` (default `•`) and `ListStyle.bulletGlyphSizeScale`
     (default `1.0`, a fraction of the line font; the glyph is optically centered
     on the text as it scales).
-  - `BlockquoteStyle.indentPerLevel` (default `18`, shared by the painted bar and
-    the quoted-text indent) and `BlockquoteStyle.barWidth` (default `3`).
+  - `BlockquoteStyle.indentPerLevel` (default `18`, the per-level column width
+    for the bar and the text), `BlockquoteStyle.barWidth` (default `3`), and
+    `BlockquoteStyle.barLeadingInset` / `textLeadingInset` (defaults `4.5` / `9`)
+    which position the bar within its column and the quoted text after it, so the
+    bar-to-text gap is tunable independently of the column width.
   - `MarkdownEditorTheme.bulletColor` and `MarkdownEditorTheme.blockquoteBarColor`
-    (both optional; `nil` preserves the historical `bodyText` / `mutedText @ 50%`).
+    (both optional; `nil` preserves the historical `bodyText` / `mutedText @ 50%`),
+    resolved through `MarkdownEditorTheme.resolvedBulletColor` /
+    `resolvedBlockquoteBarColor` so the fallback derivation lives in the theme.
   All defaults reproduce the previous rendering, so `.default` is unchanged. The
   previously-internal `MarkdownTextLayoutFragment.blockquoteIndentPerLevel` /
   `blockquoteBarWidth` constants were removed in favor of the config values.

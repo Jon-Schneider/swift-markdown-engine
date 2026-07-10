@@ -223,15 +223,21 @@ configuration.theme.bulletColor = .platformSecondaryLabel   // nil = bodyText
 
 // Blockquote: thinner bar, tighter indent, custom tint
 configuration.blockquote.barWidth = 3
-configuration.blockquote.indentPerLevel = 18   // moves bar + text together
+configuration.blockquote.indentPerLevel = 18   // per-level column width (bar + text)
+configuration.blockquote.barLeadingInset = 4.5 // bar offset within its column
+configuration.blockquote.textLeadingInset = 9  // bar-to-text gap, tuned independently
 configuration.blockquote.extraLineHeight = 4
 configuration.theme.blockquoteBarColor = .platformTertiaryLabel   // nil = mutedText @ 50%
 ```
 
 The colors above use the engine's `platform…` cross-platform aliases (see
 `Platform.swift`); pass any `PlatformColor` you like. `bulletGlyphSizeScale`
-optically centers the dot on the text as it shrinks, and `indentPerLevel` is
-shared by the painted bar and the quoted text so they move together.
+optically centers the dot on the text as it shrinks. For blockquotes,
+`indentPerLevel` sets the per-level column width while `barLeadingInset` and
+`textLeadingInset` position the bar and the quoted text within/after it — so
+the bar-to-text gap is controllable without touching the column width. Keep
+`barLeadingInset + barWidth <= indentPerLevel` so a bar can't overrun into the
+next nesting level.
 
 ### Wiki-Links & Replacement State
 
