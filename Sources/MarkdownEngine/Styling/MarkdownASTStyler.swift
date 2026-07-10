@@ -344,7 +344,8 @@ enum MarkdownASTStyler {
             headingPara.minimumLineHeight = lineHeight
             headingPara.maximumLineHeight = lineHeight
             headingPara.paragraphSpacingBefore = headingFont.pointSize * ctx.config.headings.topSpacingEm(for: level)
-            headingPara.paragraphSpacing = ctx.baseParagraphSpacing
+            headingPara.paragraphSpacing = ctx.config.headings.bottomSpacingEm(for: level)
+                .map { headingFont.pointSize * $0 } ?? ctx.baseParagraphSpacing
             attrs.append((ctx.ns.paragraphRange(for: range), [.paragraphStyle: headingPara]))
             attrs.append((range, [.font: headingFont]))
             for marker in markers {
