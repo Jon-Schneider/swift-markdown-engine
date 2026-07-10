@@ -586,10 +586,19 @@ public struct LinkStyle: Sendable {
     /// Foreground alpha applied to "incomplete" link content (e.g. `[text]`
     /// without a target).
     public var incompleteLinkAlpha: CGFloat
+    /// Whether a resolved (non-editing) link draws a single underline. Default
+    /// `true` (historical). Set `false` for a color-only link, as Apple Notes
+    /// shows for detected links.
+    public var underlinesResolvedLinks: Bool
 
-    public init(activeLinkAlpha: CGFloat = 0.55, incompleteLinkAlpha: CGFloat = 0.7) {
+    public init(
+        activeLinkAlpha: CGFloat = 0.55,
+        incompleteLinkAlpha: CGFloat = 0.7,
+        underlinesResolvedLinks: Bool = true
+    ) {
         self.activeLinkAlpha = activeLinkAlpha
         self.incompleteLinkAlpha = incompleteLinkAlpha
+        self.underlinesResolvedLinks = underlinesResolvedLinks
     }
 
     public static let `default` = LinkStyle()

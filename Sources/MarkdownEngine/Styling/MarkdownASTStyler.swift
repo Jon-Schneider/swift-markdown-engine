@@ -583,11 +583,14 @@ enum MarkdownASTStyler {
                     .foregroundColor: ctx.theme.link.withAlphaComponent(ctx.config.link.activeLinkAlpha),
                 ]))
             } else {
-                attrs.append((textRange, [
+                var linkAttrs: [NSAttributedString.Key: Any] = [
                     .link: url,
-                    .underlineStyle: NSUnderlineStyle.single.rawValue,
                     .foregroundColor: ctx.theme.link,
-                ]))
+                ]
+                if ctx.config.link.underlinesResolvedLinks {
+                    linkAttrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                }
+                attrs.append((textRange, linkAttrs))
             }
         }
         for marker in markers { attrs.append((marker, [.foregroundColor: ctx.theme.mutedText])) }
