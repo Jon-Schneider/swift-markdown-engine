@@ -428,6 +428,23 @@ struct MacOSPendingAttachmentTests {
         }
         #expect(!urlVisible, "the raw pending URL must be hidden, not rendered as visible text")
     }
+
+    @Test("the chip resolves its dynamic color per scheme — light and dark rasters differ")
+    func chipResolvesColorPerScheme() {
+        // Fixed fill isolates the muted text/border color: a difference proves `mutedText` (a dynamic
+        // catalog color) is resolved for the target scheme, not frozen at the ambient appearance.
+        let font = NSFont.systemFont(ofSize: 14)
+        let light = PendingAttachmentChip.render(
+            alt: "x", baseFont: font, mutedText: .secondaryLabelColor,
+            fillColor: .white, colorScheme: .light, maxWidth: 200
+        )
+        let dark = PendingAttachmentChip.render(
+            alt: "x", baseFont: font, mutedText: .secondaryLabelColor,
+            fillColor: .white, colorScheme: .dark, maxWidth: 200
+        )
+        #expect(light.tiffRepresentation != dark.tiffRepresentation,
+                "the muted color must resolve differently in light vs dark")
+    }
 }
 
 #endif

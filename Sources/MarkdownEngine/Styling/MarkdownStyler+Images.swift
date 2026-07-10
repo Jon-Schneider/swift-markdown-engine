@@ -60,13 +60,11 @@ extension MarkdownStyler {
                     }
                     return pendingConfig.fallbackMaxWidth
                 }()
-                let mutedColor = ctx.configuration.theme.mutedText
                 let chip = PendingAttachmentChip.render(
                     alt: alt,
                     baseFont: ctx.baseFont,
-                    textColor: mutedColor,
+                    mutedText: ctx.configuration.theme.mutedText,   // resolved per-scheme inside render
                     fillColor: ctx.codeBackgroundColor,
-                    borderColor: mutedColor.withAlphaComponent(0.3),
                     colorScheme: ctx.colorScheme,
                     maxWidth: min(containerWidth, 260)   // compact — it sits inline within a line
                 )

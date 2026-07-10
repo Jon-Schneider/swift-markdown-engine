@@ -42,36 +42,42 @@ enum PendingAttachmentChip {
     private static let verticalPadding: CGFloat = 3
     private static let symbolGap: CGFloat = 6
 
-    /// A chip image sized to fit within `maxWidth`. Colors are passed in resolved (from the editor
-    /// theme) so the renderer stays free-function/testable. `colorScheme` is part of the cache key
-    /// because the default theme's `mutedText` is a DYNAMIC catalog color whose `.description` is
-    /// identical in light and dark — without it, a light→dark flip would return the stale light
-    /// raster. Cached by content + size + scheme + colors.
+    /// A chip image sized to the LINE HEIGHT of `baseFont` (so, rendered inline, it can't overflow
+    /// the line and get clipped) and to fit within `maxWidth`. `mutedText` is the theme's (possibly
+    /// DYNAMIC) foreground color; it is resolved to a concrete color for `colorScheme` BEFORE alpha
+    /// and rasterization — otherwise a dynamic catalog color freezes at the ambient appearance and a
+    /// light→dark flip shows the wrong colors. Cached by content + size + scheme.
     static func render(
         alt: String,
         baseFont: PlatformFont,
-        textColor: PlatformColor,
+        mutedText: PlatformColor,
         fillColor: PlatformColor,
-        borderColor: PlatformColor,
         colorScheme: MarkdownColorScheme,
         maxWidth: CGFloat
     ) -> PlatformImage {
-        let labelFont = PlatformFont.systemFont(ofSize: max(baseFont.pointSize * 0.9, 11))
+        let textColor = resolve(mutedText, for: colorScheme)
+        let borderColor = textColor.withAlphaComponent(0.3)
+        let resolvedFill = resolve(fillColor, for: colorScheme)
+        let chipHeight = ceil(baseFont.ascender - baseFont.descender + baseFont.leading)
+        let labelFont = PlatformFont.systemFont(
+            ofSize: max(min(baseFont.pointSize * 0.78, chipHeight - verticalPadding * 2), 9)
+        )
         let key = Key(
             alt: alt,
             fontSize: labelFont.pointSize,
             width: Int(maxWidth.rounded()),
             colorScheme: colorScheme,
             text: textColor.description,
-            fill: fillColor.description,
+            fill: resolvedFill.description,
             border: borderColor.description
         )
         lock.lock()
         if let cached = cache[key] { lock.unlock(); return cached }
         lock.unlock()
 
-        let image = draw(alt: alt, labelFont: labelFont, textColor: textColor,
-                         fillColor: fillColor, borderColor: borderColor, maxWidth: maxWidth)
+        let image = draw(alt: alt, labelFont: labelFont, chipHeight: chipHeight,
+                         textColor: textColor, fillColor: resolvedFill, borderColor: borderColor,
+                         maxWidth: maxWidth)
         lock.lock()
         if cache.count >= cacheCap { cache.removeAll(keepingCapacity: true) }
         cache[key] = image
@@ -79,9 +85,24 @@ enum PendingAttachmentChip {
         return image
     }
 
+    /// Resolve a (possibly dynamic catalog) color to a concrete color for `scheme`, so the raster
+    /// doesn't freeze at the ambient appearance. Mirrors `MarkdownStyler+Tables`' resolution.
+    private static func resolve(_ color: PlatformColor, for scheme: MarkdownColorScheme) -> PlatformColor {
+#if canImport(UIKit)
+        return color.resolvedColor(with: UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light))
+#else
+        var resolved = color
+        scheme.appKitAppearance.performAsCurrentDrawingAppearance {
+            resolved = color.usingColorSpace(.sRGB) ?? color
+        }
+        return resolved
+#endif
+    }
+
     private static func draw(
         alt: String,
         labelFont: PlatformFont,
+        chipHeight: CGFloat,
         textColor: PlatformColor,
         fillColor: PlatformColor,
         borderColor: PlatformColor,
@@ -89,18 +110,16 @@ enum PendingAttachmentChip {
     ) -> PlatformImage {
         let labelString = alt.isEmpty ? "Uploading…" : "Uploading “\(alt)”…"
 
-        let symbolSide = ceil(labelFont.pointSize)
+        let symbolSide = min(ceil(labelFont.pointSize), chipHeight - verticalPadding * 2)
         let symbol = tintedSymbolImage(named: "arrow.up.circle",
                                        pointSize: labelFont.pointSize, tint: textColor)
         let symbolWidth = symbol != nil ? symbolSide + symbolGap : 0
 
-        let contentHeight = ceil(labelFont.ascender - labelFont.descender)
-        let chipHeight = contentHeight + verticalPadding * 2
+        let contentHeight = min(ceil(labelFont.ascender - labelFont.descender), chipHeight - verticalPadding * 2)
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingMiddle
-        let labelAttrs: [NSAttributedString.Key: Any] = [.font: labelFont, .foregroundColor: textColor]
-        let measured = (labelString as NSString).size(withAttributes: labelAttrs).width
+        let measured = (labelString as NSString).size(withAttributes: [.font: labelFont]).width
 
         let chrome = horizontalPadding * 2 + symbolWidth
         let chipWidth = min(ceil(chrome + measured), max(maxWidth, chrome + 24))
@@ -119,15 +138,16 @@ enum PendingAttachmentChip {
 
             var textX = horizontalPadding
             if let symbol {
-                let symbolY = (chipHeight - symbolSide) / 2
-                symbol.draw(in: CGRect(x: horizontalPadding, y: symbolY, width: symbolSide, height: symbolSide))
+                symbol.draw(in: CGRect(x: horizontalPadding, y: (chipHeight - symbolSide) / 2,
+                                       width: symbolSide, height: symbolSide))
                 textX += symbolWidth
             }
-            let labelString2 = NSAttributedString(
+            let attributed = NSAttributedString(
                 string: labelString,
                 attributes: [.font: labelFont, .foregroundColor: textColor, .paragraphStyle: paragraph]
             )
-            labelString2.draw(in: CGRect(x: textX, y: verticalPadding, width: labelWidth, height: contentHeight))
+            attributed.draw(in: CGRect(x: textX, y: (chipHeight - contentHeight) / 2,
+                                       width: labelWidth, height: contentHeight))
         }
     }
 }
