@@ -118,6 +118,23 @@ public struct MarkdownEditorTheme: Sendable {
         self.strikethroughColor = strikethroughColor
     }
 
+    // MARK: Resolved (derived) colors
+
+    /// The effective bullet color: ``bulletColor`` when set, otherwise
+    /// ``bodyText``. Renderers should read this rather than re-deriving the
+    /// fallback, so the "all colors route through the theme" contract holds.
+    public var resolvedBulletColor: PlatformColor {
+        bulletColor ?? bodyText
+    }
+
+    /// The effective blockquote bar color: ``blockquoteBarColor`` when set,
+    /// otherwise ``mutedText`` at 50% alpha (the historical derivation). This
+    /// keeps the `0.5` factor in the theme — where colors are owned — instead
+    /// of buried in the layout-fragment renderer.
+    public var resolvedBlockquoteBarColor: PlatformColor {
+        blockquoteBarColor ?? mutedText.withAlphaComponent(0.5)
+    }
+
     /// System-native palette built from `NSColor` dynamic system colors.
     ///
     /// Use this if you want the engine to look like a stock macOS

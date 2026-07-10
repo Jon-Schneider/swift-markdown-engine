@@ -383,7 +383,7 @@ enum MarkdownASTStyler {
             let contentRange = NSRange(location: j, length: max(0, contentEnd - j))
             let tokenRange = NSRange(location: line.location, length: contentEnd - line.location)
 
-            let textIndent = CGFloat(level) * indentPerLevel + indentPerLevel * 0.5
+            let textIndent = CGFloat(level) * indentPerLevel + ctx.config.blockquote.textLeadingInset
             let para = NSMutableParagraphStyle()
             para.firstLineHeadIndent = textIndent
             para.headIndent = textIndent
