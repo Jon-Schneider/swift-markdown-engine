@@ -373,15 +373,22 @@ public struct HeadingStyle: Sendable {
     /// Apple Notes varies weight by level (e.g. bold title, semibold
     /// subheading), which this array makes possible.
     public var fontWeights: [PlatformFont.Weight]
+    /// Optional bottom spacing in `em` units per heading level (1...6),
+    /// measured against the heading's own font size. `nil` (the default)
+    /// reuses the body paragraph spacing, matching historical behavior; set it
+    /// to give headings dedicated breathing room before the next block.
+    public var bottomSpacingEm: [CGFloat]?
 
     public init(
         fontMultipliers: [CGFloat] = [2.0, 1.5, 1.17, 1.0, 0.83, 0.67],
         topSpacingEm: [CGFloat] = [0.35, 0.30, 0.25, 0.20, 0.15, 0.10],
-        fontWeights: [PlatformFont.Weight] = [.bold, .bold, .bold, .bold, .bold, .bold]
+        fontWeights: [PlatformFont.Weight] = [.bold, .bold, .bold, .bold, .bold, .bold],
+        bottomSpacingEm: [CGFloat]? = nil
     ) {
         self.fontMultipliers = fontMultipliers
         self.topSpacingEm = topSpacingEm
         self.fontWeights = fontWeights
+        self.bottomSpacingEm = bottomSpacingEm
     }
 
     public func fontMultiplier(for level: Int) -> CGFloat {
@@ -397,6 +404,13 @@ public struct HeadingStyle: Sendable {
     public func fontWeight(for level: Int) -> PlatformFont.Weight {
         let index = max(1, min(level, fontWeights.count)) - 1
         return fontWeights[index]
+    }
+
+    /// Bottom spacing (em) for `level`, or `nil` to fall back to body spacing.
+    public func bottomSpacingEm(for level: Int) -> CGFloat? {
+        guard let values = bottomSpacingEm, !values.isEmpty else { return nil }
+        let index = max(1, min(level, values.count)) - 1
+        return values[index]
     }
 
     public static let `default` = HeadingStyle()
