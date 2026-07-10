@@ -43,6 +43,11 @@ enum MarkdownASTStyler {
         let hiddenSize = configuration.markers.hiddenMarkerFontSize
         let ns = text as NSString
         let codeFont = configuration.services.syntaxHighlighter.codeFont(size: codeFontSize)
+        // Inline `code` sizes off its OWN scale (was erroneously sharing the
+        // block scale). Defaults coincide (0.85), so this is a no-op unless a
+        // consumer sets `inlineCode.fontSizeScale` distinctly.
+        let inlineCodeFontSize = round(fontSize * configuration.inlineCode.fontSizeScale)
+        let inlineCodeFont = configuration.services.syntaxHighlighter.codeFont(size: inlineCodeFontSize)
         let codeLineHeight = ceil(codeFont.ascender - codeFont.descender + codeFont.leading)
         let codePara = NSMutableParagraphStyle()
         codePara.lineBreakMode = .byCharWrapping
@@ -61,6 +66,7 @@ enum MarkdownASTStyler {
             baseLineHeight: baseLineHeight,
             baseParagraphSpacing: baseParagraphSpacing,
             codeFont: codeFont,
+            inlineCodeFont: inlineCodeFont,
             codeBackground: configuration.services.syntaxHighlighter.backgroundColor(for: colorScheme),
             codeParagraphStyle: codePara,
             inlineMarkerFont: PlatformFont(name: fontName, size: hiddenSize) ?? .systemFont(ofSize: hiddenSize),
@@ -242,6 +248,7 @@ enum MarkdownASTStyler {
         let baseLineHeight: CGFloat
         let baseParagraphSpacing: CGFloat
         let codeFont: PlatformFont
+        let inlineCodeFont: PlatformFont
         let codeBackground: PlatformColor
         let codeParagraphStyle: NSParagraphStyle
         let inlineMarkerFont: PlatformFont
@@ -523,12 +530,12 @@ enum MarkdownASTStyler {
                 styleInlines(children, font: font, ctx: ctx, into: &attrs)
 
             case .code(let range, let contentRange):
-                attrs.append((contentRange, [.font: ctx.codeFont, .backgroundColor: ctx.codeBackground]))
+                attrs.append((contentRange, [.font: ctx.inlineCodeFont, .backgroundColor: ctx.codeBackground]))
                 // Suppress spell-check underlines on inline `code` spans (markers + content).
                 attrs.append((range, [.spellingState: 0]))
                 let revealCodeMarkers = ctx.revealMarker(range)
                 var markerAttrs: [NSAttributedString.Key: Any] = revealCodeMarkers
-                    ? [.foregroundColor: ctx.theme.mutedText, .font: ctx.codeFont]
+                    ? [.foregroundColor: ctx.theme.mutedText, .font: ctx.inlineCodeFont]
                     : [.foregroundColor: ctx.theme.mutedText.withAlphaComponent(ctx.config.markers.inlineCodeMarkerAlpha),
                        .font: ctx.inlineMarkerFont]
                 if !revealCodeMarkers && ctx.collapsesHiddenMarkers {

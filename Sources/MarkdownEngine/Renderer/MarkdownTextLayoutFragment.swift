@@ -558,7 +558,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return }
         let selectionRanges = renderingContext?.selectedDocumentRanges ?? []
 
-        let theme = renderingContext?.configuration.theme ?? .default
+        let configuration = renderingContext?.configuration ?? .default
+        let theme = configuration.theme
+        let checkboxStyle = configuration.checkbox
 
         withFlippedDrawingContext(context) {
             ts.enumerateAttribute(.taskCheckbox, in: range, options: []) { [weak self] value, attrRange, _ in
@@ -574,7 +576,8 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                 let descent = max(0, -font.descender)
                 let fontHeight = max(1, ceil(ascent + descent))
                 let markerWidth = ("[ ]" as NSString).size(withAttributes: [.font: font]).width
-                let size = max(1.0, min(floor(fontHeight * 1.2), floor(markerWidth * 1.2)))
+                let size = max(1.0, min(floor(fontHeight * checkboxStyle.sizeFromFontHeightFactor),
+                                        floor(markerWidth * checkboxStyle.sizeFromMarkerWidthFactor)))
                 let boxX = pos.x + max(0, (markerWidth - size) / 2)
                 let centerY = pos.baselineY + (descent - ascent) / 2
                 let boxY = centerY - size / 2
@@ -586,7 +589,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                 let boxRect = CGRect(x: alignToPixel(boxX), y: alignToPixel(boxY), width: size, height: size)
                 guard !boxRect.isEmpty, !boxRect.isNull else { return }
 
-                let iconInset = max(0.0, size * 0.01)
+                let iconInset = max(0.0, size * checkboxStyle.iconInsetFraction)
                 let iconRect = boxRect.insetBy(dx: iconInset, dy: iconInset)
                 let symbolName = isChecked ? "checkmark.square.fill" : "square"
                 let tint = isChecked ? theme.bodyText : theme.mutedText
