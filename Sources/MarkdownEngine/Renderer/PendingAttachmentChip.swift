@@ -22,6 +22,7 @@ import AppKit
 enum PendingAttachmentChip {
     private struct Key: Hashable {
         let alt: String
+        let baseFontName: String    // family affects the line height that drives chipHeight
         let baseFontSize: CGFloat   // drives chipHeight independently of labelFont (which floors at 9pt)
         let fontSize: CGFloat
         let width: Int
@@ -65,6 +66,7 @@ enum PendingAttachmentChip {
         )
         let key = Key(
             alt: alt,
+            baseFontName: baseFont.fontName,
             baseFontSize: baseFont.pointSize,
             fontSize: labelFont.pointSize,
             width: Int(maxWidth.rounded()),
