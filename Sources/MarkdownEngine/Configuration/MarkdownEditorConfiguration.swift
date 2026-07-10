@@ -275,15 +275,27 @@ public struct CodeBlockStyle: Sendable {
     public var paragraphSpacing: CGFloat
     /// Left/right indent (in points) so code blocks don't run into the gutter.
     public var horizontalIndent: CGFloat
+    /// Corner radius (points) of the code-block background fill. Default `0`
+    /// (square, full-bleed — historical). Set it for a rounded card like
+    /// Apple Notes' monospaced blocks.
+    public var cornerRadius: CGFloat
+    /// Horizontal inset (points) of the background fill from the container
+    /// edges. Default `0` (full width). Raise it (typically to match
+    /// ``horizontalIndent``) so a rounded card floats inside the margin.
+    public var backgroundHorizontalInset: CGFloat
 
     public init(
         fontSizeScale: CGFloat = 0.85,
         paragraphSpacing: CGFloat = 2.0,
-        horizontalIndent: CGFloat = 12.0
+        horizontalIndent: CGFloat = 12.0,
+        cornerRadius: CGFloat = 0,
+        backgroundHorizontalInset: CGFloat = 0
     ) {
         self.fontSizeScale = fontSizeScale
         self.paragraphSpacing = paragraphSpacing
         self.horizontalIndent = horizontalIndent
+        self.cornerRadius = cornerRadius
+        self.backgroundHorizontalInset = backgroundHorizontalInset
     }
 
     public static let `default` = CodeBlockStyle()

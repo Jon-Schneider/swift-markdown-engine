@@ -227,22 +227,31 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         let snappedY = floor(rawY * scale) / scale
         let snappedMaxY = ceil(rawMaxY * scale) / scale
 
-        // Draw full-width background, clipping out any active selection rects
-        // so the system's blue selection highlight remains visible inside code blocks.
+        // Draw the background (optionally inset + rounded), clipping out any active
+        // selection rects so the system's blue selection highlight stays visible.
+        // A fenced block is a single layout fragment, so rounding the per-fragment
+        // rect yields one rounded card rather than rounding at line boundaries.
+        let codeStyle = renderingContext?.configuration.codeBlock ?? .default
+        let inset = max(0, codeStyle.backgroundHorizontalInset)
+        let cornerRadius = max(0, codeStyle.cornerRadius)
         withFlippedDrawingContext(context) {
             let bgRect = CGRect(
-                x: point.x - layoutFragmentFrame.origin.x,
+                x: point.x - layoutFragmentFrame.origin.x + inset,
                 y: snappedY,
-                width: containerWidth,
+                width: max(0, containerWidth - inset * 2),
                 height: snappedMaxY - snappedY
             )
 
             let selectionRects = selectionRectsInDrawCoordinates(drawPoint: point, snappedY: snappedY, snappedMaxY: snappedMaxY)
             color.setFill()
             if selectionRects.isEmpty {
-                PlatformBezierPath(rect: bgRect).fill()
+                if cornerRadius > 0 {
+                    platformRoundedRectPath(bgRect, cornerRadius: cornerRadius).fill()
+                } else {
+                    PlatformBezierPath(rect: bgRect).fill()
+                }
             } else {
-                fillEvenOdd(outerRect: bgRect, cutouts: selectionRects.map { $0.intersection(bgRect) })
+                fillEvenOdd(outerRect: bgRect, cutouts: selectionRects.map { $0.intersection(bgRect) }, cornerRadius: cornerRadius)
             }
         }
     }

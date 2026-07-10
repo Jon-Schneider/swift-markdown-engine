@@ -43,18 +43,33 @@ func withFlippedDrawingContext(_ cg: CGContext, _ body: () -> Void) {
 /// Fill `outerRect` minus `cutouts` using the current fill color and the even-odd
 /// rule — used to punch active text-selection rects out of the code-block background
 /// so the system selection highlight stays visible. Caller sets the fill color first.
-func fillEvenOdd(outerRect: CGRect, cutouts: [CGRect]) {
+func fillEvenOdd(outerRect: CGRect, cutouts: [CGRect], cornerRadius: CGFloat = 0) {
 #if canImport(UIKit)
-    let path = UIBezierPath(rect: outerRect)
+    let path = cornerRadius > 0
+        ? UIBezierPath(roundedRect: outerRect, cornerRadius: cornerRadius)
+        : UIBezierPath(rect: outerRect)
     path.usesEvenOddFillRule = true
     for r in cutouts { path.append(UIBezierPath(rect: r)) }
     path.fill()
 #else
     let path = NSBezierPath()
     path.windingRule = .evenOdd
-    path.appendRect(outerRect)
+    if cornerRadius > 0 {
+        path.appendRoundedRect(outerRect, xRadius: cornerRadius, yRadius: cornerRadius)
+    } else {
+        path.appendRect(outerRect)
+    }
     for r in cutouts { path.appendRect(r) }
     path.fill()
+#endif
+}
+
+/// A rounded-rect bezier path, spelled the same on both platforms.
+func platformRoundedRectPath(_ rect: CGRect, cornerRadius: CGFloat) -> PlatformBezierPath {
+#if canImport(UIKit)
+    return UIBezierPath(roundedRect: rect, cornerRadius: cornerRadius)
+#else
+    return NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
 #endif
 }
 
