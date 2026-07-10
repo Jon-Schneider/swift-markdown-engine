@@ -319,6 +319,17 @@ public struct ListStyle: Sendable {
     public var maximumNestingLevel: Int
     /// Extra line height added on top of the default to give list items room.
     public var extraLineHeight: CGFloat
+    /// Glyph drawn over the hidden bullet marker for unordered lists. Defaults
+    /// to `"•"`. Set to a different character (e.g. `"‣"`, `"◦"`) to match a
+    /// house style such as Apple Notes.
+    public var bulletGlyph: String
+    /// Bullet glyph size as a fraction of the surrounding line font. `1.0`
+    /// (the default) draws the bullet at body size; values below 1 shrink it
+    /// (Apple Notes uses a dot noticeably smaller than the text). The glyph is
+    /// optically centered on the text's x-height as it scales, so a smaller dot
+    /// stays vertically centered rather than sinking toward the baseline.
+    /// Non-positive values are clamped at draw time.
+    public var bulletGlyphSizeScale: CGFloat
 
     public init(
         helpersEnabled: Bool = true,
@@ -326,7 +337,9 @@ public struct ListStyle: Sendable {
         tableNavigationEnabled: Bool = true,
         indentPerLevel: CGFloat = 27.5,
         maximumNestingLevel: Int = 3,
-        extraLineHeight: CGFloat = 2
+        extraLineHeight: CGFloat = 2,
+        bulletGlyph: String = "•",
+        bulletGlyphSizeScale: CGFloat = 1.0
     ) {
         self.helpersEnabled = helpersEnabled
         self.autoClosePairsEnabled = autoClosePairsEnabled
@@ -334,6 +347,8 @@ public struct ListStyle: Sendable {
         self.indentPerLevel = indentPerLevel
         self.maximumNestingLevel = maximumNestingLevel
         self.extraLineHeight = extraLineHeight
+        self.bulletGlyph = bulletGlyph
+        self.bulletGlyphSizeScale = bulletGlyphSizeScale
     }
 
     public static let `default` = ListStyle()
@@ -482,9 +497,25 @@ public struct CheckboxStyle: Sendable {
 public struct BlockquoteStyle: Sendable {
     /// Extra height (points) added to the default line height for blockquote lines.
     public var extraLineHeight: CGFloat
+    /// Horizontal space (points) each nesting level occupies. Both the painted
+    /// bar gutter and the quoted-text indent derive from this single value, so
+    /// overriding it moves them together in every normal render path. (The
+    /// painter reads it live from the render context and the styler bakes it
+    /// into the paragraph style, so the two only diverge in the degraded case
+    /// where a fragment draws with a torn-down context and falls back to the
+    /// default.)
+    public var indentPerLevel: CGFloat
+    /// Width (points) of each painted vertical quote bar.
+    public var barWidth: CGFloat
 
-    public init(extraLineHeight: CGFloat = 0) {
+    public init(
+        extraLineHeight: CGFloat = 0,
+        indentPerLevel: CGFloat = 18,
+        barWidth: CGFloat = 3
+    ) {
         self.extraLineHeight = extraLineHeight
+        self.indentPerLevel = indentPerLevel
+        self.barWidth = barWidth
     }
 
     public static let `default` = BlockquoteStyle()

@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Configurable bullet and blockquote styling, so the rendered look (e.g. an
+  Apple Notes match) can be tuned without editing engine source:
+  - `ListStyle.bulletGlyph` (default `•`) and `ListStyle.bulletGlyphSizeScale`
+    (default `1.0`, a fraction of the line font; the glyph is optically centered
+    on the text as it scales).
+  - `BlockquoteStyle.indentPerLevel` (default `18`, shared by the painted bar and
+    the quoted-text indent) and `BlockquoteStyle.barWidth` (default `3`).
+  - `MarkdownEditorTheme.bulletColor` and `MarkdownEditorTheme.blockquoteBarColor`
+    (both optional; `nil` preserves the historical `bodyText` / `mutedText @ 50%`).
+  All defaults reproduce the previous rendering, so `.default` is unchanged. The
+  previously-internal `MarkdownTextLayoutFragment.blockquoteIndentPerLevel` /
+  `blockquoteBarWidth` constants were removed in favor of the config values.
 - `MarkdownEditorBus.findQuery` / `findResults`: query-based in-document find. The host posts a
   search string (+ current index) and the engine matches against its OWN displayed text,
   highlighting in display coordinates and posting the match count back. This is correct where the

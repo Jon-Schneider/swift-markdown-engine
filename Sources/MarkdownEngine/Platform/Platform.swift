@@ -163,6 +163,31 @@ extension PlatformFontDescriptor {
     }
 }
 
+extension PlatformFont {
+    /// A font built from `descriptor` at `size`, falling back to `fallback`
+    /// when the descriptor can't produce one. AppKit's `init(descriptor:size:)`
+    /// is failable, UIKit's is not — centralizing the difference here keeps
+    /// call sites from emitting a "left side of `??` is non-optional" warning
+    /// on iOS while staying safe on macOS.
+    static func from(
+        descriptor: PlatformFontDescriptor,
+        size: CGFloat,
+        fallback: @autoclosure () -> PlatformFont
+    ) -> PlatformFont {
+        #if canImport(UIKit)
+        return PlatformFont(descriptor: descriptor, size: size)
+        #else
+        return PlatformFont(descriptor: descriptor, size: size) ?? fallback()
+        #endif
+    }
+
+    /// A copy of this font at `size`, keeping the same descriptor (family,
+    /// traits). Falls back to `self` if the platform init fails.
+    func withPointSizeCompat(_ size: CGFloat) -> PlatformFont {
+        .from(descriptor: fontDescriptor, size: size, fallback: self)
+    }
+}
+
 #if os(macOS)
 extension NSValue {
     /// UIKit names the rect-valued `NSValue` APIs `init(cgRect:)` / `cgRectValue`;

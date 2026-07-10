@@ -181,6 +181,58 @@ struct SeamlessCodeBlockFenceTests {
     }
 }
 
+/// The blockquote indent lives in `BlockquoteStyle.indentPerLevel` and is read
+/// by BOTH the styler (text indent, asserted here) and the bar painter (gutter
+/// position, a render concern). These pin that the config value flows into the
+/// quoted-text indent, and that `.default` reproduces the previously-hardcoded
+/// 18pt geometry so the "unchanged by default" contract can't silently regress.
+@Suite("Blockquote indent configuration")
+struct BlockquoteIndentConfigTests {
+
+    private let base: CGFloat = 14
+    private var fontName: String { NSFont.systemFont(ofSize: 14).fontName }
+
+    /// Effective `firstLineHeadIndent` at `pos`: the last styled range covering
+    /// it that sets `.paragraphStyle` wins (mirrors how TextKit applies attrs).
+    private func headIndent(in attrs: [StyledRange], at pos: Int) -> CGFloat? {
+        var result: CGFloat?
+        for (range, a) in attrs where NSLocationInRange(pos, range) {
+            if let p = a[.paragraphStyle] as? NSParagraphStyle { result = p.firstLineHeadIndent }
+        }
+        return result
+    }
+
+    private func style(_ text: String, _ config: MarkdownEditorConfiguration) -> [StyledRange] {
+        MarkdownASTStyler.styleAttributes(text: text, fontName: fontName, fontSize: base, configuration: config)
+    }
+
+    @Test("default blockquote indent reproduces the historical 18pt geometry")
+    func defaultGeometryUnchanged() {
+        let attrs = style("> quote", .default)
+        // textIndent = level*indentPerLevel + indentPerLevel*0.5 = 1*18 + 9 = 27.
+        #expect(headIndent(in: attrs, at: 4) == 27)
+    }
+
+    @Test("custom indentPerLevel flows into the quoted-text indent")
+    func customIndentFlows() {
+        var config = MarkdownEditorConfiguration.default
+        config.blockquote.indentPerLevel = 24
+        let attrs = style("> quote", config)
+        // 1*24 + 24*0.5 = 36.
+        #expect(headIndent(in: attrs, at: 4) == 36)
+    }
+
+    @Test("indent scales with nesting level")
+    func nestedIndentScales() {
+        var config = MarkdownEditorConfiguration.default
+        config.blockquote.indentPerLevel = 20
+        let attrs = style(">> deep", config)
+        // level 2: 2*20 + 20*0.5 = 50; "deep" begins after ">> ".
+        let pos = (">> deep" as NSString).range(of: "deep").location
+        #expect(headIndent(in: attrs, at: pos) == 50)
+    }
+}
+
 /// Canonical, order-independent string of styled ranges so two style runs can be
 /// compared for equality.
 private func styleKeySnapshot(_ ranges: [StyledRange]) -> String {

@@ -52,11 +52,6 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     /// draw time. Replaces the macOS-only `container.textView as? NativeTextView` chain.
     weak var renderingContext: (any MarkdownFragmentContext)?
 
-    /// Horizontal space (points) each blockquote nesting level occupies —
-    /// shared so the styler's text indent and the painted bars line up.
-    static let blockquoteIndentPerLevel: CGFloat = 18
-    static let blockquoteBarWidth: CGFloat = 3
-
     /// Strip below an overlay block for the legacy-small scroller (~11pt) + buffer.
     static let scrollableBlockScrollerStrip: CGFloat = 14
 
@@ -465,12 +460,14 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         }
         guard anyLevel else { return }
 
-        let theme = renderingContext?.configuration.theme ?? .default
-        let indentPerLevel = Self.blockquoteIndentPerLevel
-        let barWidth = Self.blockquoteBarWidth
+        let configuration = renderingContext?.configuration ?? .default
+        let theme = configuration.theme
+        let indentPerLevel = configuration.blockquote.indentPerLevel
+        let barWidth = configuration.blockquote.barWidth
+        let barColor = theme.blockquoteBarColor ?? theme.mutedText.withAlphaComponent(0.5)
 
         withFlippedDrawingContext(context) {
-            theme.mutedText.withAlphaComponent(0.5).setFill()
+            barColor.setFill()
 
             let fragLocation = fragmentNSRange?.location ?? 0
             let leftEdge = point.x - layoutFragmentFrame.origin.x
@@ -499,14 +496,26 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     // MARK: - Bullet Markers
 
     /// Paint a `•` over every hidden bullet marker (`.bulletMarker`). The
-    /// glyph is drawn in the same font as the source so its baseline matches
-    /// the surrounding text, and centered within the original marker char's
-    /// advance so a `•` of a different width still sits where `-`/`*`/`+` was.
+    /// glyph (``ListStyle/bulletGlyph``, default `•`), its color
+    /// (``MarkdownEditorTheme/bulletColor``, default body ink), and its size
+    /// (``ListStyle/bulletGlyphSizeScale``, a fraction of the line font) are all
+    /// configurable. The glyph is optically centered on the text's x-height
+    /// midline so a shrunk dot reads as centered rather than sitting low, and
+    /// centered within the original marker char's advance so a glyph of a
+    /// different width still sits where `-`/`*`/`+` was.
     private func drawBulletMarkers(at point: CGPoint, in context: CGContext) {
         guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return }
         let selectionRanges = renderingContext?.selectedDocumentRanges ?? []
 
-        let theme = renderingContext?.configuration.theme ?? .default
+        let configuration = renderingContext?.configuration ?? .default
+        let theme = configuration.theme
+        let bulletColor = theme.bulletColor ?? theme.bodyText
+        // An empty glyph would hide the (already-suppressed) marker entirely,
+        // leaving list structure invisible — fall back to the default dot.
+        let glyphString = configuration.lists.bulletGlyph.isEmpty ? "•" : configuration.lists.bulletGlyph
+        let bullet = glyphString as NSString
+        // Clamp to a sane floor so a zero/negative scale can't collapse the dot.
+        let glyphSizeScale = max(0.1, configuration.lists.bulletGlyphSizeScale)
         let storageString = ts.string as NSString
 
         withFlippedDrawingContext(context) {
@@ -518,15 +527,25 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
                 let font = (ts.attribute(.font, at: attrRange.location, effectiveRange: nil) as? PlatformFont)
                     ?? (self.renderingContext?.baseFont ?? PlatformFont.systemFont(ofSize: PlatformFont.systemFontSize))
-                let bulletAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: theme.bodyText]
-                let bullet = "•" as NSString
+                // Draw the glyph in a (optionally) scaled copy of the line font. The
+                // source-marker advance is measured in the unscaled line font so
+                // horizontal centering stays anchored to where `-`/`*`/`+` was.
+                let glyphFont = glyphSizeScale == 1.0 ? font : font.withPointSizeCompat(font.pointSize * glyphSizeScale)
+                let bulletAttrs: [NSAttributedString.Key: Any] = [.font: glyphFont, .foregroundColor: bulletColor]
 
                 let markerWidth = storageString.substring(with: attrRange).size(withAttributes: [.font: font]).width
                 let bulletWidth = bullet.size(withAttributes: bulletAttrs).width
                 let xOffset = max(0, (markerWidth - bulletWidth) / 2)
-                // Flipped context: text origin is its top edge, baseline sits one
-                // ascent below — so top = baseline − ascent aligns the glyph.
-                let topY = pos.baselineY - font.ascender
+                // Optically center the dot on the text's x-height midline instead of
+                // baseline-aligning it: a scaled-down glyph pinned to the baseline
+                // reads as sitting low. Flipped context — y grows downward, so the
+                // midline is `xHeight/2` *above* (smaller y than) the baseline.
+                // At scale 1.0 (glyphFont == font) this reduces to `baselineY −
+                // ascender`, identical to plain baseline alignment, so the default
+                // bullet is unchanged.
+                let lineMidline = pos.baselineY - font.xHeight / 2
+                let glyphInkCenterFromTop = glyphFont.ascender - glyphFont.xHeight / 2
+                let topY = lineMidline - glyphInkCenterFromTop
                 bullet.draw(at: CGPoint(x: pos.x + xOffset, y: topY), withAttributes: bulletAttrs)
             }
         }

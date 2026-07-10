@@ -223,7 +223,7 @@ extension MarkdownStyler {
         let pointSize = baseFont.pointSize
         let codeFont = PlatformFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
         let startFont = header
-            ? (PlatformFont(descriptor: descriptor.withSymbolicTraitsCompat(.boldTrait), size: pointSize) ?? baseFont)
+            ? .from(descriptor: descriptor.withSymbolicTraitsCompat(.boldTrait), size: pointSize, fallback: baseFont)
             : baseFont
         let out = NSMutableAttributedString()
         appendInlineCell(
@@ -247,7 +247,7 @@ extension MarkdownStyler {
         case .italic: traits.insert(.italicTrait)
         case .boldItalic: traits.formUnion(boldItalic)
         }
-        return PlatformFont(descriptor: baseDescriptor.withSymbolicTraitsCompat(traits), size: pointSize) ?? current
+        return .from(descriptor: baseDescriptor.withSymbolicTraitsCompat(traits), size: pointSize, fallback: current)
     }
 
     /// Walk the inline AST into marker-stripped runs; LaTeX as attachments, links/embeds emitted raw.

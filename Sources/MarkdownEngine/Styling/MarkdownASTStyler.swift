@@ -353,7 +353,7 @@ enum MarkdownASTStyler {
 
     /// Per-line blockquote: indent, mute content, hide/show `>` markers, tag first char with bar level.
     private static func styleBlockquote(range: NSRange, ctx: Ctx, into attrs: inout [StyledRange]) {
-        let indentPerLevel = MarkdownTextLayoutFragment.blockquoteIndentPerLevel
+        let indentPerLevel = ctx.config.blockquote.indentPerLevel
         var lineStart = range.location
         let end = NSMaxRange(range)
         while lineStart < end {
@@ -667,7 +667,7 @@ enum MarkdownASTStyler {
 
     private static func adding(_ extra: PlatformFontDescriptor.SymbolicTraits, to font: PlatformFont) -> PlatformFont {
         let merged = font.fontDescriptor.symbolicTraits.union(extra)
-        return PlatformFont(descriptor: font.fontDescriptor.withSymbolicTraitsCompat(merged), size: font.pointSize) ?? font
+        return .from(descriptor: font.fontDescriptor.withSymbolicTraitsCompat(merged), size: font.pointSize, fallback: font)
     }
 
     private static func content(of markers: [NSRange]) -> NSRange {
