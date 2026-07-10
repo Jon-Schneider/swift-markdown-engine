@@ -215,7 +215,11 @@ extension PlatformFont {
         // empty trait set resets the face back to regular), so both must be
         // resolved in one match.
         var traits: [PlatformFontDescriptor.TraitKey: Any] = [.weight: weight]
-        let symbolic = fontDescriptor.symbolicTraits
+        // Preserve non-weight symbolic traits (italic, condensed, …) but DROP the
+        // bold symbolic trait: the numeric `weight` is the sole source of boldness,
+        // and a base font that is already bold would otherwise contradict a lighter
+        // requested weight (bold symbolic face vs `.regular`) and stay bold.
+        let symbolic = fontDescriptor.symbolicTraits.subtracting(.boldTrait)
         if !symbolic.isEmpty {
             traits[.symbolic] = symbolic.rawValue
         }

@@ -99,7 +99,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         // advances the base surface covers; inflate horizontally so an edge pill
         // isn't clipped on a partial invalidation.
         if let padding = renderingContext?.configuration.inlineCode.horizontalPadding,
-           padding > 0, hasInlineCodePill {
+           padding.isFinite, padding > 0, hasInlineCodePill {
             bounds = bounds.insetBy(dx: -padding, dy: 0)
         }
         return bounds
@@ -457,8 +457,10 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         guard let ltm = textLayoutManager,
               let contentStorage = ltm.textContentManager as? NSTextContentStorage else { return }
         let style = renderingContext?.configuration.inlineCode ?? .default
-        let radius = max(0, style.cornerRadius)
-        let padding = max(0, style.horizontalPadding)
+        // Sanitize: a non-finite (`.infinity`/NaN) padding would inflate the pill
+        // and the rendering surface to invalid/unbounded geometry.
+        let radius = max(0, style.cornerRadius.isFinite ? style.cornerRadius : 0)
+        let padding = max(0, style.horizontalPadding.isFinite ? style.horizontalPadding : 0)
         guard radius > 0 || padding > 0 else { return }
 
         // Segment frames share the container coordinate space with

@@ -74,17 +74,28 @@ final class NativeTextView: NSTextView {
         }
     }
 
-    /// Make the text storage the single source of truth for link underlining.
+    /// Drive `NSTextView`'s `.link`-range display attributes from the config.
     ///
-    /// `NSTextView` paints `.link` ranges with `linkTextAttributes`, whose
-    /// stock value underlines every link — so clearing the storage-level
+    /// `NSTextView` paints every `.link` range with `linkTextAttributes`, and its
+    /// stock value forces an underline — so clearing the storage-level
     /// `.underlineStyle` (what `LinkStyle.underlinesResolvedLinks` toggles in the
-    /// styler) is not enough on macOS; the view re-underlines it. We therefore
-    /// keep the pointing-hand cursor but drop the forced underline here, letting
-    /// the styler's storage attribute decide. Link color already comes from the
-    /// storage `.foregroundColor` (the theme's link color), so it is omitted too.
+    /// styler) can't remove the underline on its own; the view re-adds it. But we
+    /// can't simply drop the underline either: auto-detected URLs and resolved
+    /// wiki-links carry ONLY `.link` (no storage color/underline of their own) and
+    /// rely on this dictionary for their entire appearance. So we set it
+    /// explicitly — the theme's link color plus the pointing-hand cursor, with the
+    /// underline gated on `underlinesResolvedLinks`. The default theme's link color
+    /// is `.linkColor`, so the default look is unchanged, and the toggle now
+    /// governs Markdown links, auto-links, and wiki-links uniformly.
     private func applyLinkTextAttributes() {
-        linkTextAttributes = [.cursor: NSCursor.pointingHand]
+        var attributes: [NSAttributedString.Key: Any] = [
+            .foregroundColor: configuration.theme.link,
+            .cursor: NSCursor.pointingHand,
+        ]
+        if configuration.link.underlinesResolvedLinks {
+            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+        linkTextAttributes = attributes
     }
     var overscrollPercent: CGFloat = MarkdownEditorConfiguration.default.overscroll.percent
     var maxOverscrollPoints: CGFloat = MarkdownEditorConfiguration.default.overscroll.maxPoints

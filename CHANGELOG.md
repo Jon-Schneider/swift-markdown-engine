@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Images: `ImageEmbedStyle.cornerRadius`.
   - Added `PlatformFont.withWeightCompat` and a cross-platform rounded-rect path
     helper to support the above.
+  - Known limitation (macOS): the SwiftUI wrapper applies the full configuration
+    at mount, but changing a styling knob or theme color *after* mount does not
+    re-render until the next edit (a pre-existing macOS-wide behavior — theme
+    colors already behaved this way). iOS live-updates via `reapplyConfiguration`.
+    Set styling config when constructing the editor. Live macOS reconfiguration
+    is a tracked follow-up.
 
 ### Fixed
 - `CheckboxStyle.sizeFromFontHeightFactor` / `sizeFromMarkerWidthFactor` /
@@ -42,8 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the requested weight. `PlatformFont.withWeightCompat` now re-keys on the font
   family so the weighted face is actually selected.
 - `LinkStyle.underlinesResolvedLinks = false` did not remove the underline on
-  macOS (`NSTextView` re-underlines `.link` ranges via its `linkTextAttributes`);
-  the storage attribute is now the single source of truth on both platforms.
+  macOS (`NSTextView` re-underlines `.link` ranges via its `linkTextAttributes`).
+  The view now derives `linkTextAttributes` from the config — the theme link
+  color plus a conditional underline — so the toggle governs Markdown links,
+  auto-detected URLs, and resolved wiki-links uniformly. (This also fixes a
+  regression in an interim build where auto-links/wiki-links, which carry only
+  `.link`, briefly lost their color/underline; the default `.linkColor` look is
+  unchanged.)
 - `ImageEmbedStyle.cornerRadius` also rounded (and clipped) table and block-LaTeX
   images, which share the image draw path; it now applies only to genuine image
   embeds. Inline-code pills no longer paint over the text-selection highlight,
