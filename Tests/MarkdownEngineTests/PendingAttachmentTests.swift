@@ -411,6 +411,23 @@ struct MacOSPendingAttachmentTests {
                 "the parked reference lands once editing is restored — the upload is not lost")
     }
 
+    @Test("a read-only-parked resolve survives its backstop timeout and still lands the reference")
+    func deferredResolveSurvivesTimeout() async throws {
+        let coordinator = makeCoordinator()
+        let view = makeTextView("abc")
+        coordinator.textView = view
+        view.delegate = coordinator
+        let (resolver, _) = stageMarker(in: view, coordinator: coordinator, at: 3, timeout: 0.05)
+
+        view.isEditable = false
+        #expect(resolver.insert(reference: "store://x") == false)
+        try await Task.sleep(for: .milliseconds(200))   // the backstop timeout WOULD have fired by now
+
+        view.isEditable = true
+        #expect(view.string == "abc\n![](store://x)",
+                "the parked resolve must not be discarded by a timeout firing during read-only")
+    }
+
     @Test("a cancel parked while read-only replays and removes the marker when editing is restored")
     func cancelDeferredUntilEditable() {
         let coordinator = makeCoordinator()

@@ -48,7 +48,7 @@ extension NativeTextViewCoordinator: PendingAttachmentHost {
         // replays when editing is restored (see `flushDeferredPendingAttachments`) — the upload isn't
         // lost.
         guard applyPendingReplacement(range: range, with: replacement, actionName: "Insert Attachment", to: textView) else {
-            pendingAttachmentResolvers[id]?.deferred = .resolve(reference: reference)
+            parkDeferred(.resolve(reference: reference), for: id)
             return false
         }
         dropPendingEntry(id)
@@ -64,10 +64,21 @@ extension NativeTextViewCoordinator: PendingAttachmentHost {
         }
         // Same retain-until-applied rule as resolve; park the cancel to replay when editable.
         guard applyPendingReplacement(range: range, with: "", actionName: "Remove Attachment", to: textView) else {
-            pendingAttachmentResolvers[id]?.deferred = .cancel
+            parkDeferred(.cancel, for: id)
             return
         }
         dropPendingEntry(id)
+    }
+
+    /// Park a resolve/cancel that couldn't apply (read-only view) and CANCEL the backstop timeout:
+    /// the host has decided, so the timeout — whose only job is to clean up an unresolved drop —
+    /// must not later fire and overwrite a parked `.resolve` with a `.cancel`, discarding the upload.
+    /// An existing `.resolve` is never downgraded to a `.cancel` (the resolver is one-shot, so this is
+    /// belt-and-suspenders against any reordering).
+    private func parkDeferred(_ action: DeferredResolution, for id: UUID) {
+        if case .cancel = action, case .resolve = pendingAttachmentResolvers[id]?.deferred { return }
+        pendingAttachmentResolvers[id]?.deferred = action
+        pendingAttachmentResolvers[id]?.timeout?.cancel()
     }
 
     /// Replay any resolve/cancel that was parked while the view was read-only. Called when the view
