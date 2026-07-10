@@ -589,10 +589,16 @@ public struct ParagraphStyle: Sendable {
     public var spacingFactor: CGFloat
     /// Extra height (points) added to the default paragraph line height.
     public var lineHeightExtraSpacing: CGFloat
+    /// Inter-line spacing (points) added *between* wrapped lines of a body
+    /// paragraph (`NSParagraphStyle.lineSpacing`). Default `0` (historical);
+    /// raise it for an airier, Apple Notes-like body. Element-specific blocks
+    /// (headings, lists, code, blockquotes) keep their own tight line spacing.
+    public var lineSpacing: CGFloat
 
-    public init(spacingFactor: CGFloat = 0.3, lineHeightExtraSpacing: CGFloat = 2) {
+    public init(spacingFactor: CGFloat = 0.3, lineHeightExtraSpacing: CGFloat = 2, lineSpacing: CGFloat = 0) {
         self.spacingFactor = spacingFactor
         self.lineHeightExtraSpacing = lineHeightExtraSpacing
+        self.lineSpacing = lineSpacing
     }
 
     public static let `default` = ParagraphStyle()
