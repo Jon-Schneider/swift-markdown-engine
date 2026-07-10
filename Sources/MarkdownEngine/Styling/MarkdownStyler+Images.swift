@@ -45,7 +45,10 @@ extension MarkdownStyler {
             // renderer would decline it — leaking the raw `x-mde-pending:UUID` URL as visible text.
             // The whole `![name](url)` source is collapsed onto a single anchor char carrying the
             // chip; the rest is zero-widthed. (The resolved image is block-padded on resolve so it
-            // embeds normally.)
+            // embeds normally.) The chip is sized to the line height so it fits inline WHEN the line
+            // has other text. Known limitation: if the marker is alone on an otherwise-empty line the
+            // whole line collapses to the 0.1pt marker font, so the chip can overflow into the
+            // neighboring lines — the same behavior inline `$LaTeX$` alone on a line has.
             if PendingAttachmentMarker.isPendingURL(url) != nil {
                 let altStart = NSMaxRange(token.markerRanges[0])
                 let altLength = max(token.markerRanges[1].location - altStart, 0)

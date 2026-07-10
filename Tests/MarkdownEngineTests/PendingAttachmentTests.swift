@@ -445,6 +445,21 @@ struct MacOSPendingAttachmentTests {
         #expect(light.tiffRepresentation != dark.tiffRepresentation,
                 "the muted color must resolve differently in light vs dark")
     }
+
+    @Test("chips for different base fonts don't collide in the cache (height tracks the base font)")
+    func chipCacheKeyIncludesBaseFont() {
+        // base 10 and 11 both floor labelFont to 9pt; without baseFontSize in the key they'd share a
+        // cache entry and the second would get the first's wrong-height raster.
+        let a = PendingAttachmentChip.render(
+            alt: "x", baseFont: .systemFont(ofSize: 10), mutedText: .secondaryLabelColor,
+            fillColor: .white, colorScheme: .light, maxWidth: 200
+        )
+        let b = PendingAttachmentChip.render(
+            alt: "x", baseFont: .systemFont(ofSize: 11), mutedText: .secondaryLabelColor,
+            fillColor: .white, colorScheme: .light, maxWidth: 200
+        )
+        #expect(a.size.height != b.size.height, "chip height must track the base font, not collide")
+    }
 }
 
 #endif
@@ -539,6 +554,23 @@ struct IOSPendingAttachmentTests {
     @Test("dropResultString maps .pending to nil (the pending path is handled in resolveAttachment)")
     func dropResultStringIgnoresPending() {
         #expect(MarkdownUITextView.dropResultString(for: .pending(AttachmentResolver()), item: imageItem()) == nil)
+    }
+
+    @Test("the chip resolves its dynamic color per scheme (iOS resolvedColor path)")
+    func chipResolvesColorPerScheme() {
+        // Fixed fill isolates the muted text/border: a difference proves `mutedText` resolves for the
+        // target scheme via `resolvedColor(with:)` rather than freezing at the ambient appearance.
+        let font = UIFont.systemFont(ofSize: 14)
+        let light = PendingAttachmentChip.render(
+            alt: "x", baseFont: font, mutedText: .secondaryLabel,
+            fillColor: .white, colorScheme: .light, maxWidth: 200
+        )
+        let dark = PendingAttachmentChip.render(
+            alt: "x", baseFont: font, mutedText: .secondaryLabel,
+            fillColor: .white, colorScheme: .dark, maxWidth: 200
+        )
+        #expect(light.pngData() != dark.pngData(),
+                "the muted color must resolve differently in light vs dark")
     }
 }
 #endif

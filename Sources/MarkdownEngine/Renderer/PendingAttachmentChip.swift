@@ -22,6 +22,7 @@ import AppKit
 enum PendingAttachmentChip {
     private struct Key: Hashable {
         let alt: String
+        let baseFontSize: CGFloat   // drives chipHeight independently of labelFont (which floors at 9pt)
         let fontSize: CGFloat
         let width: Int
         let colorScheme: MarkdownColorScheme
@@ -64,6 +65,7 @@ enum PendingAttachmentChip {
         )
         let key = Key(
             alt: alt,
+            baseFontSize: baseFont.pointSize,
             fontSize: labelFont.pointSize,
             width: Int(maxWidth.rounded()),
             colorScheme: colorScheme,
@@ -110,12 +112,14 @@ enum PendingAttachmentChip {
     ) -> PlatformImage {
         let labelString = alt.isEmpty ? "Uploading…" : "Uploading “\(alt)”…"
 
-        let symbolSide = min(ceil(labelFont.pointSize), chipHeight - verticalPadding * 2)
+        // `max(0, …)` guards a pathologically tiny base font, where `chipHeight - padding` could go
+        // negative and feed a negative-size CGRect to draw.
+        let symbolSide = max(0, min(ceil(labelFont.pointSize), chipHeight - verticalPadding * 2))
         let symbol = tintedSymbolImage(named: "arrow.up.circle",
                                        pointSize: labelFont.pointSize, tint: textColor)
         let symbolWidth = symbol != nil ? symbolSide + symbolGap : 0
 
-        let contentHeight = min(ceil(labelFont.ascender - labelFont.descender), chipHeight - verticalPadding * 2)
+        let contentHeight = max(0, min(ceil(labelFont.ascender - labelFont.descender), chipHeight - verticalPadding * 2))
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingMiddle
