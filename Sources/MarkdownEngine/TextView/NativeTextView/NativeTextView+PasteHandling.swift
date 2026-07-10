@@ -78,6 +78,12 @@ extension NativeTextView {
         case .insert(let reference):
             insertBlockEmbed("![](\(reference))")
             return true
+        case .pending(let resolver):
+            // `.pending` is a drop-only affordance (it needs a drop caret to remember). A paste
+            // has no such geometry, so treat it as `.consumed`: cancel the resolver and swallow
+            // the paste. A host should not return `.pending` from `onPasteImage`.
+            resolver.cancel()
+            return true
         case .consumed:
             return true
         case .declined:

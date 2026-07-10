@@ -34,9 +34,23 @@ public enum AttachmentDisposition {
     /// the normal text/URL paste; for drop, nothing (the native rich drop stays
     /// neutralized, so the source string can never be corrupted).
     case declined
+    /// The host will stage the bytes asynchronously and resolve LATER, but wants the
+    /// engine to remember the exact drop point in the meantime. The engine inserts a
+    /// visible loading placeholder at the drop caret (never emitted to the host) and,
+    /// when the host's staging `Task` finishes, calls ``AttachmentResolver/insert(reference:)``
+    /// (splice the reference at the original drop point) or ``AttachmentResolver/cancel()``
+    /// (remove the placeholder). Unlike ``consumed`` + the `pendingInlineInsertion` binding,
+    /// the reference lands where the file was dropped regardless of intervening edits or
+    /// selection changes — the fix for async-staged drops replacing the live selection.
+    ///
+    /// The host constructs a blank ``AttachmentResolver()`` and returns it here; the engine
+    /// arms it. Drop-only — on paste (which has no caret geometry to remember) `.pending`
+    /// is treated as ``consumed``.
+    case pending(AttachmentResolver)
 
     /// Collapses `.insert("")` to ``consumed`` so an accidental empty reference can't
-    /// splice an empty `![]()` into the document.
+    /// splice an empty `![]()` into the document. `.pending` is intentionally left
+    /// untouched — it is a live handle, not a value to fold away.
     var normalized: AttachmentDisposition {
         if case .insert(let ref) = self, ref.isEmpty { return .consumed }
         return self
@@ -93,7 +107,7 @@ public struct DroppedItem {
     ///     collapsed to a space.
     /// The label is display text, so the small loss is acceptable. (Emphasis chars like `*` `_`
     /// `~` are safe inside a label — they become link-text children — so they are left intact.)
-    private static func sanitizedLinkLabel(_ label: String) -> String {
+    static func sanitizedLinkLabel(_ label: String) -> String {
         let breaking: Set<Character> = ["[", "]", "`", "\\", "$"]
         var result = ""
         for character in label {

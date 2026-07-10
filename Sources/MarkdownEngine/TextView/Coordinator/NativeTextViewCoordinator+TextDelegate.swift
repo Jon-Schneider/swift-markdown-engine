@@ -99,10 +99,16 @@ extension NativeTextViewCoordinator {
                 textStorage: tv.textStorage
             )
             self.wikiLinkMetadata = storageState.metadata
-            if storageState.storage != self.lastSyncedText {
+            // Strip any in-flight async-drop placeholder so the host never sees a half-baked
+            // `![name](x-mde-pending:…)`. Strip AFTER `makeStorageState` (its display-range metadata
+            // keys must stay aligned to the live buffer). Because a freshly inserted placeholder
+            // strips back to the pre-drop text, this leaves `emitted == lastSyncedText` and the emit
+            // is suppressed — the drop makes no host-visible change until the reference resolves.
+            let emitted = PendingAttachmentMarker.strip(from: storageState.storage)
+            if emitted != self.lastSyncedText {
                 DispatchQueue.main.async {
-                    self.lastSyncedText = storageState.storage
-                    self.text = storageState.storage
+                    self.lastSyncedText = emitted
+                    self.text = emitted
                 }
             }
         }

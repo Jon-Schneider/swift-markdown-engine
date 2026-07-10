@@ -104,6 +104,11 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// still applying a genuinely new request that carries identical markdown. Cleared when
     /// the binding is observed nil.
     var lastAppliedInsertionID: UUID?
+    /// In-flight async-drop placeholders, keyed by the marker UUID. Each entry owns the host's
+    /// ``AttachmentResolver``, the originating ``DroppedItem`` (for wrapping the resolved
+    /// reference), and a backstop timeout. Mirrors how per-document undo managers are tracked.
+    /// See `NativeTextViewCoordinator+PendingAttachments`.
+    var pendingAttachmentResolvers: [UUID: PendingAttachmentEntry] = [:]
     var activeTokenIndices: Set<Int> = []
     var previousActiveTokenIndices: Set<Int> = []
     var wikiLinkMetadata: [WikiLinkService.RangeKey: WikiLinkService.LinkMetadata] = [:]
@@ -306,6 +311,10 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     deinit {
         NotificationCenter.default.removeObserver(self)
         busObservers.forEach(NotificationCenter.default.removeObserver(_:))
+        // Cancel outstanding pending-drop timeouts so none fires against a torn-down editor.
+        // The markers die with the view; the resolvers' weak host makes any late call a no-op.
+        pendingAttachmentResolvers.values.forEach { $0.timeout?.cancel() }
+        pendingAttachmentResolvers.removeAll()
     }
 }
 

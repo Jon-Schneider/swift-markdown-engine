@@ -20,6 +20,12 @@ extension NativeTextViewCoordinator {
         from text: String,
         invalidateLayout: Bool = false
     ) {
+        // A full rebuild replaces the buffer with host text (which never contains a pending
+        // placeholder), so any in-flight markers are about to vanish — cancel their resolvers.
+        // This path runs only on a genuine external reload / node switch (the wrapper early-returns
+        // when the document is unchanged), where the pending drop's context is gone anyway.
+        cancelAllPendingAttachments()
+
         // Storage is raw Markdown; only wiki links transform on display.
         let displayState = WikiLinkService.makeDisplayState(from: text)
         let displayText = displayState.display

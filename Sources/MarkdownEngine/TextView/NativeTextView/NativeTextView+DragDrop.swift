@@ -84,6 +84,16 @@ extension NativeTextView {
             case .insert(let reference):
                 caret = insertDroppedMarkdown(item.markdown(forReference: reference),
                                               isImage: item.isImage, at: caret)
+            case .pending(let resolver):
+                // Async staging: splice a visible loading placeholder at the true drop caret now,
+                // and hand the resolver to the coordinator so the host can resolve it in place when
+                // its `Task` finishes. Marker is image-syntax so it gets its own padded line; the
+                // resolved reference wraps correctly for files too (`[name](ref)`).
+                let uuid = UUID()
+                let marker = PendingAttachmentMarker.markdown(uuid: uuid, alt: item.suggestedName)
+                caret = insertDroppedMarkdown(marker, isImage: true, at: caret)
+                (delegate as? NativeTextViewCoordinator)?
+                    .registerPendingAttachment(resolver, for: item, id: uuid)
             case .consumed, .declined:
                 continue
             }
@@ -145,8 +155,14 @@ extension NativeTextView {
     /// `fileURL`. Not memory-mapped: the file isn't ours, and a later SIGBUS in the host from
     /// a truncated/ejected mapping is worse than reading ≤20 MB up front.
     private static func preReadData(of url: URL) -> Data? {
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
-        if let size, size > AttachmentDropLimits.maxPreReadBytes { return nil }
+        // Fail CLOSED on an unresolvable size (`nil` — special/virtual files, some network or
+        // synthesized volumes). Treating `nil` as "small enough" would fall through to an
+        // unbounded whole-file `Data(contentsOf:)` on the main thread, and those bytes would
+        // already be in `DroppedItem.data` before the host could intervene. A `nil` size
+        // instead leaves `data == nil` + `fileURL` set, so the host does its own bounded,
+        // off-main read. Mirrors the iOS `materialize` guard.
+        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+              size <= AttachmentDropLimits.maxPreReadBytes else { return nil }
         return try? Data(contentsOf: url)
     }
 }

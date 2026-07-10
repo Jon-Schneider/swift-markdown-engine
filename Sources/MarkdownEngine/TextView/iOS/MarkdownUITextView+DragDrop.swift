@@ -182,8 +182,18 @@ extension MarkdownUITextView: UITextDropDelegate, UITextPasteDelegate {
             let item = Self.materialize(from: url, typeID: typeID, isImage: isImage,
                                         suggestedName: suggestedName)
             DispatchQueue.main.async {
-                guard let hook = self?.onDropAttachment else { completion(nil); return }
-                completion(Self.dropResultString(for: hook(item), item: item))
+                guard let self, let hook = self.onDropAttachment else { completion(nil); return }
+                let disposition = hook(item).normalized
+                // Async staging: hand UIKit a loading-placeholder marker to insert at the drop
+                // caret (no live-selection race — UIKit owns the insertion point), and register the
+                // resolver so the host can resolve it in place when its `Task` finishes.
+                if case .pending(let resolver) = disposition {
+                    let uuid = UUID()
+                    self.registerPendingAttachment(resolver, for: item, id: uuid)
+                    completion(PendingAttachmentMarker.markdown(uuid: uuid, alt: item.suggestedName))
+                } else {
+                    completion(Self.dropResultString(for: disposition, item: item))
+                }
             }
         }
     }

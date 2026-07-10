@@ -137,6 +137,11 @@ public final class MarkdownUITextView: UITextView {
     var tableHorizontalScrollOffsets: [Int: CGFloat] = [:]
     /// Coalesces overlay reconciles to one per runloop tick (mirrors the macOS path).
     var pendingTableScrollOverlayUpdate = false
+
+    // MARK: Async-drop placeholders (see MarkdownUITextView+PendingAttachments.swift)
+    /// In-flight async-drop placeholders, keyed by the marker UUID. Each owns the host's
+    /// ``AttachmentResolver``, the originating ``DroppedItem``, and a backstop timeout.
+    var pendingAttachmentResolvers: [UUID: PendingAttachmentEntry] = [:]
     /// Last laid-out width; a change means a rotation/resize, which re-styles so each
     /// table's reserved display width (baked at style time) tracks the new container.
     private var lastLayoutWidth: CGFloat = -1
@@ -240,7 +245,12 @@ public final class MarkdownUITextView: UITextView {
                            name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
-    deinit { NotificationCenter.default.removeObserver(self) }
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        // Cancel outstanding pending-drop timeouts so none fires against a torn-down view.
+        pendingAttachmentResolvers.values.forEach { $0.timeout?.cancel() }
+        pendingAttachmentResolvers.removeAll()
+    }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -347,6 +357,9 @@ public final class MarkdownUITextView: UITextView {
         // a new table that hashes to an old sourceID doesn't inherit a stale scroll position).
         removeAllTableScrollOverlays()
         tableHorizontalScrollOffsets.removeAll()
+        // Document reset replaces the buffer with host text (no placeholders), so in-flight markers
+        // are about to vanish — cancel their resolvers.
+        cancelAllPendingAttachments()
         let displayState = WikiLinkService.makeDisplayState(from: storageText)
         wikiLinkMetadata = displayState.metadata
         isApplyingProgrammaticEdit = true
@@ -367,9 +380,15 @@ public final class MarkdownUITextView: UITextView {
             from: textStorage.string, existingMetadata: wikiLinkMetadata, textStorage: textStorage
         )
         wikiLinkMetadata = storageState.metadata
-        guard storageState.storage != lastRenderedSource else { return }
-        lastRenderedSource = storageState.storage
-        onTextChange?(storageState.storage)
+        // Strip any in-flight async-drop placeholder so the host never sees a half-baked
+        // `![name](x-mde-pending:…)`. A freshly inserted placeholder strips back to the pre-drop
+        // text, leaving `emitted == lastRenderedSource`, so the drop makes no host-visible change
+        // until its reference resolves. (Strip AFTER `makeStorageState` to keep its metadata keys
+        // aligned to the live buffer.)
+        let emitted = PendingAttachmentMarker.strip(from: storageState.storage)
+        guard emitted != lastRenderedSource else { return }
+        lastRenderedSource = emitted
+        onTextChange?(emitted)
     }
 
     /// Re-apply configuration-derived state (insets + styling) without changing the
@@ -879,6 +898,11 @@ public final class MarkdownUITextView: UITextView {
                 replacing: selectedRange, with: markdown,
                 finalSelection: NSRange(location: insertLocation + (markdown as NSString).length, length: 0)
             )
+            return true
+        case .pending(let resolver):
+            // `.pending` is a drop-only affordance (it needs a drop caret to remember). Treat a
+            // paste as `.consumed`: cancel the resolver and swallow the paste.
+            resolver.cancel()
             return true
         case .consumed:
             return true

@@ -37,6 +37,61 @@ extension MarkdownStyler {
             }
             let urlRange = NSRange(location: urlStart, length: urlLength)
             let url = ctx.nsText.substring(with: urlRange)
+
+            // Pending async-drop placeholder (`![name](x-mde-pending:UUID)`): render a static
+            // loading chip in the image slot WITHOUT consulting the image provider. Always
+            // collapsed (never reveals the raw marker on caret entry — the UUID URL is noise).
+            if PendingAttachmentMarker.isPendingURL(url) != nil {
+                let altStart = NSMaxRange(token.markerRanges[0])
+                let altLength = max(token.markerRanges[1].location - altStart, 0)
+                let alt = altLength > 0
+                    ? ctx.nsText.substring(with: NSRange(location: altStart, length: altLength))
+                    : ""
+                let pendingConfig = ctx.configuration.imageEmbed
+                let chipMaxWidth: CGFloat = {
+                    if let tc = ctx.layoutBridge?.firstTextContainer {
+                        let w = tc.size.width - tc.lineFragmentPadding * 2
+                        if w > 0 && w < pendingConfig.unreasonableMaxWidth { return w }
+                    }
+                    return pendingConfig.fallbackMaxWidth
+                }()
+                let mutedColor = ctx.configuration.theme.mutedText
+                let chip = PendingAttachmentChip.render(
+                    alt: alt,
+                    baseFont: ctx.baseFont,
+                    textColor: mutedColor,
+                    fillColor: ctx.codeBackgroundColor,
+                    borderColor: mutedColor.withAlphaComponent(0.3),
+                    maxWidth: chipMaxWidth
+                )
+                let chipBounds = CGRect(x: 0, y: 0, width: chip.size.width, height: chip.size.height)
+                let pendingRawContent = ctx.nsText.substring(with: token.range)
+                let chipRendered = appendRenderedStandaloneBlock(
+                    for: token,
+                    rawContent: pendingRawContent,
+                    image: chip,
+                    imageBounds: chipBounds,
+                    paragraphSpacingBefore: pendingConfig.paragraphSpacing,
+                    paragraphSpacing: pendingConfig.paragraphSpacing,
+                    alignment: .left,
+                    mode: .collapsedSource(markerTexts: ["![", "]", "(", ")"]),
+                    imageEmbedRoundable: true,
+                    ctx: ctx,
+                    attrs: &attrs
+                )
+                if chipRendered {
+                    let urlText = ctx.nsText.substring(with: urlRange)
+                    attrs.append((urlRange, [
+                        .foregroundColor: PlatformColor.clear,
+                        .font: ctx.latexMarkerFont,
+                        .kern: -HeadingHelpers.textWidth(urlText, font: ctx.latexMarkerFont)
+                    ]))
+                } else {
+                    appendSecondaryMarkers(for: token, to: &attrs, theme: ctx.configuration.theme)
+                }
+                continue
+            }
+
             // Seamless treats an image as one atomic, always-rendered unit, so it
             // must never flip to the "active" dual display (rendered image + dimmed
             // raw `![alt](url)` source). Seamless DOES mark some blocks active now (the
