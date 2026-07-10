@@ -140,6 +140,10 @@ public final class MarkdownUITextView: UITextView {
     /// Last laid-out width; a change means a rotation/resize, which re-styles so each
     /// table's reserved display width (baked at style time) tracks the new container.
     private var lastLayoutWidth: CGFloat = -1
+    /// The keyboard's current overlap with this view, tracked on every keyboard-frame change
+    /// (even in `.fitsContent`, where it isn't applied) so a runtime height-mode switch while the
+    /// keyboard is up can reconcile the bottom inset in either direction.
+    private var lastKeyboardBottomInset: CGFloat = 0
 
     public init(
         configuration: MarkdownEditorConfiguration = .default,
@@ -174,6 +178,7 @@ public final class MarkdownUITextView: UITextView {
         isSelectable = true
         backgroundColor = .clear
         applyTextContainerInset()
+        applyHeightBehavior()
         // Dynamic Type is applied manually by scaling the base size via UIFontMetrics
         // in `restyleInPlace` (our fonts aren't metrics-tracking), so the system's own
         // auto-adjust would double-count — leave it off.
@@ -249,17 +254,72 @@ public final class MarkdownUITextView: UITextView {
         let space = window?.screen.coordinateSpace ?? UIScreen.main.coordinateSpace
         let keyboardInView = convert(endFrame, from: space)
         let overlap = bounds.intersection(keyboardInView)
-        let bottomInset = overlap.isNull ? 0 : overlap.height
-        contentInset.bottom = bottomInset
-        verticalScrollIndicatorInsets.bottom = bottomInset
-        if let range = selectedTextRange {
+        // Track the overlap even in `.fitsContent` (where it isn't applied), so switching back to
+        // `.scrolls` with the keyboard up has a current value to apply.
+        lastKeyboardBottomInset = overlap.isNull ? 0 : overlap.height
+        applyKeyboardInset()
+    }
+
+    @objc private func keyboardWillHide(_ note: Notification) {
+        lastKeyboardBottomInset = 0
+        applyKeyboardInset()
+    }
+
+    /// Apply the tracked keyboard overlap as the bottom inset — but ONLY in `.scrolls`, which
+    /// does its own keyboard avoidance. In `.fitsContent` the editor doesn't scroll internally
+    /// (the enclosing page scroll view owns avoidance), so it holds a zero inset. Called on
+    /// keyboard changes AND from `applyHeightBehavior`, so a runtime mode switch while the
+    /// keyboard is visible reconciles the inset in either direction (no stuck shift).
+    private func applyKeyboardInset() {
+        let inset = configuration.heightBehavior == .scrolls ? lastKeyboardBottomInset : 0
+        contentInset.bottom = inset
+        verticalScrollIndicatorInsets.bottom = inset
+        if inset > 0, isFirstResponder, let range = selectedTextRange {
             scrollRectToVisible(caretRect(for: range.end), animated: true)
         }
     }
 
-    @objc private func keyboardWillHide(_ note: Notification) {
-        contentInset.bottom = 0
-        verticalScrollIndicatorInsets.bottom = 0
+    // MARK: - Content sizing (heightBehavior == .fitsContent)
+
+    /// Apply `heightBehavior`: `.fitsContent` disables internal scrolling so the editor grows to
+    /// fit its content and reports that height to SwiftUI; `.scrolls` keeps the historical
+    /// internal scrolling within the height SwiftUI gives it. Idempotent — safe on every config
+    /// apply, and re-reports height on a runtime switch. This is the iOS parity for the macOS
+    /// `ClampedScrollView` / `NativeTextViewContainer` `.fitsContent` path.
+    func applyHeightBehavior() {
+        let shouldScrollInternally = configuration.heightBehavior == .scrolls
+        if isScrollEnabled != shouldScrollInternally {
+            isScrollEnabled = shouldScrollInternally
+            invalidateIntrinsicContentSize()
+            // Reconcile keyboard avoidance: entering `.fitsContent` clears any keyboard inset a
+            // focused `.scrolls` editor applied (else content stays shifted until the keyboard
+            // hides); returning to `.scrolls` re-applies the tracked overlap.
+            applyKeyboardInset()
+        }
+    }
+
+    public override var intrinsicContentSize: CGSize {
+        // `.scrolls`: UITextView's default (no intrinsic height) — SwiftUI sizes it.
+        guard configuration.heightBehavior == .fitsContent else { return super.intrinsicContentSize }
+        let height = fittingContentHeight(forWidth: fitsContentWidth(proposing: bounds.width))
+        return CGSize(width: UIView.noIntrinsicMetric, height: height)
+    }
+
+    /// The layout width for `.fitsContent`. iOS lays the text out at the view's bounds width —
+    /// it does NOT implement `configuration.readingWidth` (a macOS-only reading column), so the
+    /// height must be measured at the same width the text actually wraps at. Uses the
+    /// caller-proposed width when given (SwiftUI's proposal), else the live bounds width.
+    func fitsContentWidth(proposing proposedWidth: CGFloat) -> CGFloat {
+        proposedWidth > 0 ? proposedWidth : bounds.width
+    }
+
+    /// Height that fits the content at `width`, floored at one body line (+ insets) so an empty
+    /// `.fitsContent` document still presents a tappable line rather than collapsing to nothing.
+    func fittingContentHeight(forWidth width: CGFloat) -> CGFloat {
+        let layoutWidth = width > 0 ? width : UIScreen.main.bounds.width
+        let fitted = sizeThatFits(CGSize(width: layoutWidth, height: .greatestFiniteMagnitude)).height
+        let minimum = baseFont.lineHeight + textContainerInset.top + textContainerInset.bottom
+        return max(fitted, minimum)
     }
 
     // MARK: - Find / replace (system UI)
@@ -281,6 +341,7 @@ public final class MarkdownUITextView: UITextView {
     public func render(markdown storageText: String) {
         lastRenderedSource = storageText
         applyTextContainerInset()            // configuration may have changed with the text
+        applyHeightBehavior()
         // Document reset: drop the previous doc's wide-table overlays synchronously (so they
         // don't paint over the new content for a frame) and its persisted scroll offsets (so
         // a new table that hashes to an old sourceID doesn't inherit a stale scroll position).
@@ -316,6 +377,7 @@ public final class MarkdownUITextView: UITextView {
     /// new theme or syntax highlighter) so the displayed attributes don't go stale.
     public func reapplyConfiguration() {
         applyTextContainerInset()
+        applyHeightBehavior()
         // Entering seamless (e.g. a runtime toggle) with the caret already inside
         // a now-hidden marker must pull it to the visible content, else the next
         // keystroke lands before the marker and breaks the block. Idempotent and
@@ -633,6 +695,13 @@ public final class MarkdownUITextView: UITextView {
         // Reconcile the wide-table scroll overlays against the freshly-styled storage
         // (creates / repositions / removes them to match the `.scrollableBlock*` attrs).
         updateTableScrollOverlays()
+
+        // In `.fitsContent` the view reports its own height to SwiftUI, so a restyle that
+        // changed the content height (an edit, an async image/LaTeX finishing, a font change)
+        // must re-report. No-op in `.scrolls`.
+        if configuration.heightBehavior == .fitsContent {
+            invalidateIntrinsicContentSize()
+        }
     }
 
     /// Incremental restyle: re-style only `paragraphCandidates` (and their styled spans),
@@ -693,6 +762,13 @@ public final class MarkdownUITextView: UITextView {
 
         previousBacktickCount = ParagraphRestyleScoping.backtickFenceCount(in: display)
         updateTableScrollOverlays()
+
+        // Per-keystroke height re-report: an ordinary edit restyles through THIS scoped path
+        // (not `restyleInPlace`), so `.fitsContent` must invalidate here too or typing wouldn't
+        // grow/shrink the block.
+        if configuration.heightBehavior == .fitsContent {
+            invalidateIntrinsicContentSize()
+        }
     }
 
     public override func layoutSubviews() {
@@ -832,6 +908,14 @@ public final class MarkdownUITextView: UITextView {
         applyUndoableEdit(replacing: edit.range, with: edit.text, finalSelection: edit.selection)
     }
 
+    /// Strip the caret line's block prefixes (heading / list / blockquote) back to a plain
+    /// paragraph — the ⌥⌘0 keyboard affordance. An already-plain line is an identity no-op.
+    func clearBlockFormatting(in range: NSRange) {
+        let edit = MarkdownFormatting.clearBlockEdit(text: text, selection: range)
+        if isIdentity(edit) { return }
+        applyUndoableEdit(replacing: edit.range, with: edit.text, finalSelection: edit.selection)
+    }
+
     /// Whether `edit` would replace a range with exactly its current contents (a no-op). Applied
     /// to every command (not just the new ones): no command produces a text-identical edit that
     /// only moves the caret, so a text-only comparison is sufficient and can't drop a real edit.
@@ -844,8 +928,6 @@ public final class MarkdownUITextView: UITextView {
         var attributes: UIMenuElement.Attributes = []
         var state: UIMenuElement.State = .off
         switch command {
-        case .bold, .italic, .strikethrough, .inlineCode, .blockquote, .codeBlock, .toggleCheckbox:
-            state = active ? .on : .off                       // toggleable
         case .clearFormatting, .indent, .outdent:
             // Plain actions (never "on"), disabled when the edit would be an identity (nothing to
             // clear / off a list line / already at the root). Mirrors macOS `validateMenuItem`.
@@ -853,7 +935,10 @@ public final class MarkdownUITextView: UITextView {
                 attributes.insert(.disabled)
             }
         default:
-            if active { attributes.insert(.disabled) }        // heading/list: disabled once applied (macOS parity)
+            // Every other command is toggleable: checked when active, and RE-selecting it clears
+            // the block/emphasis. Heading & lists now toggle off too (they used to be disabled
+            // once applied), so the menu must stay enabled to reach that.
+            state = active ? .on : .off
         }
         return UIAction(title: title, attributes: attributes, state: state) { [weak self] _ in
             self?.applyFormatting(command, in: range)

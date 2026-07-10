@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (iOS parity & editor chrome)
+- iOS now honors `MarkdownEditorConfiguration.heightBehavior == .fitsContent` (previously
+  macOS-only). The editor disables internal scrolling and reports a content-fitting
+  intrinsic height (floored at one body line), and `MarkdownUITextViewWrapper` implements
+  `sizeThatFits`, so a field embedded in a page's own `ScrollView` (comment/description
+  box) lays out at its natural height instead of a fixed, internally-scrolling box. Height
+  re-reports on edits / async content (image·LaTeX) / font changes and on a runtime
+  `.scrolls`↔`.fitsContent` switch. Keyboard avoidance is scoped to `.scrolls` (the page
+  owns it in `.fitsContent`).
+- Hardware-keyboard formatting shortcuts bound on the text views themselves (both
+  platforms), so they work inside sheets where an app-level menu command is disabled:
+  ⌘B bold · ⌘I italic · ⌘⇧X strikethrough · ⌘E inline code · ⌥⌘0 clear block (back to a
+  plain paragraph). All route through the same `applyFormatting` core as the toolbar.
+
+### Changed (block formatting toggles off)
+- `.heading` / `.bulletList` / `.numberedList` now toggle OFF when re-applied to a line
+  that is already that block — clearing it back to a plain paragraph (previously heading
+  only changed level and the lists were idempotent no-ops). Applying a list command to the
+  *other* list type converts it (strips the existing marker instead of stacking, e.g. no
+  more `- 1. x`). `.blockquote` / `.codeBlock` already toggled off. This gives a toolbar the
+  "back to body text" affordance the old editor had, with no new public command.
+
 ### Added (attachment drop & paste)
 - First-class image/file **drop** support so a native drop can no longer corrupt the
   Markdown source. A rich `NSTextView`/`UITextView` otherwise performs its own drop,

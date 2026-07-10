@@ -140,63 +140,10 @@ extension NativeTextViewWrapper.Coordinator {
         return trimmedLine.hasPrefix(String(repeating: "#", count: level) + " ")
     }
 
-    func isSelectionList(in nsText: NSString, range: NSRange) -> Bool {
-        let lineRange = nsText.lineRange(for: range)
-        let line = nsText.substring(with: lineRange)
-        return line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ")
-            || line.hasPrefix("\t• ") || line.hasPrefix("1. ")
-    }
-
-    private func applyHeading(level: Int) {
-        guard let tv = textView else { return }
-        let nsText = tv.string as NSString
-        let range = tv.selectedRange()
-        let lineRange = nsText.lineRange(for: range)
-        let originalLine = nsText.substring(with: lineRange)
-        let rawLine = originalLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        var content = rawLine
-        while content.hasPrefix("#") { content.removeFirst() }
-        content = content.trimmingCharacters(in: .whitespaces)
-        let prefix = String(repeating: "#", count: level) + " "
-        // lineRange(for:) includes the trailing line terminator; preserve it so
-        // applying a heading to a non-final line doesn't swallow the newline and
-        // merge the line with the next one (mirrors applyList's suffix handling).
-        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
-        let newLine = prefix + content + suffix
-        if tv.shouldChangeText(in: lineRange, replacementString: newLine) {
-            tv.replaceCharacters(in: lineRange, with: newLine)
-            tv.didChangeText()
-            let newSel = NSRange(location: lineRange.location + prefix.count, length: content.count)
-            tv.setSelectedRange(newSel)
-            DispatchQueue.main.async { self.text = tv.string }
-        }
-    }
-
     @objc func didMarkdownHeading(_ sender: NSMenuItem) {
-        applyHeading(level: sender.tag)
-    }
-
-    private func applyList(prefix: String) {
-        guard let tv = textView else { return }
-        let nsText = tv.string as NSString
-        let selRange = tv.selectedRange()
-        let startLine = nsText.lineRange(for: selRange)
-        let originalLine = nsText.substring(with: startLine)
-        let lineText = originalLine.trimmingCharacters(in: .newlines)
-        var content = lineText
-        if content.hasPrefix(prefix) {
-            content = String(content.dropFirst(prefix.count))
-        }
-        let newLine = prefix + content
-        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
-        let replacement = newLine + suffix
-        if tv.shouldChangeText(in: startLine, replacementString: replacement) {
-            tv.replaceCharacters(in: startLine, with: replacement)
-            tv.didChangeText()
-            let newSel = NSRange(location: startLine.location + prefix.count, length: content.count)
-            tv.setSelectedRange(newSel)
-            DispatchQueue.main.async { self.text = tv.string }
-        }
+        // Route through the shared core so the menu gets the same toggle-off (re-selecting the
+        // active level clears the heading) the toolbar / key equivalents already have.
+        applyMarkdownCommand(.heading(sender.tag))
     }
 
     /// Apply a `MarkdownFormattingCommand` through the shared cross-platform core
@@ -241,11 +188,11 @@ extension NativeTextViewWrapper.Coordinator {
     }
 
     @objc func didMarkdownUnorderedList(_ sender: Any?) {
-        applyList(prefix: "- ")
+        applyMarkdownCommand(.bulletList)
     }
 
     @objc func didMarkdownOrderedList(_ sender: Any?) {
-        applyList(prefix: "1. ")
+        applyMarkdownCommand(.numberedList)
     }
 
     @objc func didMarkdownBold(_ sender: Any?) {
@@ -359,10 +306,16 @@ extension NativeTextViewWrapper.Coordinator: NSMenuItemValidation {
             let edit = MarkdownFormatting.edit(for: command, text: tv.string, selection: range)
             return nsText.substring(with: edit.range) != edit.text
         case #selector(didMarkdownHeading(_:)):
-            return !isSelectionHeading(level: menuItem.tag, in: nsText, range: range)
-        case #selector(didMarkdownUnorderedList(_:)),
-             #selector(didMarkdownOrderedList(_:)):
-            return !isSelectionList(in: nsText, range: range)
+            // Toggleable (like blockquote/codeBlock): checked when the line is this heading level,
+            // and RE-selecting it clears the heading back to a paragraph. Always enabled.
+            menuItem.state = isSelectionHeading(level: menuItem.tag, in: nsText, range: range) ? .on : .off
+            return true
+        case #selector(didMarkdownUnorderedList(_:)):
+            menuItem.state = MarkdownFormatting.isActive(.bulletList, text: tv.string, selection: range) ? .on : .off
+            return true
+        case #selector(didMarkdownOrderedList(_:)):
+            menuItem.state = MarkdownFormatting.isActive(.numberedList, text: tv.string, selection: range) ? .on : .off
+            return true
         default:
             return true
         }

@@ -35,6 +35,14 @@ extension NativeTextViewCoordinator {
         applyFormattingEdit(edit, to: tv)
     }
 
+    /// Strip the caret line's block prefixes (heading / list / blockquote) back to a plain
+    /// paragraph — the ⌥⌘0 keyboard affordance. An already-plain line is an identity no-op
+    /// (`applyFormattingEdit` skips it).
+    func clearBlockFormatting(to tv: NSTextView) {
+        let edit = MarkdownFormatting.clearBlockEdit(text: tv.string, selection: tv.selectedRange())
+        applyFormattingEdit(edit, to: tv)
+    }
+
     /// Insert `[text](url)` at the selection. A non-empty selection becomes the link text (and the
     /// `text` argument is ignored); otherwise `text`, then the URL, then a literal "link" is used —
     /// byte-for-byte the same rule as iOS's `MarkdownUITextView.insertMarkdownLink`.

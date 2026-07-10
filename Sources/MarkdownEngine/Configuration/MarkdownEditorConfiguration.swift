@@ -783,9 +783,11 @@ extension MarkdownEditorConfiguration {
     /// - Typing grows/shrinks the block per keystroke; SwiftUI re-lays-out.
     /// - An empty document shows at least one body line of height.
     /// - Scroll-wheel events pass through to the enclosing scroll view.
-    /// - Caret visibility propagates to the enclosing (page-level) scroll
-    ///   view so editing at the bottom of a tall block keeps the caret
-    ///   on-screen.
+    /// - macOS: caret visibility propagates to the enclosing (page-level)
+    ///   scroll view so editing at the bottom of a tall block keeps the caret
+    ///   on-screen. On iOS the editor does no internal keyboard/caret
+    ///   avoidance in `.fitsContent` — the enclosing page scroll view owns
+    ///   keeping the caret visible.
     /// - Async content changes (image/LaTeX finishing layout, font-size
     ///   change) re-report size via `invalidateIntrinsicContentSize`.
     /// - Switching between `.scrolls` and `.fitsContent` at runtime is

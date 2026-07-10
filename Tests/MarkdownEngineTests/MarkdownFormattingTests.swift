@@ -259,6 +259,18 @@ struct MarkdownFormattingTests {
         #expect(result.text == "## foo\n")
     }
 
+    @Test("Heading at the SAME level toggles off to a plain paragraph")
+    func headingTogglesOffAtSameLevel() {
+        #expect(edit(.heading(2), "## foo", NSRange(location: 3, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 6), text: "foo", selection: NSRange(location: 0, length: 3)))
+    }
+
+    @Test("Heading toggle-off preserves the trailing newline of a non-final line")
+    func headingToggleOffPreservesNewline() {
+        let result = edit(.heading(1), "# foo\nbar", NSRange(location: 0, length: 0))
+        #expect(result.text == "foo\n")
+    }
+
     // MARK: - Lists
 
     @Test("Bullet list adds the marker")
@@ -271,6 +283,111 @@ struct MarkdownFormattingTests {
     func numberedAddsMarker() {
         #expect(edit(.numberedList, "foo", NSRange(location: 0, length: 0))
             == FormattingEdit(range: NSRange(location: 0, length: 3), text: "1. foo", selection: NSRange(location: 3, length: 3)))
+    }
+
+    @Test("Bullet on an existing bullet line toggles off to a paragraph")
+    func bulletTogglesOff() {
+        #expect(edit(.bulletList, "- foo", NSRange(location: 2, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 5), text: "foo", selection: NSRange(location: 0, length: 3)))
+    }
+
+    @Test("Numbered on an existing numbered line toggles off to a paragraph")
+    func numberedTogglesOff() {
+        #expect(edit(.numberedList, "1. foo", NSRange(location: 3, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 6), text: "foo", selection: NSRange(location: 0, length: 3)))
+    }
+
+    @Test("Numbered on a bullet line converts (strips the bullet, no marker stacking)")
+    func bulletConvertsToNumbered() {
+        #expect(edit(.numberedList, "- foo", NSRange(location: 2, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 5), text: "1. foo", selection: NSRange(location: 3, length: 3)))
+    }
+
+    @Test("Bullet on a numbered line converts (strips the number, no marker stacking)")
+    func numberedConvertsToBullet() {
+        #expect(edit(.bulletList, "2) foo", NSRange(location: 3, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 6), text: "- foo", selection: NSRange(location: 2, length: 3)))
+    }
+
+    // MARK: - Clear block (⌥⌘0 paragraph)
+
+    private func clearBlock(_ text: String, _ selection: NSRange) -> FormattingEdit {
+        MarkdownFormatting.clearBlockEdit(text: text, selection: selection)
+    }
+
+    @Test("Clear block strips a heading marker to a paragraph")
+    func clearBlockStripsHeading() {
+        #expect(clearBlock("### foo", NSRange(location: 4, length: 0))
+            == FormattingEdit(range: NSRange(location: 0, length: 7), text: "foo", selection: NSRange(location: 0, length: 3)))
+    }
+
+    @Test("Clear block strips a bullet marker to a paragraph")
+    func clearBlockStripsBullet() {
+        #expect(clearBlock("- foo", NSRange(location: 0, length: 0)).text == "foo")
+    }
+
+    @Test("Clear block strips a numbered marker to a paragraph")
+    func clearBlockStripsNumbered() {
+        #expect(clearBlock("1. foo", NSRange(location: 0, length: 0)).text == "foo")
+    }
+
+    @Test("Clear block strips all blockquote levels to a paragraph")
+    func clearBlockStripsBlockquoteLevels() {
+        #expect(clearBlock("> > foo", NSRange(location: 0, length: 0)).text == "foo")
+    }
+
+    @Test("Clear block on a plain line is an identity no-op")
+    func clearBlockPlainLineIsIdentity() {
+        #expect(clearBlock("foo", NSRange(location: 0, length: 0)).text == "foo")
+    }
+
+    @Test("Clear block preserves the trailing newline of a non-final line")
+    func clearBlockPreservesNewline() {
+        #expect(clearBlock("## foo\nbar", NSRange(location: 0, length: 0)).text == "foo\n")
+    }
+
+    @Test("Clear block clears an INDENTED heading (agrees with the heading toggle-off)")
+    func clearBlockClearsIndentedHeading() {
+        #expect(clearBlock("   ## foo", NSRange(location: 5, length: 0)).text == "foo")
+    }
+
+    @Test("Clear block clears a quoted heading (nested prefixes, fixpoint)")
+    func clearBlockClearsQuotedHeading() {
+        #expect(clearBlock("> ## foo", NSRange(location: 4, length: 0)).text == "foo")
+        #expect(clearBlock(">   ## foo", NSRange(location: 5, length: 0)).text == "foo")
+    }
+
+    @Test("Clear block clears a list-then-heading line to plain text")
+    func clearBlockClearsListThenHeading() {
+        #expect(clearBlock("- # foo", NSRange(location: 0, length: 0)).text == "foo")
+    }
+
+    @Test("Clear block strips a task box after the list marker")
+    func clearBlockStripsTaskBox() {
+        #expect(clearBlock("- [ ] task", NSRange(location: 0, length: 0)).text == "task")
+        #expect(clearBlock("> - [x] done", NSRange(location: 0, length: 0)).text == "done")
+    }
+
+    // MARK: - CRLF / line-terminator preservation
+
+    @Test("Heading toggle-off preserves a CRLF terminator (doesn't merge the next line)")
+    func headingToggleOffPreservesCRLF() {
+        #expect(edit(.heading(1), "# foo\r\nbar", NSRange(location: 0, length: 0)).text == "foo\r\n")
+    }
+
+    @Test("List toggle-off preserves a CRLF terminator")
+    func listToggleOffPreservesCRLF() {
+        #expect(edit(.bulletList, "- foo\r\nbar", NSRange(location: 0, length: 0)).text == "foo\r\n")
+    }
+
+    @Test("Clear block preserves a CRLF terminator")
+    func clearBlockPreservesCRLF() {
+        #expect(clearBlock("## foo\r\nbar", NSRange(location: 0, length: 0)).text == "foo\r\n")
+    }
+
+    @Test("List toggle-off on a task line sheds the [ ] box to plain text")
+    func listToggleOffStripsTaskBox() {
+        #expect(edit(.bulletList, "- [ ] task", NSRange(location: 0, length: 0)).text == "task")
     }
 
     // MARK: - Blockquote

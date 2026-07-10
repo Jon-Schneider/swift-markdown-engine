@@ -164,6 +164,18 @@ public struct MarkdownUITextViewWrapper: UIViewRepresentable {
         }
     }
 
+    /// Report the content-fitting size to SwiftUI in `.fitsContent` so the editor lays out at
+    /// its natural height inside a page scroll view (rather than as a fixed, internally-scrolling
+    /// box). Returns `nil` in `.scrolls`, letting SwiftUI size the editor as before. iOS 16+.
+    public func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownUITextView, context: Context) -> CGSize? {
+        guard configuration.heightBehavior == .fitsContent else { return nil }
+        let width = uiView.fitsContentWidth(proposing: proposal.width ?? uiView.bounds.width)
+        let height = uiView.fittingContentHeight(forWidth: width)
+        // Adopt the proposed width (the width the text laid out against) and the fitted height.
+        let reportedWidth = proposal.width ?? (width > 0 ? width : uiView.bounds.width)
+        return CGSize(width: reportedWidth, height: height)
+    }
+
     /// Build the write-back closure the text view calls when it begins/ends editing, so the
     /// host binding tracks the live first-responder state (tap-to-focus, keyboard dismissal).
     /// Captures the current pass's `focus` binding by value; guards against a redundant write

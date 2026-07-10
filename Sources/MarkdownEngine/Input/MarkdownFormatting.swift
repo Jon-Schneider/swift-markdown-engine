@@ -104,9 +104,9 @@ enum MarkdownFormatting {
         case .heading(let level):
             return headingEdit(text: text, selection: selection, level: level)
         case .bulletList:
-            return listEdit(text: text, selection: selection, prefix: "- ")
+            return listEdit(text: text, selection: selection, prefix: "- ", ownPattern: bulletLinePattern)
         case .numberedList:
-            return listEdit(text: text, selection: selection, prefix: "1. ")
+            return listEdit(text: text, selection: selection, prefix: "1. ", ownPattern: orderedLinePattern)
         case .blockquote:
             return blockquoteEdit(text: text, selection: selection)
         case .codeBlock:
@@ -442,13 +442,26 @@ enum MarkdownFormatting {
     private static func headingEdit(text: String, selection: NSRange, level: Int) -> FormattingEdit {
         let ns = text as NSString
         let lineRange = ns.lineRange(for: selection)
-        let originalLine = ns.substring(with: lineRange)
-        var content = originalLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        // `splitLineTerminator` preserves the exact terminator (LF / CR / CRLF) instead of
+        // rewriting it to `\n` — so a CRLF line keeps its CRLF and a CR line isn't merged
+        // into the next.
+        let (lineText, suffix) = splitLineTerminator(lineRange, in: ns)
+        let trimmed = lineText.trimmingCharacters(in: .whitespaces)
+        // Toggle OFF: re-applying the SAME level to a line that is already that heading clears
+        // it back to a plain paragraph (matches `isActive(.heading(level))`). A DIFFERENT level
+        // still just changes the level (below).
+        let alreadyAtLevel = trimmed.hasPrefix(String(repeating: "#", count: level) + " ")
+        var content = trimmed
         while content.hasPrefix("#") { content.removeFirst() }
         content = content.trimmingCharacters(in: .whitespaces)
+        if alreadyAtLevel {
+            let newLine = content + suffix
+            return FormattingEdit(
+                range: lineRange, text: newLine,
+                selection: NSRange(location: lineRange.location, length: (content as NSString).length)
+            )
+        }
         let prefix = String(repeating: "#", count: level) + " "
-        // Preserve the trailing newline so a non-final line isn't merged with the next.
-        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
         let newLine = prefix + content + suffix
         let location = lineRange.location + (prefix as NSString).length
         return FormattingEdit(
@@ -459,23 +472,85 @@ enum MarkdownFormatting {
 
     // MARK: - List
 
-    private static func listEdit(text: String, selection: NSRange, prefix: String) -> FormattingEdit {
+    private static func listEdit(text: String, selection: NSRange, prefix: String, ownPattern: String) -> FormattingEdit {
         let ns = text as NSString
         let startLine = ns.lineRange(for: selection)
-        let originalLine = ns.substring(with: startLine)
-        let lineText = originalLine.trimmingCharacters(in: .newlines)
-        var content = lineText
-        if content.hasPrefix(prefix) {
-            // Strip an existing identical prefix before re-adding it below — idempotent.
-            // (The menu disables the command when the line is already a list.)
-            content = String(content.dropFirst(prefix.count))
+        // Terminator-preserving split (CRLF / CR safe) instead of `hasSuffix("\n")`.
+        let (lineText, suffix) = splitLineTerminator(startLine, in: ns)
+
+        // Toggle OFF: the line is already THIS list type → strip its marker back to a plain
+        // paragraph (matches `isActive`). Uses the same regex as detection, so any indented /
+        // imported marker (`*`, `+`, `2)` …) is removed, not just a literal `- ` / `1. `. A task
+        // line (`- [ ] x`) also sheds its `[ ] ` box, so it lands as clean paragraph text.
+        if let marker = lineText.range(of: ownPattern, options: .regularExpression) {
+            let content = strippingLeadingTaskBox(String(lineText[marker.upperBound...]))
+            return FormattingEdit(
+                range: startLine, text: content + suffix,
+                selection: NSRange(location: startLine.location, length: (content as NSString).length)
+            )
         }
-        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
+
+        // Otherwise ADD the marker. First strip an existing OTHER list marker so we CONVERT
+        // (bullet ↔ numbered) rather than stack markers (`- 1. x`).
+        var content = lineText
+        for pattern in [bulletLinePattern, orderedLinePattern] {
+            if let marker = content.range(of: pattern, options: .regularExpression) {
+                content = String(content[marker.upperBound...])
+                break
+            }
+        }
         let newLine = prefix + content + suffix
         let location = startLine.location + (prefix as NSString).length
         return FormattingEdit(
             range: startLine, text: newLine,
             selection: NSRange(location: location, length: (content as NSString).length)
+        )
+    }
+
+    // MARK: - Clear block (⌥⌘0 "paragraph")
+
+    /// Heading marker, whitespace-tolerant (matches an INDENTED heading like `  ## x`, unlike a
+    /// bare `^#`), so ⌥⌘0 agrees with the heading toggle-off (which trims leading whitespace).
+    private static let headingMarkerPattern = #"^[ \t]*#{1,6}[ \t]"#
+
+    /// The block-level line prefixes ⌥⌘0 strips, in the order they can nest at line start.
+    private static let blockMarkerPatterns = [
+        blockquoteMarkerPattern, headingMarkerPattern, bulletLinePattern, orderedLinePattern,
+    ]
+
+    /// Strip a leading task-checkbox box (`[ ]` / `[x]` / `[X]`) plus one trailing space — used
+    /// after a list marker is removed so `- [ ] x` clears to `x`, not `[ ] x`.
+    private static func strippingLeadingTaskBox(_ line: String) -> String {
+        guard let box = line.range(of: #"^\[[ xX]\][ \t]?"#, options: .regularExpression) else { return line }
+        return String(line[box.upperBound...])
+    }
+
+    /// Strip every block-level prefix on the caret's line — blockquote levels, heading, list
+    /// marker, and a task box — turning it back into a plain paragraph. Backs the ⌥⌘0 keyboard
+    /// shortcut. Complements the per-command toggle-off (a toolbar clears a block by re-tapping
+    /// its button); this clears whatever block is there in one action. Loops to a fixpoint so a
+    /// nested prefix (`> ## x`, `> - [ ] x`) is fully cleared, not just its outer marker. An
+    /// already-plain line is an identity edit, skipped by the callers' identity guard.
+    static func clearBlockEdit(text: String, selection: NSRange) -> FormattingEdit {
+        let ns = text as NSString
+        let lineRange = ns.lineRange(for: selection)
+        let (lineText, suffix) = splitLineTerminator(lineRange, in: ns)
+        var content = lineText
+        var strippedAny = true
+        while strippedAny {
+            strippedAny = false
+            for pattern in blockMarkerPatterns {
+                if let marker = content.range(of: pattern, options: .regularExpression) {
+                    content = String(content[marker.upperBound...])
+                    strippedAny = true
+                    break   // re-scan from the first pattern (markers can nest in any order)
+                }
+            }
+        }
+        content = strippingLeadingTaskBox(content)
+        return FormattingEdit(
+            range: lineRange, text: content + suffix,
+            selection: NSRange(location: lineRange.location, length: (content as NSString).length)
         )
     }
 
