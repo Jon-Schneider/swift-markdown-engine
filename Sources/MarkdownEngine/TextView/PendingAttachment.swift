@@ -16,6 +16,14 @@
 //  by re-tokenizing (the `.imageLink` token whose URL is the pending scheme + UUID) and replaces
 //  or deletes it through the undoable path.
 //
+//  Known limitation (undo): the placeholder insert and its resolution are two independent undoable
+//  edits, so undoing a RESOLVED attachment reverts the reference back into a placeholder marker
+//  whose resolver has already fired — it renders as a stuck "Uploading…" chip until the user
+//  deletes it or redoes. Purely visual: the marker is stripped at the emit chokepoint, so the host
+//  never sees it and there is no data loss. Coalescing the two edits across the async boundary (or
+//  teaching the styler which markers are orphaned) is disproportionate to a rare, host-invisible,
+//  user-recoverable glitch, so it is left as documented behavior.
+//
 
 import Foundation
 
@@ -106,29 +114,6 @@ struct PendingAttachmentEntry {
     var timeout: DispatchWorkItem?
 }
 
-/// Shift `selection` to stay put relative to the user's intent after replacing `editRange` with
-/// `replacementLength` characters: unchanged if the edit is after it, shifted by the length delta
-/// if the edit is before it, collapsed just past the edit if it overlapped (the caret was inside
-/// the placeholder). Shared so macOS and iOS resolve selections identically. This is the crux of
-/// the async-drop fix — resolution must NOT yank the caret to the drop point.
-func pendingAdjustedSelection(_ selection: NSRange, editRange: NSRange, replacementLength: Int, maxLength: Int) -> NSRange {
-    guard selection.location != NSNotFound else { return NSRange(location: maxLength, length: 0) }
-    let delta = replacementLength - editRange.length
-    var location = selection.location
-    var length = selection.length
-    if NSMaxRange(editRange) <= selection.location {
-        location += delta                                    // edit fully before selection
-    } else if editRange.location >= NSMaxRange(selection) {
-        // edit fully after selection: leave it untouched
-    } else {
-        location = editRange.location + replacementLength     // overlap: park just past the edit
-        length = 0
-    }
-    location = min(max(location, 0), maxLength)
-    length = min(max(length, 0), maxLength - location)
-    return NSRange(location: location, length: length)
-}
-
 /// The visible-but-not-emitted placeholder marker for an in-flight async drop. Single source of
 /// truth for the URL scheme so the styler (renders the chip), the emit transform (strips it), and
 /// the locate/resolve paths all agree.
@@ -157,18 +142,23 @@ enum PendingAttachmentMarker {
         return UUID(uuidString: String(url.dropFirst(scheme.count)))
     }
 
+    /// Matches `![alt](x-mde-pending:<hex-ish>)`. Alt is sanitized (no `]`/newline) and the
+    /// scheme+UUID contains no `)`, so these classes can't over-match past the real marker bounds.
+    /// Precompiled once — `strip` runs at the emit chokepoint on every text change while a marker is
+    /// present, so per-call compilation would allocate on the hot path (the repo's other regexes are
+    /// all hoisted `static let` for the same reason). Force-try: the pattern is a compile-time constant.
+    private static let markerRegex: NSRegularExpression = {
+        let escapedScheme = NSRegularExpression.escapedPattern(for: scheme)
+        return try! NSRegularExpression(pattern: "!\\[[^\\]\\n]*\\]\\(\(escapedScheme)([0-9A-Fa-f-]+)\\)")
+    }()
+
     /// Remove every `![alt](x-mde-pending:<valid-uuid>)` from `storage`. Used at both emit
     /// chokepoints so a placeholder never reaches the host, and handles concurrent drops (all
     /// unresolved markers) uniformly. Coincidental invalid-UUID lookalikes are left intact.
     static func strip(from storage: String) -> String {
         guard storage.contains(scheme) else { return storage }
-        let escapedScheme = NSRegularExpression.escapedPattern(for: scheme)
-        // Alt is sanitized (no `]`/newline) and the scheme+UUID contains no `)`, so these classes
-        // can't over-match past the real marker bounds.
-        let pattern = "!\\[[^\\]\\n]*\\]\\(\(escapedScheme)([0-9A-Fa-f-]+)\\)"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return storage }
         let ns = storage as NSString
-        let matches = regex.matches(in: storage, range: NSRange(location: 0, length: ns.length))
+        let matches = markerRegex.matches(in: storage, range: NSRange(location: 0, length: ns.length))
         guard !matches.isEmpty else { return storage }
         let result = NSMutableString(string: storage)
         // Delete in reverse so earlier match ranges stay valid as we mutate.
@@ -179,5 +169,28 @@ enum PendingAttachmentMarker {
             result.deleteCharacters(in: match.range)
         }
         return result as String
+    }
+
+    /// Shift `selection` to stay put relative to the user's intent after replacing `editRange` with
+    /// `replacementLength` characters: unchanged if the edit is after it, shifted by the length delta
+    /// if the edit is before it, collapsed just past the edit if it overlapped (the caret was inside
+    /// the placeholder). Shared so macOS and iOS resolve selections identically. This is the crux of
+    /// the async-drop fix — resolution must NOT yank the caret to the drop point.
+    static func adjustedSelection(_ selection: NSRange, editRange: NSRange, replacementLength: Int, maxLength: Int) -> NSRange {
+        guard selection.location != NSNotFound else { return NSRange(location: maxLength, length: 0) }
+        let delta = replacementLength - editRange.length
+        var location = selection.location
+        var length = selection.length
+        if NSMaxRange(editRange) <= selection.location {
+            location += delta                                    // edit fully before selection
+        } else if editRange.location >= NSMaxRange(selection) {
+            // edit fully after selection: leave it untouched
+        } else {
+            location = editRange.location + replacementLength     // overlap: park just past the edit
+            length = 0
+        }
+        location = min(max(location, 0), maxLength)
+        length = min(max(length, 0), maxLength - location)
+        return NSRange(location: location, length: length)
     }
 }

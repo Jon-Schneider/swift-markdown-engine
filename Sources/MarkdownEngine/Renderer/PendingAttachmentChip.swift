@@ -31,6 +31,11 @@ enum PendingAttachmentChip {
 
     private static let lock = NSLock()
     private static var cache: [Key: PlatformImage] = [:]
+    /// Hard cap so the process-lifetime cache can't grow without bound (a distinct entry per
+    /// filename × width × colors during long upload sessions with window resizing). Chips are
+    /// transient and cheap to re-render, so on overflow we simply drop the whole cache rather than
+    /// track LRU order — a rare, coarse eviction that keeps the map small.
+    private static let cacheCap = 64
 
     private static let horizontalPadding: CGFloat = 10
     private static let verticalPadding: CGFloat = 6
@@ -63,6 +68,7 @@ enum PendingAttachmentChip {
         let image = draw(alt: alt, labelFont: labelFont, textColor: textColor,
                          fillColor: fillColor, borderColor: borderColor, maxWidth: maxWidth)
         lock.lock()
+        if cache.count >= cacheCap { cache.removeAll(keepingCapacity: true) }
         cache[key] = image
         lock.unlock()
         return image

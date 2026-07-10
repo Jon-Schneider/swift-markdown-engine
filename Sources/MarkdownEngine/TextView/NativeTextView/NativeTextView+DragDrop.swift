@@ -87,11 +87,15 @@ extension NativeTextView {
             case .pending(let resolver):
                 // Async staging: splice a visible loading placeholder at the true drop caret now,
                 // and hand the resolver to the coordinator so the host can resolve it in place when
-                // its `Task` finishes. Marker is image-syntax so it gets its own padded line; the
-                // resolved reference wraps correctly for files too (`[name](ref)`).
+                // its `Task` finishes. Insert the marker BARE (no block padding): the emit chokepoint
+                // strips only the marker itself, so any engine-added newlines would leak to the host
+                // before resolution — violating the "host sees nothing until resolve" invariant and
+                // leaving a stray blank line on cancel. Bare insertion strips back exactly to the
+                // pre-drop text and matches the iOS path (UIKit inserts the raw marker). The resolved
+                // reference wraps per the item's real kind (`![](ref)` / `[name](ref)`).
                 let uuid = UUID()
                 let marker = PendingAttachmentMarker.markdown(uuid: uuid, alt: item.suggestedName)
-                caret = insertDroppedMarkdown(marker, isImage: true, at: caret)
+                caret = insertDroppedMarkdown(marker, isImage: false, at: caret)
                 (delegate as? NativeTextViewCoordinator)?
                     .registerPendingAttachment(resolver, for: item, id: uuid)
             case .consumed, .declined:

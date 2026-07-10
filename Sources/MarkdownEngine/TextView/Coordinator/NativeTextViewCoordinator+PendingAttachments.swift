@@ -96,7 +96,7 @@ extension NativeTextViewCoordinator: PendingAttachmentHost {
         textView.breakUndoCoalescing()
 
         let newLength = (textView.string as NSString).length
-        let adjusted = pendingAdjustedSelection(
+        let adjusted = PendingAttachmentMarker.adjustedSelection(
             selection,
             editRange: range,
             replacementLength: (replacement as NSString).length,

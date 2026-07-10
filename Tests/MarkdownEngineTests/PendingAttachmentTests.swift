@@ -12,6 +12,7 @@ import Foundation
 import Testing
 #if os(macOS)
 import AppKit
+import SwiftUI
 #endif
 @testable import MarkdownEngine
 
@@ -132,7 +133,7 @@ struct PendingAttachmentValueTests {
     @Test("a resolve edit BEFORE the caret shifts the caret by the length delta")
     func selectionShiftsWhenEditBefore() {
         // marker [3,20) replaced by 10 chars → delta = -10; caret at 30 → 20.
-        let result = pendingAdjustedSelection(NSRange(location: 30, length: 0),
+        let result = PendingAttachmentMarker.adjustedSelection(NSRange(location: 30, length: 0),
                                               editRange: NSRange(location: 3, length: 20),
                                               replacementLength: 10, maxLength: 100)
         #expect(result == NSRange(location: 20, length: 0))
@@ -140,7 +141,7 @@ struct PendingAttachmentValueTests {
 
     @Test("a resolve edit AFTER the caret leaves the caret untouched")
     func selectionUnchangedWhenEditAfter() {
-        let result = pendingAdjustedSelection(NSRange(location: 2, length: 0),
+        let result = PendingAttachmentMarker.adjustedSelection(NSRange(location: 2, length: 0),
                                               editRange: NSRange(location: 10, length: 20),
                                               replacementLength: 5, maxLength: 100)
         #expect(result == NSRange(location: 2, length: 0))
@@ -149,7 +150,7 @@ struct PendingAttachmentValueTests {
     @Test("a resolve edit OVERLAPPING the caret parks it just past the replacement")
     func selectionCollapsesWhenEditOverlaps() {
         // caret inside the marker [5,20); replaced by 8 chars → caret at 5+8 = 13.
-        let result = pendingAdjustedSelection(NSRange(location: 9, length: 0),
+        let result = PendingAttachmentMarker.adjustedSelection(NSRange(location: 9, length: 0),
                                               editRange: NSRange(location: 5, length: 20),
                                               replacementLength: 8, maxLength: 200)
         #expect(result == NSRange(location: 13, length: 0))
@@ -167,6 +168,10 @@ private struct NilImageProvider: EmbeddedImageProvider {
     func image(for reference: EmbeddedImageRequest) -> PlatformImage? { nil }
     func fingerprint() -> AnyHashable { 1 }
 }
+
+/// A mutable reference the SwiftUI text binding writes through, so a test can observe what the
+/// engine emits to the host.
+private final class TextBox { var value: String; init(_ value: String) { self.value = value } }
 
 @MainActor
 @Suite("Pending attachment — macOS coordinator")
@@ -207,12 +212,51 @@ struct MacOSPendingAttachmentTests {
         return (resolver, uuid)
     }
 
+    private func makeCoordinator(box: TextBox) -> NativeTextViewCoordinator {
+        NativeTextViewCoordinator(
+            text: Binding(get: { box.value }, set: { box.value = $0 }),
+            fontName: "SF Pro", fontSize: 16,
+            isWikiLinkActive: .constant(false), onLinkClick: nil, onInlineSelectionChange: nil
+        )
+    }
+
     @Test("a .pending drop splices a loading-placeholder marker at the drop point")
     func pendingDropInsertsMarker() {
         let view = makeTextView("abc")
         view.onDropAttachment = { _ in .pending(AttachmentResolver()) }
         view.insertDroppedItems([imageItem()], at: 3)
         #expect(view.string.contains("](x-mde-pending:"), "the drop must leave a pending marker")
+    }
+
+    @Test("a mid-paragraph .pending drop inserts BARE — it strips back to exactly the pre-drop text")
+    func pendingDropIsBareNoPaddingLeak() {
+        let view = makeTextView("hello world")
+        view.onDropAttachment = { _ in .pending(AttachmentResolver()) }
+        view.insertDroppedItems([imageItem()], at: 5)   // after "hello", mid-paragraph
+        #expect(view.string.contains("](x-mde-pending:"))
+        // The emit chokepoint strips only the marker; any engine-added block padding would leak a
+        // spurious newline to the host. Bare insertion must strip back to the exact pre-drop text.
+        #expect(PendingAttachmentMarker.strip(from: view.string) == "hello world")
+    }
+
+    @Test("a real macOS .pending drop makes NO host-visible change until the reference resolves")
+    func pendingDropSuppressesEmitUntilResolve() async throws {
+        let box = TextBox("hello world")
+        let coordinator = makeCoordinator(box: box)
+        let view = makeTextView("hello world")
+        coordinator.textView = view
+        view.delegate = coordinator
+
+        let resolver = AttachmentResolver()
+        view.onDropAttachment = { _ in .pending(resolver) }
+        view.insertDroppedItems([imageItem()], at: 5)
+        try await Task.sleep(for: .milliseconds(80))     // let any async binding write run
+        #expect(box.value == "hello world", "the placeholder must never reach the host binding")
+
+        _ = resolver.insert(reference: "store://z")
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(box.value == "hello![](store://z) world", "resolve emits the real reference")
+        #expect(!box.value.contains("x-mde-pending"))
     }
 
     @Test("resolve replaces exactly the marker with the reference at its original location")
@@ -258,6 +302,20 @@ struct MacOSPendingAttachmentTests {
         resolver.cancel()
         #expect(!view.string.contains("x-mde-pending"))
         #expect(view.string == "abc")
+    }
+
+    @Test("cancel after a real mid-paragraph drop restores the EXACT pre-drop text (no residue)")
+    func cancelRestoresExactText() {
+        let coordinator = makeCoordinator()
+        let view = makeTextView("hello world")
+        coordinator.textView = view
+        view.delegate = coordinator
+        let resolver = AttachmentResolver()
+        view.onDropAttachment = { _ in .pending(resolver) }
+        view.insertDroppedItems([imageItem()], at: 5)
+
+        resolver.cancel()
+        #expect(view.string == "hello world", "cancel must leave no stray newline from the placeholder")
     }
 
     @Test("insert returns false (no-op) once the marker was removed — undo mid-flight")
@@ -361,43 +419,54 @@ struct IOSPendingAttachmentTests {
         return (resolver, uuid)
     }
 
+    /// Let iOS's deferred `arm` (one main-queue hop, so it lands after UIKit inserts the marker in
+    /// production) run. Tests insert the marker synchronously, so a resolve is buffered until here.
+    private func settle() async { try? await Task.sleep(for: .milliseconds(30)) }
+
     @Test("resolve replaces the marker with the reference at its original location")
-    func resolveReplacesMarker() {
+    func resolveReplacesMarker() async {
         let view = makeLaidOutView("abc")
         let (resolver, _) = stageMarker(in: view, at: 3)
         #expect(resolver.insert(reference: "store://final") == true)
+        await settle()
         #expect(view.text == "abc![](store://final)")
     }
 
     @Test("resolve preserves the user's caret when it was moved before the marker")
-    func resolvePreservesCaret() {
+    func resolvePreservesCaret() async {
         let view = makeLaidOutView("abc")
         let (resolver, _) = stageMarker(in: view, at: 3)
         view.selectedRange = NSRange(location: 1, length: 0)
         _ = resolver.insert(reference: "store://x")
-        #expect(view.selectedRange == NSRange(location: 1, length: 0))
+        await settle()
+        #expect(view.text == "abc![](store://x)", "the resolve must actually land")
+        #expect(view.selectedRange == NSRange(location: 1, length: 0),
+                "the caret must not be yanked to the resolved attachment")
     }
 
     @Test("cancel removes the marker")
-    func cancelRemovesMarker() {
+    func cancelRemovesMarker() async {
         let view = makeLaidOutView("abc")
         let (resolver, _) = stageMarker(in: view, at: 3)
         resolver.cancel()
+        await settle()
         #expect(!view.text.contains("x-mde-pending"))
         #expect(view.text == "abc")
     }
 
     @Test("the placeholder is never emitted to the host; the resolved reference is")
-    func emitSuppressesPlaceholder() {
+    func emitSuppressesPlaceholder() async {
         let view = makeLaidOutView("abc")
         var emitted: [String] = []
         view.onTextChange = { emitted.append($0) }
 
         let (resolver, _) = stageMarker(in: view, at: 3)
+        await settle()
         #expect(emitted.allSatisfy { !$0.contains("x-mde-pending") },
                 "the placeholder must never reach onTextChange")
 
         _ = resolver.insert(reference: "store://z")
+        await settle()
         #expect(emitted.last == "abc![](store://z)")
         #expect(emitted.allSatisfy { !$0.contains("x-mde-pending") })
     }

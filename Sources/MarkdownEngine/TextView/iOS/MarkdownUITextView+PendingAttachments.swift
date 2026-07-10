@@ -23,7 +23,17 @@ extension MarkdownUITextView: PendingAttachmentHost {
         let work = DispatchWorkItem { [weak self] in self?.cancelPendingMarker(id) }
         pendingAttachmentResolvers[id] = PendingAttachmentEntry(resolver: resolver, item: item, timeout: work)
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
-        resolver.arm(host: self, id: id)
+        // Defer arming to the next runloop. On iOS the placeholder marker is inserted by UIKit AFTER
+        // this call returns (via `UITextPasteItem.setResult`), so arming synchronously would let a
+        // resolve that arrives immediately — a host that resolves inside `onDropAttachment`, or a
+        // very fast staging `Task` — re-tokenize a buffer that has no marker yet and orphan the chip.
+        // By the next main-queue hop the marker is in place; a resolve arriving in the gap is buffered
+        // by the resolver and flushed here. (macOS arms synchronously because it inserts the marker
+        // itself before registering.)
+        DispatchQueue.main.async { [weak self, weak resolver] in
+            guard let self, let resolver else { return }
+            resolver.arm(host: self, id: id)
+        }
     }
 
     @discardableResult
@@ -81,7 +91,7 @@ extension MarkdownUITextView: PendingAttachmentHost {
         let currentLength = (textStorage.string as NSString).length
         guard range.location != NSNotFound, NSMaxRange(range) <= currentLength else { return }
         let newLength = currentLength - range.length + (replacement as NSString).length
-        let adjusted = pendingAdjustedSelection(
+        let adjusted = PendingAttachmentMarker.adjustedSelection(
             selectedRange,
             editRange: range,
             replacementLength: (replacement as NSString).length,
