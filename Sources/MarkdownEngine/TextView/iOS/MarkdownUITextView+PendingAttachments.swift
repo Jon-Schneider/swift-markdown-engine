@@ -51,9 +51,13 @@ extension MarkdownUITextView: PendingAttachmentHost {
             in: textStorage.string as NSString, at: range
         )
         // Only consume the entry (and cancel its backstop timeout) once the edit actually applied. On
-        // a read-only view `applyPendingReplacement` no-ops; keeping the entry + timeout lets a later
-        // editable moment (or the timeout) clean the chip up instead of stranding it forever.
-        guard applyPendingReplacement(range: range, with: replacement) else { return false }
+        // a read-only view `applyPendingReplacement` no-ops; park the action and keep the entry so it
+        // replays when editing is restored (see `flushDeferredPendingAttachments`) — the upload isn't
+        // lost.
+        guard applyPendingReplacement(range: range, with: replacement) else {
+            pendingAttachmentResolvers[id]?.deferred = .resolve(reference: reference)
+            return false
+        }
         dropPendingEntry(id)
         return true
     }
@@ -65,9 +69,27 @@ extension MarkdownUITextView: PendingAttachmentHost {
             dropPendingEntry(id)
             return
         }
-        // Same retain-until-applied rule as resolve, so a read-only view doesn't leave a stuck chip.
-        guard applyPendingReplacement(range: range, with: "") else { return }
+        // Same retain-until-applied rule as resolve; park the cancel to replay when editable.
+        guard applyPendingReplacement(range: range, with: "") else {
+            pendingAttachmentResolvers[id]?.deferred = .cancel
+            return
+        }
         dropPendingEntry(id)
+    }
+
+    /// Replay any resolve/cancel parked while the view was read-only. Called when the view becomes
+    /// editable again (`isEditable` didSet), so a drop staged during a read-only window still lands
+    /// its reference instead of silently stranding the chip.
+    @MainActor
+    func flushDeferredPendingAttachments() {
+        // Snapshot: resolve/cancel mutate `pendingAttachmentResolvers` (dropPendingEntry).
+        for (id, entry) in Array(pendingAttachmentResolvers) {
+            switch entry.deferred {
+            case .resolve(let reference): resolvePendingMarker(id, with: reference)
+            case .cancel: cancelPendingMarker(id)
+            case nil: continue
+            }
+        }
     }
 
     private func dropPendingEntry(_ id: UUID) {

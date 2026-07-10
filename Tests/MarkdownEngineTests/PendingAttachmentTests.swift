@@ -394,20 +394,37 @@ struct MacOSPendingAttachmentTests {
         #expect(view.string == "![](store://1)\n![](store://2)")
     }
 
-    @Test("resolving on a read-only view retains the entry so the backstop timeout can still clean up")
-    func resolveOnReadOnlyRetainsForTimeout() async throws {
+    @Test("a resolve parked while read-only replays and lands its reference when editing is restored")
+    func resolveDeferredUntilEditable() {
         let coordinator = makeCoordinator()
         let view = makeTextView("abc")
-        let (resolver, _) = stageMarker(in: view, coordinator: coordinator, at: 3, timeout: 0.1)
+        coordinator.textView = view
+        view.delegate = coordinator                 // so the isEditable didSet reaches the coordinator
+        let (resolver, _) = stageMarker(in: view, coordinator: coordinator, at: 3)
 
         view.isEditable = false
-        #expect(resolver.insert(reference: "store://x") == false, "a read-only resolve can't apply")
-        #expect(view.string.contains("x-mde-pending"),
-                "the entry must NOT be consumed while the marker is still stuck (no strand)")
+        #expect(resolver.insert(reference: "store://x") == false, "a read-only resolve can't apply yet")
+        #expect(view.string.contains("x-mde-pending"), "the marker is retained, not stranded")
+
+        view.isEditable = true                      // triggers flushDeferredPendingAttachments
+        #expect(view.string == "abc\n![](store://x)",
+                "the parked reference lands once editing is restored — the upload is not lost")
+    }
+
+    @Test("a cancel parked while read-only replays and removes the marker when editing is restored")
+    func cancelDeferredUntilEditable() {
+        let coordinator = makeCoordinator()
+        let view = makeTextView("abc")
+        coordinator.textView = view
+        view.delegate = coordinator
+        let (resolver, _) = stageMarker(in: view, coordinator: coordinator, at: 3)
+
+        view.isEditable = false
+        resolver.cancel()
+        #expect(view.string.contains("x-mde-pending"), "cancel can't apply on a read-only view yet")
 
         view.isEditable = true
-        try await Task.sleep(for: .milliseconds(300))   // retained timeout fires; now editable → cleans up
-        #expect(!view.string.contains("x-mde-pending"), "the retained timeout removes the chip once editable")
+        #expect(view.string == "abc", "the parked cancel removes the marker once editable")
     }
 
     @Test("teardown cancels pending resolvers so a later resolve no-ops")
@@ -599,6 +616,20 @@ struct IOSPendingAttachmentTests {
         await settle()
         #expect(emitted.last == "abc\n![](store://z)")
         #expect(emitted.allSatisfy { !$0.contains("x-mde-pending") })
+    }
+
+    @Test("a resolve parked while read-only lands its reference when editing is restored")
+    func resolveDeferredUntilEditable() async {
+        let view = makeLaidOutView("abc")
+        let (resolver, _) = stageMarker(in: view, at: 3)
+        await settle()                              // let the deferred arm flush
+
+        view.isEditable = false
+        #expect(resolver.insert(reference: "store://x") == false, "can't apply on a read-only view yet")
+        #expect(view.text.contains("x-mde-pending"), "the marker is retained, not stranded")
+
+        view.isEditable = true                      // triggers flushDeferredPendingAttachments
+        #expect(view.text == "abc\n![](store://x)", "the parked reference lands once editable")
     }
 
     @Test("dropResultString maps .pending to nil (the pending path is handled in resolveAttachment)")

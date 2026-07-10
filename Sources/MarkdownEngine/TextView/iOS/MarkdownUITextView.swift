@@ -82,6 +82,14 @@ public final class MarkdownUITextView: UITextView {
     /// transform gives no offset for macOS-style own-line block padding). See
     /// `MarkdownUITextView+DragDrop.swift`.
     public var onDropAttachment: ((DroppedItem) -> AttachmentDisposition)?
+
+    /// When editing is restored, replay any pending-drop resolve/cancel parked while read-only
+    /// (see `MarkdownUITextView+PendingAttachments`), so a staged upload still lands.
+    public override var isEditable: Bool {
+        didSet {
+            if isEditable, !oldValue { flushDeferredPendingAttachments() }
+        }
+    }
     /// Called when editing begins/ends (i.e. this view becomes/resigns first responder),
     /// reporting the live focus state back to the SwiftUI host's `focus` binding. Wired by
     /// `MarkdownUITextViewWrapper`; see its `focus` parameter.

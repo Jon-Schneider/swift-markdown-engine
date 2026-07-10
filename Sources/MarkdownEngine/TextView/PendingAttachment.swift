@@ -109,13 +109,21 @@ public final class AttachmentResolver {
     }
 }
 
-/// One in-flight async drop: the host's resolver, the item to wrap on resolve, and a backstop
-/// timeout that auto-cancels a placeholder the host never resolves. Shared by both platforms'
-/// pending-attachment hosts.
+/// A resolution the host requested that couldn't be applied yet (the view was read-only) and must
+/// be replayed once editing is restored — so an upload isn't silently lost.
+enum DeferredResolution {
+    case resolve(reference: String)
+    case cancel
+}
+
+/// One in-flight async drop: the host's resolver, the item to wrap on resolve, a backstop timeout
+/// that auto-cancels a placeholder the host never resolves, and a `deferred` action parked when a
+/// resolve/cancel arrived while the view was read-only. Shared by both platforms' hosts.
 struct PendingAttachmentEntry {
     let resolver: AttachmentResolver
     let item: DroppedItem
     var timeout: DispatchWorkItem?
+    var deferred: DeferredResolution?
 }
 
 /// The visible-but-not-emitted placeholder marker for an in-flight async drop. Single source of

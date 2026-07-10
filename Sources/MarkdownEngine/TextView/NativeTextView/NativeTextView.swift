@@ -105,6 +105,16 @@ final class NativeTextView: NSTextView {
     var onPasteImage: ((NSPasteboard) -> AttachmentDisposition)?
     /// Host hook for image/file drops onto the editor. See `NativeTextView+DragDrop.swift`.
     var onDropAttachment: ((DroppedItem) -> AttachmentDisposition)?
+
+    /// When editing is restored, replay any pending-drop resolve/cancel parked while read-only
+    /// (see `NativeTextViewCoordinator+PendingAttachments`), so a staged upload still lands.
+    override var isEditable: Bool {
+        didSet {
+            if isEditable, !oldValue {
+                (delegate as? NativeTextViewCoordinator)?.flushDeferredPendingAttachments()
+            }
+        }
+    }
     weak var layoutBridge: LayoutBridge?
     var baseFont: NSFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
 
