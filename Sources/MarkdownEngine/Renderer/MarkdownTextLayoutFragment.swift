@@ -591,8 +591,8 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
                 let iconInset = max(0.0, size * checkboxStyle.iconInsetFraction)
                 let iconRect = boxRect.insetBy(dx: iconInset, dy: iconInset)
-                let symbolName = isChecked ? "checkmark.square.fill" : "square"
-                let tint = isChecked ? theme.bodyText : theme.mutedText
+                let symbolName = isChecked ? checkboxStyle.checkedSymbolName : checkboxStyle.uncheckedSymbolName
+                let tint = isChecked ? theme.resolvedCheckboxCheckedTint : theme.resolvedCheckboxUncheckedTint
                 if let symbol = tintedSymbolImage(named: symbolName, pointSize: iconRect.height, tint: tint) {
                     symbol.draw(in: iconRect)
                 }
