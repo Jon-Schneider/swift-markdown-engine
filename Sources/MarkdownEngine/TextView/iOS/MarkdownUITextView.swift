@@ -66,6 +66,10 @@ public final class MarkdownUITextView: UITextView {
     /// Called when the `/` slash-command context at the caret changes (opened / filtered / closed),
     /// so the host can show the block-insert menu. Wired by `MarkdownEditorController`.
     var onSlashMenuContextChange: ((SlashMenuContext?) -> Void)?
+    /// The slash context most recently handed to `onSlashMenuContextChange`, i.e. whether a menu is
+    /// currently open (and, if so, which). Mirrors the macOS coordinator's field of the same name;
+    /// lets Escape decide between "close the open menu" and "end editing" (progressive dismissal).
+    var lastPublishedSlashContext: SlashMenuContext?
     /// Called when an image is pasted, with the image's PNG bytes. Return an
     /// ``AttachmentDisposition``: `.insert(ref)` embeds `![](ref)`, `.consumed` takes
     /// ownership and inserts nothing (e.g. async staging — and, unlike the old `nil`, does
@@ -441,7 +445,23 @@ public final class MarkdownUITextView: UITextView {
             text: display, selection: selectedRange, tokens: tokens
         ))
         onInlineLinkContextChange?(inlineLinkContext(tokens: tokens, display: display))
-        onSlashMenuContextChange?(slashMenuContext(display: display))
+        let slash = slashMenuContext(display: display)
+        lastPublishedSlashContext = slash
+        onSlashMenuContextChange?(slash)
+    }
+
+    /// Close a currently-open slash menu (publishing `nil`) if one is live, returning whether it
+    /// did. Lets Escape close the menu first and end editing only on a subsequent bare Escape —
+    /// resignation alone wouldn't republish, so without this the menu would strand on a blurred view.
+    @discardableResult
+    func dismissSlashMenuContextIfPresent() -> Bool {
+        // Only a wired consumer can actually be showing a menu. Without one there's nothing to
+        // close, so progressive Escape must NOT short-circuit here (else a caret parked after a
+        // `/word` would silently eat the first Escape instead of ending editing).
+        guard onSlashMenuContextChange != nil, lastPublishedSlashContext != nil else { return false }
+        lastPublishedSlashContext = nil
+        onSlashMenuContextChange?(nil)
+        return true
     }
 
     /// The `/` slash-command context for the caret, or nil. Only a zero-length caret triggers it

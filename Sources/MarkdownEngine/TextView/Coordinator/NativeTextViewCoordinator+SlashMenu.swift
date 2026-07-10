@@ -26,6 +26,22 @@ extension NativeTextViewCoordinator {
         DispatchQueue.main.async { callback?(context) }
     }
 
+    /// Clear a currently-published slash context (publishing `nil`) if one is live. Used when
+    /// the edit session ends without a text/selection change — e.g. Escape-to-end-editing —
+    /// which otherwise wouldn't republish and would strand the menu on a now-unfocused editor.
+    /// Returns whether anything was dismissed.
+    @discardableResult
+    func dismissSlashMenuContextIfPresent() -> Bool {
+        // Only a wired consumer can actually be showing a menu. Without one there's nothing to
+        // close, so progressive Escape must NOT short-circuit here (else a caret parked after a
+        // `/word` would silently eat the first Escape instead of ending editing).
+        guard onSlashMenuContextChange != nil, lastPublishedSlashContext != nil else { return false }
+        lastPublishedSlashContext = nil
+        let callback = onSlashMenuContextChange
+        DispatchQueue.main.async { callback?(nil) }
+        return true
+    }
+
     /// Force a publish now — the controller calls this on attach so freshly-shown host UI isn't
     /// stale relative to a caret that's already sitting in a `/command`.
     func publishSlashMenuContextNow() {

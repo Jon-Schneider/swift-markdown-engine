@@ -525,6 +525,29 @@ extension NativeTextViewCoordinator {
            handleSeamlessBackspace(textView) {
             return true
         }
+        // `cancelOperation:` is what both Escape and ⌘-period map to. When the host has opted in,
+        // treat it as a progressive cancel: close an open slash menu first, else end the edit
+        // session (see the inner comment). Skipped while an IME composition
+        // is active (marked text present): there, Escape means "cancel the conversion", and
+        // most input methods consume it before it reaches us — but Korean 2-Set and friends
+        // pass it through, and force-ending the session would dump the provisional text
+        // (same reasoning as the `hasMarkedText()` guard in `publishHostState`).
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)),
+           (textView as? NativeTextView)?.configuration.endsEditingOnEscape ?? configuration.endsEditingOnEscape,
+           textView.isEditable,
+           !textView.hasMarkedText(),
+           let window = textView.window {
+            // Progressive Escape. First Escape closes an open slash menu (the conventional
+            // "dismiss the palette before the field" behavior); only when no menu is open does
+            // Escape end the edit session. Consume either way so AppKit doesn't fall through to
+            // its default `cancelOperation:` (word-completion) or beep.
+            if dismissSlashMenuContextIfPresent() { return true }
+            // No menu — drop first responder. `makeFirstResponder(nil)` routes through
+            // `NativeTextView.resignFirstResponder()`, which reports focus=false to the host
+            // (flipping any `focus` binding). Return the real resign result: if it's vetoed
+            // (e.g. a delegate's `textShouldEndEditing`), return false and let the default run.
+            return window.makeFirstResponder(nil)
+        }
         return false
     }
 

@@ -69,6 +69,25 @@ public struct MarkdownEditorConfiguration: Sendable {
     /// - SeeAlso: ``HeightBehavior``
     public var heightBehavior: HeightBehavior
 
+    /// When `true`, the "cancel" command inside an editable text view resigns first
+    /// responder, ending the edit session. Because the engine's focus reporter runs on
+    /// resignation, any host `focus` binding flips to `false` automatically — no host-side
+    /// plumbing needed. `false` (the default) preserves the historical no-op behavior.
+    ///
+    /// Dismissal is progressive: if the `/` slash-command menu is open, the first cancel closes
+    /// the menu and a subsequent one ends editing (the usual "close the palette before the field"
+    /// behavior). With no menu open, cancel ends editing directly.
+    ///
+    /// - On macOS this fires on `cancelOperation:`, which Cocoa maps to **both** Escape and
+    ///   ⌘-period (both mean "cancel"). It overrides AppKit's default `cancelOperation:`
+    ///   (the word-completion affordance) in an editable view. Skipped while an IME
+    ///   composition is active, so Escape can still cancel the conversion.
+    /// - On iOS this fires on the hardware Escape key command and takes priority over the
+    ///   system's Escape (so it reliably ends editing even inside a sheet/popover; a second
+    ///   Escape, after focus drops, falls through to the system). iPad-with-hardware-keyboard
+    ///   only — there's no on-screen-keyboard equivalent — and it, too, is skipped mid-composition.
+    public var endsEditingOnEscape: Bool
+
     public init(
         theme: MarkdownEditorTheme = .default,
         services: MarkdownEditorServices = .default,
@@ -91,7 +110,8 @@ public struct MarkdownEditorConfiguration: Sendable {
         textInsets: TextInsets = .default,
         readingWidth: CGFloat? = nil,
         spellChecking: SpellCheckingPolicy = .default,
-        heightBehavior: HeightBehavior = .scrolls
+        heightBehavior: HeightBehavior = .scrolls,
+        endsEditingOnEscape: Bool = false
     ) {
         self.theme = theme
         self.services = services
@@ -115,6 +135,7 @@ public struct MarkdownEditorConfiguration: Sendable {
         self.readingWidth = readingWidth
         self.spellChecking = spellChecking
         self.heightBehavior = heightBehavior
+        self.endsEditingOnEscape = endsEditingOnEscape
     }
 
     public static let `default` = MarkdownEditorConfiguration()
