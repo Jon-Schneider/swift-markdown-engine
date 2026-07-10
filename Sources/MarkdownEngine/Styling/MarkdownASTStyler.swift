@@ -168,8 +168,13 @@ enum MarkdownASTStyler {
         let ws = ctx.ns.substring(with: wsRange)
         let markerGroup = NSRange(location: item.marker.location,
                                   length: item.contentRange.location - item.marker.location)
+        // Ordered numbers may be drawn at a heavier weight; measure the marker
+        // (and thus the hanging indent) in that font so wrapped lines align.
+        let orderedNumberFont: PlatformFont? = (item.ordered && ctx.config.lists.orderedNumberWeight != nil)
+            ? ctx.baseFont.withWeightCompat(ctx.config.lists.orderedNumberWeight!)
+            : nil
         let markerWidth = (ctx.ns.substring(with: markerGroup) as NSString)
-            .size(withAttributes: [.font: ctx.baseFont]).width
+            .size(withAttributes: [.font: orderedNumberFont ?? ctx.baseFont]).width
         let depthIndent = CGFloat(MarkdownLists.indentLevel(from: ws)) * ctx.config.lists.indentPerLevel
         let extraSpacing = (item.checkbox != nil && !item.checked)
             ? HeadingHelpers.checkboxExtraSpacing(font: ctx.baseFont, configuration: ctx.config.checkbox)
@@ -214,6 +219,13 @@ enum MarkdownASTStyler {
                                  length: item.contentRange.location - item.marker.location)
             guard ctx.showsDecoration(editing: NSLocationInRange(ctx.caret, syntax)) else { return }
             attrs.append((item.marker, [.bulletMarker: true, .foregroundColor: PlatformColor.clear]))
+        } else {
+            // Ordered-list number: optional color/weight. The number stays
+            // visible (not a hidden marker), so no caret-reveal guard is needed.
+            var markerAttrs: [NSAttributedString.Key: Any] = [:]
+            if let color = ctx.theme.orderedListNumberColor { markerAttrs[.foregroundColor] = color }
+            if let numberFont = orderedNumberFont { markerAttrs[.font] = numberFont }
+            if !markerAttrs.isEmpty { attrs.append((item.marker, markerAttrs)) }
         }
     }
 

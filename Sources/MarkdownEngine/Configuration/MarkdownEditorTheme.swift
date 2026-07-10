@@ -40,6 +40,10 @@ public struct MarkdownEditorTheme: Sendable {
     /// Foreground color for content the engine wants to deemphasize further
     /// than `mutedText` — for example, broken wiki-links.
     public var disabledText: PlatformColor
+    /// Foreground color for ordered-list numbers (`1.`, `2.`, …). `nil` (the
+    /// default) leaves them at ``bodyText``; set it to tint numbers the way
+    /// Apple Notes does.
+    public var orderedListNumberColor: PlatformColor?
     /// Foreground color for heading marker glyphs (`#`, `##`, …).
     public var headingMarker: PlatformColor
     /// Fill color for unordered-list bullet glyphs. `nil` (the default) falls
@@ -103,6 +107,7 @@ public struct MarkdownEditorTheme: Sendable {
         bodyText: PlatformColor = .platformLabel,
         mutedText: PlatformColor = .platformSecondaryLabel,
         disabledText: PlatformColor = .platformTertiaryLabel,
+        orderedListNumberColor: PlatformColor? = nil,
         headingMarker: PlatformColor = .gray,
         bulletColor: PlatformColor? = nil,
         blockquoteBarColor: PlatformColor? = nil,
@@ -120,6 +125,7 @@ public struct MarkdownEditorTheme: Sendable {
         self.bodyText = bodyText
         self.mutedText = mutedText
         self.disabledText = disabledText
+        self.orderedListNumberColor = orderedListNumberColor
         self.headingMarker = headingMarker
         self.bulletColor = bulletColor
         self.blockquoteBarColor = blockquoteBarColor

@@ -335,6 +335,11 @@ public struct ListStyle: Sendable {
     /// stays vertically centered rather than sinking toward the baseline.
     /// Non-positive values are clamped at draw time.
     public var bulletGlyphSizeScale: CGFloat
+    /// Optional font weight for ordered-list numbers (`1.`, `2.`, …). `nil`
+    /// (the default) leaves them at the body weight; set it (e.g. `.semibold`)
+    /// to emphasize numbers. The hanging indent is remeasured with the weighted
+    /// font so wrapped lines stay aligned.
+    public var orderedNumberWeight: PlatformFont.Weight?
 
     public init(
         helpersEnabled: Bool = true,
@@ -344,7 +349,8 @@ public struct ListStyle: Sendable {
         maximumNestingLevel: Int = 3,
         extraLineHeight: CGFloat = 2,
         bulletGlyph: String = "•",
-        bulletGlyphSizeScale: CGFloat = 1.0
+        bulletGlyphSizeScale: CGFloat = 1.0,
+        orderedNumberWeight: PlatformFont.Weight? = nil
     ) {
         self.helpersEnabled = helpersEnabled
         self.autoClosePairsEnabled = autoClosePairsEnabled
@@ -354,6 +360,7 @@ public struct ListStyle: Sendable {
         self.extraLineHeight = extraLineHeight
         self.bulletGlyph = bulletGlyph
         self.bulletGlyphSizeScale = bulletGlyphSizeScale
+        self.orderedNumberWeight = orderedNumberWeight
     }
 
     public static let `default` = ListStyle()
