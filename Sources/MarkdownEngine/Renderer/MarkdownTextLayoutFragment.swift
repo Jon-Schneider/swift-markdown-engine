@@ -38,6 +38,11 @@ extension NSAttributedString.Key {
     /// PlatformColor — inline-code background drawn as a rounded pill (instead
     /// of the flat `.backgroundColor` run). Value is the fill color.
     static let inlineCodePill = NSAttributedString.Key("InlineCodePill")
+    /// Bool — marks a `.latexImage` anchor as a genuine image embed (`![](…)`
+    /// or `![[…]]`) rather than a rendered LaTeX formula or table image. Only
+    /// these anchors honor `ImageEmbedStyle.cornerRadius`, so rounding an image
+    /// never clips a table's grid corners.
+    static let imageEmbedRoundable = NSAttributedString.Key("ImageEmbedRoundable")
     /// CGFloat — natural image width; presence flags block as overlay-rendered.
     static let scrollableBlockNaturalWidth = NSAttributedString.Key("ScrollableBlockNaturalWidth")
     /// Int — hash of source text; key for overlay reconcile + offset persistence.
@@ -89,6 +94,13 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         // (visibleSource mode uses paragraphSpacing to create space for the image).
         for rect in blockImageRects(at: .zero) {
             bounds = bounds.union(rect)
+        }
+        // Inline-code pills widen each run by `horizontalPadding` beyond the glyph
+        // advances the base surface covers; inflate horizontally so an edge pill
+        // isn't clipped on a partial invalidation.
+        if let padding = renderingContext?.configuration.inlineCode.horizontalPadding,
+           padding > 0, hasInlineCodePill {
+            bounds = bounds.insetBy(dx: -padding, dy: 0)
         }
         return bounds
     }
@@ -204,6 +216,18 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         var found = false
         ts.enumerateAttribute(.blockquoteLevel, in: range, options: []) { value, _, stop in
             if value is Int {
+                found = true
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
+    private var hasInlineCodePill: Bool {
+        guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return false }
+        var found = false
+        ts.enumerateAttribute(.inlineCodePill, in: range, options: []) { value, _, stop in
+            if value is PlatformColor {
                 found = true
                 stop.pointee = true
             }
@@ -405,7 +429,10 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                                       y: pos.baselineY + descent - imageBounds.height,
                                       width: imageBounds.width, height: imageBounds.height)
                 }
-                if imageCornerRadius > 0 {
+                // Only round genuine image embeds — LaTeX formulas and table
+                // grids share this `.latexImage` anchor and must not be clipped.
+                let isRoundableImage = ts.attribute(.imageEmbedRoundable, at: attrRange.location, effectiveRange: nil) as? Bool ?? false
+                if imageCornerRadius > 0 && isRoundableImage {
                     context.saveGState()
                     platformRoundedRectPath(drawRect, cornerRadius: imageCornerRadius).addClip()
                     image.draw(in: drawRect)
@@ -439,6 +466,12 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         let dx = point.x - layoutFragmentFrame.origin.x
         let dy = point.y - layoutFragmentFrame.origin.y
 
+        // A fragment-level fill paints OVER the system's selection highlight, so
+        // punch active-selection rects out of each pill (same reason and machinery
+        // as `drawCodeBlockBackground`); otherwise selecting text under a pill
+        // makes the highlight vanish for that run.
+        let selectionRects = activeSelectionSegmentRects(dx: dx, dy: dy)
+
         withFlippedDrawingContext(context) {
             ts.enumerateAttribute(.inlineCodePill, in: range, options: []) { value, attrRange, _ in
                 guard let color = value as? PlatformColor,
@@ -447,11 +480,43 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                 ltm.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segmentFrame, _, _ in
                     let rect = segmentFrame.offsetBy(dx: dx, dy: dy).insetBy(dx: -padding, dy: 0)
                     guard !rect.isNull, !rect.isEmpty else { return true }
-                    platformRoundedRectPath(rect, cornerRadius: radius).fill()
+                    let cutouts = selectionRects.compactMap { sel -> CGRect? in
+                        let hit = sel.intersection(rect)
+                        return (hit.isNull || hit.isEmpty) ? nil : hit
+                    }
+                    if cutouts.isEmpty {
+                        platformRoundedRectPath(rect, cornerRadius: radius).fill()
+                    } else {
+                        fillEvenOdd(outerRect: rect, cutouts: cutouts, cornerRadius: radius)
+                    }
                     return true
                 }
             }
         }
+    }
+
+    /// Active text-selection segment rects intersecting this fragment, offset
+    /// into the fragment's draw space by `dx`/`dy` (the same transform the pill
+    /// segments use). Used to cut the selection highlight out of the pills.
+    private func activeSelectionSegmentRects(dx: CGFloat, dy: CGFloat) -> [CGRect] {
+        guard let tlm = textLayoutManager, !tlm.textSelections.isEmpty else { return [] }
+        let myRange = self.rangeInElement
+        var rects: [CGRect] = []
+        for selection in tlm.textSelections {
+            for textRange in selection.textRanges {
+                let interStart = textRange.location.compare(myRange.location) == .orderedAscending
+                    ? myRange.location : textRange.location
+                let interEnd = textRange.endLocation.compare(myRange.endLocation) == .orderedDescending
+                    ? myRange.endLocation : textRange.endLocation
+                guard interStart.compare(interEnd) == .orderedAscending,
+                      let intersection = NSTextRange(location: interStart, end: interEnd) else { continue }
+                tlm.enumerateTextSegments(in: intersection, type: .selection, options: []) { _, segFrame, _, _ in
+                    rects.append(segFrame.offsetBy(dx: dx, dy: dy))
+                    return true
+                }
+            }
+        }
+        return rects
     }
 
     // MARK: - Thematic Breaks (---, ***, ___)
@@ -653,9 +718,18 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                 let iconRect = boxRect.insetBy(dx: iconInset, dy: iconInset)
                 let symbolName = isChecked ? checkboxStyle.checkedSymbolName : checkboxStyle.uncheckedSymbolName
                 let tint = isChecked ? theme.resolvedCheckboxCheckedTint : theme.resolvedCheckboxUncheckedTint
-                if let symbol = tintedSymbolImage(named: symbolName, pointSize: iconRect.height, tint: tint) {
-                    symbol.draw(in: iconRect)
-                }
+                // The raw `[ ]`/`[x]` glyphs are already hidden (`.clear`), so a
+                // typo'd or OS-missing SF Symbol name would leave the checkbox
+                // invisible-but-toggleable. Fall back to the stock symbols so a
+                // bad name degrades to the default box rather than nothing.
+                let fallbackName = isChecked
+                    ? CheckboxStyle.default.checkedSymbolName
+                    : CheckboxStyle.default.uncheckedSymbolName
+                let symbol = tintedSymbolImage(named: symbolName, pointSize: iconRect.height, tint: tint)
+                    ?? (symbolName != fallbackName
+                        ? tintedSymbolImage(named: fallbackName, pointSize: iconRect.height, tint: tint)
+                        : nil)
+                symbol?.draw(in: iconRect)
             }
         }
     }

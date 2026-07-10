@@ -168,13 +168,28 @@ enum MarkdownASTStyler {
         let ws = ctx.ns.substring(with: wsRange)
         let markerGroup = NSRange(location: item.marker.location,
                                   length: item.contentRange.location - item.marker.location)
-        // Ordered numbers may be drawn at a heavier weight; measure the marker
-        // (and thus the hanging indent) in that font so wrapped lines align.
-        let orderedNumberFont: PlatformFont? = (item.ordered && ctx.config.lists.orderedNumberWeight != nil)
+        // Ordered numbers may be drawn at a heavier weight, but ONLY on plain
+        // ordered items: an ordered task item (`1. [ ] …`) hides its number and
+        // shows a checkbox instead, so its marker stays in the base font. Measure
+        // exactly what is styled — the marker glyphs (`1.`) in the weighted font
+        // and the trailing spacer in the base font — so the hanging indent equals
+        // the rendered advance and wrapped lines don't drift.
+        let orderedNumberFont: PlatformFont? = (item.ordered && item.checkbox == nil
+                                                && ctx.config.lists.orderedNumberWeight != nil)
             ? ctx.baseFont.withWeightCompat(ctx.config.lists.orderedNumberWeight!)
             : nil
-        let markerWidth = (ctx.ns.substring(with: markerGroup) as NSString)
-            .size(withAttributes: [.font: orderedNumberFont ?? ctx.baseFont]).width
+        let markerWidth: CGFloat = {
+            let group = ctx.ns.substring(with: markerGroup) as NSString
+            guard let numberFont = orderedNumberFont else {
+                return group.size(withAttributes: [.font: ctx.baseFont]).width
+            }
+            let marker = ctx.ns.substring(with: item.marker) as NSString
+            let spacerRange = NSRange(location: NSMaxRange(item.marker),
+                                      length: NSMaxRange(markerGroup) - NSMaxRange(item.marker))
+            let spacer = ctx.ns.substring(with: spacerRange) as NSString
+            return marker.size(withAttributes: [.font: numberFont]).width
+                 + spacer.size(withAttributes: [.font: ctx.baseFont]).width
+        }()
         let depthIndent = CGFloat(MarkdownLists.indentLevel(from: ws)) * ctx.config.lists.indentPerLevel
         let extraSpacing = (item.checkbox != nil && !item.checked)
             ? HeadingHelpers.checkboxExtraSpacing(font: ctx.baseFont, configuration: ctx.config.checkbox)

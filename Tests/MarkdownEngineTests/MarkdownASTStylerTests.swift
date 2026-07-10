@@ -245,6 +245,112 @@ struct BlockquoteIndentConfigTests {
     }
 }
 
+/// `PlatformFont.withWeightCompat` must actually re-weight NAMED fonts (the
+/// engine's default host font is the named "SF Pro"), not silently return the
+/// original regular face. Adding a weight trait to a descriptor already pinned
+/// to a specific PostScript face is a CoreText no-op; the fix re-keys on the
+/// family. These pin that the face genuinely changes and metrics are preserved.
+@Suite("Font weight resolution")
+struct FontWeightCompatTests {
+
+    @Test("a named font resolves to a different, heavier face (not a no-op)")
+    func namedFontActuallyReweights() throws {
+        let base = try #require(NSFont(name: "Helvetica Neue", size: 14))
+        let semibold = base.withWeightCompat(.semibold)
+        // The bug returned the identical regular face; the fix selects a real
+        // weighted face from the same family (HelveticaNeue → HelveticaNeue-Medium).
+        #expect(semibold.fontName != base.fontName)
+        let baseWidth = ("Weight 123" as NSString).size(withAttributes: [.font: base]).width
+        let heavyWidth = ("Weight 123" as NSString).size(withAttributes: [.font: semibold]).width
+        #expect(heavyWidth > baseWidth)
+    }
+
+    @Test("family and point size survive the re-weight")
+    func preservesFamilyAndSize() throws {
+        let base = try #require(NSFont(name: "Helvetica Neue", size: 17))
+        let heavy = base.withWeightCompat(.black)
+        #expect(heavy.familyName == base.familyName)
+        #expect(heavy.pointSize == 17)
+    }
+}
+
+/// Heading `fontWeights` and list `orderedNumberWeight` must reach the render
+/// path. Uses the system font as the base because its weighted faces have
+/// measurably different advances, letting the tests assert the effect without
+/// hard-coding font metrics.
+@Suite("Heading & ordered-list weight configuration")
+struct WeightStylingConfigTests {
+
+    private let base: CGFloat = 14
+    private var fontName: String { NSFont.systemFont(ofSize: 14).fontName }
+
+    private func style(_ text: String, _ config: MarkdownEditorConfiguration) -> [StyledRange] {
+        MarkdownASTStyler.styleAttributes(text: text, fontName: fontName, fontSize: base, configuration: config)
+    }
+
+    private func font(in attrs: [StyledRange], at pos: Int) -> NSFont? {
+        var result: NSFont?
+        for (range, a) in attrs where NSLocationInRange(pos, range) {
+            if let f = a[.font] as? NSFont { result = f }
+        }
+        return result
+    }
+
+    private func headIndent(in attrs: [StyledRange], at pos: Int) -> CGFloat? {
+        var result: CGFloat?
+        for (range, a) in attrs where NSLocationInRange(pos, range) {
+            if let p = a[.paragraphStyle] as? NSParagraphStyle { result = p.headIndent }
+        }
+        return result
+    }
+
+    @Test("a non-default heading weight changes the rendered heading face")
+    func headingWeightFlowsThrough() throws {
+        var regular = MarkdownEditorConfiguration.default
+        regular.headings.fontWeights = Array(repeating: .regular, count: 6)
+        var heavy = MarkdownEditorConfiguration.default
+        heavy.headings.fontWeights = Array(repeating: .black, count: 6)
+        // Position 2 = 'H' in "# Head", inside the heading content range.
+        let regularFont = try #require(font(in: style("# Head", regular), at: 2))
+        let heavyFont = try #require(font(in: style("# Head", heavy), at: 2))
+        let regularWidth = ("Head" as NSString).size(withAttributes: [.font: regularFont]).width
+        let heavyWidth = ("Head" as NSString).size(withAttributes: [.font: heavyFont]).width
+        #expect(heavyWidth > regularWidth)
+    }
+
+    @Test("empty heading fontWeights falls back to bold instead of crashing")
+    func emptyHeadingWeightsIsSafe() {
+        var config = MarkdownEditorConfiguration.default
+        config.headings.fontWeights = []
+        // Must not trap on the empty-array subscript.
+        _ = style("# Head", config)
+        #expect(config.headings.fontWeight(for: 1) == .bold)
+    }
+
+    @Test("ordered-number weight widens the plain-item hanging indent")
+    func orderedNumberWeightWidensIndent() throws {
+        var heavy = MarkdownEditorConfiguration.default
+        heavy.lists.orderedNumberWeight = .black
+        let plain = try #require(headIndent(in: style("1. item", .default), at: 1))
+        let weighted = try #require(headIndent(in: style("1. item", heavy), at: 1))
+        // "1." is wider in black, so the hanging indent must grow to match.
+        #expect(weighted > plain)
+    }
+
+    @Test("ordered TASK items ignore orderedNumberWeight (the number is hidden)")
+    func orderedTaskItemIndentUnaffected() throws {
+        var heavy = MarkdownEditorConfiguration.default
+        heavy.lists.orderedNumberWeight = .black
+        // An ordered task item hides its number and shows a checkbox, so the
+        // marker stays in the base font — the indent must not shift with weight.
+        // (Regression: the old measurement used the weighted font here, drifting
+        // the hanging indent for a marker that never rendered heavy.)
+        let plain = try #require(headIndent(in: style("1. [ ] task", .default), at: 1))
+        let weighted = try #require(headIndent(in: style("1. [ ] task", heavy), at: 1))
+        #expect(weighted == plain)
+    }
+}
+
 /// Canonical, order-independent string of styled ranges so two style runs can be
 /// compared for equality.
 private func styleKeySnapshot(_ ranges: [StyledRange]) -> String {

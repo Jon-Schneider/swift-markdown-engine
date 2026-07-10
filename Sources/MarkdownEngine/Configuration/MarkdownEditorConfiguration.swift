@@ -439,6 +439,7 @@ public struct HeadingStyle: Sendable {
     }
 
     public func fontWeight(for level: Int) -> PlatformFont.Weight {
+        guard !fontWeights.isEmpty else { return .bold }
         let index = max(1, min(level, fontWeights.count)) - 1
         return fontWeights[index]
     }

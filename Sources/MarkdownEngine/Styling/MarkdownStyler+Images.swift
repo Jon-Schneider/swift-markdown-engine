@@ -81,6 +81,7 @@ extension MarkdownStyler {
                     paragraphSpacing: imageEmbedConfig.paragraphSpacing,
                     alignment: .left,
                     mode: .visibleSource(imageGap: imageEmbedConfig.imageGap),
+                    imageEmbedRoundable: true,
                     ctx: ctx,
                     attrs: &attrs
                 )
@@ -94,6 +95,7 @@ extension MarkdownStyler {
                     paragraphSpacing: imageEmbedConfig.paragraphSpacing,
                     alignment: .left,
                     mode: .collapsedSource(markerTexts: ["![", "]", "(", ")"]),
+                    imageEmbedRoundable: true,
                     ctx: ctx,
                     attrs: &attrs
                 )
@@ -164,6 +166,7 @@ extension MarkdownStyler {
                         paragraphSpacing: imageEmbedConfig.paragraphSpacing,
                         alignment: .left,
                         mode: .visibleSource(imageGap: imageEmbedConfig.imageGap),
+                        imageEmbedRoundable: true,
                         ctx: ctx,
                         attrs: &attrs
                     )
@@ -177,6 +180,7 @@ extension MarkdownStyler {
                         paragraphSpacing: imageEmbedConfig.paragraphSpacing,
                         alignment: .left,
                         mode: .collapsedSource(markerTexts: ["![[", "]]"]),
+                        imageEmbedRoundable: true,
                         ctx: ctx,
                         attrs: &attrs
                     )

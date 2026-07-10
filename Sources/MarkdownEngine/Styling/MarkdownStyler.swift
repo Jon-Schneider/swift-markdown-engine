@@ -146,10 +146,14 @@ extension MarkdownStyler {
         paragraphSpacing: CGFloat,
         alignment: NSTextAlignment,
         mode: RenderedStandaloneBlockMode,
+        imageEmbedRoundable: Bool = false,
         ctx: StylingContext,
         attrs: inout [StyledRange]
     ) -> Bool {
         guard let paraRange = token.standaloneParagraphRange(in: ctx.nsText) else { return false }
+        // Only genuine image embeds may be corner-rounded; LaTeX/table anchors
+        // share the same `.latexImage` machinery but must never be clipped.
+        let roundableAttrs: [NSAttributedString.Key: Any] = imageEmbedRoundable ? [.imageEmbedRoundable: true] : [:]
 
         let para = NSMutableParagraphStyle()
         let baseLineHeight = layoutBridgeDefaultLineHeight(for: ctx.baseFont, using: ctx.layoutBridge)
@@ -168,7 +172,7 @@ extension MarkdownStyler {
                 paraRange: paraRange,
                 advanceWidth: imageBounds.width,
                 neededLineHeight: imageBounds.height,
-                extraAnchorAttrs: [:],
+                extraAnchorAttrs: roundableAttrs,
                 markerTexts: markerTexts,
                 ctx: ctx,
                 attrs: &attrs
@@ -204,12 +208,14 @@ extension MarkdownStyler {
             para.paragraphSpacing = max(para.paragraphSpacing, imageBounds.height + imageGap + paragraphSpacing)
 
             attrs.append((paraRange, [.paragraphStyle: para]))
-            attrs.append((token.range, [
+            var anchorAttrs: [NSAttributedString.Key: Any] = [
                 .latexImage: image,
                 .latexBounds: NSValue(cgRect: imageBounds),
                 .latexIsBlock: true,
                 .latexBlockOffsetY: baseLineHeight + imageGap
-            ]))
+            ]
+            anchorAttrs.merge(roundableAttrs) { _, new in new }
+            attrs.append((token.range, anchorAttrs))
             appendSecondaryMarkers(for: token, to: &attrs, theme: ctx.configuration.theme)
         }
 

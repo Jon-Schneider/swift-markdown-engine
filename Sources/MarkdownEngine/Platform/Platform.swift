@@ -187,12 +187,41 @@ extension PlatformFont {
         .from(descriptor: fontDescriptor, size: size, fallback: self)
     }
 
+    /// The font's family name as a non-optional String on both platforms
+    /// (`UIFont.familyName` is non-optional; `NSFont.familyName` is optional).
+    var familyNameCompat: String {
+        #if canImport(UIKit)
+        return familyName
+        #else
+        return familyName ?? fontName
+        #endif
+    }
+
     /// A copy of this font at the given `weight`, keeping family and size.
-    /// Applies the weight through the descriptor's trait dictionary so it works
-    /// for both named and system fonts; falls back to `self` if it can't apply.
+    ///
+    /// A *named* font's `fontDescriptor` carries its specific PostScript face
+    /// (e.g. `SFPro-Regular`), and CoreText will not re-weight a pinned face —
+    /// so merely adding a weight trait to the existing descriptor is a silent
+    /// no-op for every named family (verified for SF Pro, Helvetica Neue,
+    /// Georgia). Re-key the descriptor on the *family* plus the weight trait
+    /// (preserving symbolic traits like italic) so the family's actual weighted
+    /// face is selected; CoreText resolves to the nearest available weight for
+    /// families that don't ship every face. Falls back to `self` if the family
+    /// can't produce a font at all.
     func withWeightCompat(_ weight: PlatformFont.Weight) -> PlatformFont {
-        let descriptor = fontDescriptor.addingAttributes([
-            .traits: [PlatformFontDescriptor.TraitKey.weight: weight],
+        // Fold the weight AND any existing symbolic traits (e.g. italic) into a
+        // single trait dictionary. A separate `withSymbolicTraits(...)` pass would
+        // re-run font matching and silently DROP the weight (verified — even an
+        // empty trait set resets the face back to regular), so both must be
+        // resolved in one match.
+        var traits: [PlatformFontDescriptor.TraitKey: Any] = [.weight: weight]
+        let symbolic = fontDescriptor.symbolicTraits
+        if !symbolic.isEmpty {
+            traits[.symbolic] = symbolic.rawValue
+        }
+        let descriptor = PlatformFontDescriptor(fontAttributes: [
+            .family: familyNameCompat,
+            .traits: traits,
         ])
         return .from(descriptor: descriptor, size: pointSize, fallback: self)
     }

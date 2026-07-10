@@ -44,9 +44,12 @@ func withFlippedDrawingContext(_ cg: CGContext, _ body: () -> Void) {
 /// rule — used to punch active text-selection rects out of the code-block background
 /// so the system selection highlight stays visible. Caller sets the fill color first.
 func fillEvenOdd(outerRect: CGRect, cutouts: [CGRect], cornerRadius: CGFloat = 0) {
+    // Clamp as in `platformRoundedRectPath` so a large radius on a short rect
+    // doesn't produce malformed UIKit geometry.
+    let radius = max(0, min(cornerRadius, min(outerRect.width, outerRect.height) / 2))
 #if canImport(UIKit)
-    let path = cornerRadius > 0
-        ? UIBezierPath(roundedRect: outerRect, cornerRadius: cornerRadius)
+    let path = radius > 0
+        ? UIBezierPath(roundedRect: outerRect, cornerRadius: radius)
         : UIBezierPath(rect: outerRect)
     path.usesEvenOddFillRule = true
     for r in cutouts { path.append(UIBezierPath(rect: r)) }
@@ -54,8 +57,8 @@ func fillEvenOdd(outerRect: CGRect, cutouts: [CGRect], cornerRadius: CGFloat = 0
 #else
     let path = NSBezierPath()
     path.windingRule = .evenOdd
-    if cornerRadius > 0 {
-        path.appendRoundedRect(outerRect, xRadius: cornerRadius, yRadius: cornerRadius)
+    if radius > 0 {
+        path.appendRoundedRect(outerRect, xRadius: radius, yRadius: radius)
     } else {
         path.appendRect(outerRect)
     }
@@ -65,11 +68,17 @@ func fillEvenOdd(outerRect: CGRect, cutouts: [CGRect], cornerRadius: CGFloat = 0
 }
 
 /// A rounded-rect bezier path, spelled the same on both platforms.
+///
+/// The radius is clamped to half the shorter side: `NSBezierPath` clamps on its
+/// own, but `UIBezierPath(roundedRect:cornerRadius:)` produces malformed geometry
+/// when the radius exceeds `min(width, height) / 2` — which a small `cornerRadius`
+/// on a one-character inline-code pill (a few points wide) easily hits.
 func platformRoundedRectPath(_ rect: CGRect, cornerRadius: CGFloat) -> PlatformBezierPath {
+    let radius = max(0, min(cornerRadius, min(rect.width, rect.height) / 2))
 #if canImport(UIKit)
-    return UIBezierPath(roundedRect: rect, cornerRadius: cornerRadius)
+    return UIBezierPath(roundedRect: rect, cornerRadius: radius)
 #else
-    return NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
+    return NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
 #endif
 }
 

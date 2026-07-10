@@ -70,7 +70,21 @@ final class NativeTextView: NSTextView {
             overscrollPercent = configuration.overscroll.percent
             maxOverscrollPoints = configuration.overscroll.maxPoints
             minOverscrollPoints = configuration.overscroll.minPoints
+            applyLinkTextAttributes()
         }
+    }
+
+    /// Make the text storage the single source of truth for link underlining.
+    ///
+    /// `NSTextView` paints `.link` ranges with `linkTextAttributes`, whose
+    /// stock value underlines every link — so clearing the storage-level
+    /// `.underlineStyle` (what `LinkStyle.underlinesResolvedLinks` toggles in the
+    /// styler) is not enough on macOS; the view re-underlines it. We therefore
+    /// keep the pointing-hand cursor but drop the forced underline here, letting
+    /// the styler's storage attribute decide. Link color already comes from the
+    /// storage `.foregroundColor` (the theme's link color), so it is omitted too.
+    private func applyLinkTextAttributes() {
+        linkTextAttributes = [.cursor: NSCursor.pointingHand]
     }
     var overscrollPercent: CGFloat = MarkdownEditorConfiguration.default.overscroll.percent
     var maxOverscrollPoints: CGFloat = MarkdownEditorConfiguration.default.overscroll.maxPoints

@@ -30,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CheckboxStyle.sizeFromFontHeightFactor` / `sizeFromMarkerWidthFactor` /
   `iconInsetFraction` and `InlineCodeStyle.fontSizeScale` were declared but
   ignored by the render path; they now take effect (defaults unchanged).
+  Note: inline code is now sized by `InlineCodeStyle.fontSizeScale` rather than
+  incidentally tracking `CodeBlockStyle.fontSizeScale`. The `.default` look is
+  byte-identical (both are `0.85`), but a consumer who set
+  `codeBlock.fontSizeScale` and left `inlineCode` at its default will now see
+  inline code at the inline default instead of the code-block value.
+- `HeadingStyle.fontWeights` / `ListStyle.orderedNumberWeight` had no effect on
+  *named* fonts (including the engine's default "SF Pro") — the weight trait was
+  added to a descriptor already pinned to a specific PostScript face, which
+  CoreText will not re-weight, so headings silently rendered regular instead of
+  the requested weight. `PlatformFont.withWeightCompat` now re-keys on the font
+  family so the weighted face is actually selected.
+- `LinkStyle.underlinesResolvedLinks = false` did not remove the underline on
+  macOS (`NSTextView` re-underlines `.link` ranges via its `linkTextAttributes`);
+  the storage attribute is now the single source of truth on both platforms.
+- `ImageEmbedStyle.cornerRadius` also rounded (and clipped) table and block-LaTeX
+  images, which share the image draw path; it now applies only to genuine image
+  embeds. Inline-code pills no longer paint over the text-selection highlight,
+  and oversized corner radii are clamped so short pills don't glitch on iOS.
 
 ### Added (bullets & blockquotes)
 - Configurable bullet and blockquote styling, so the rendered look (e.g. an
