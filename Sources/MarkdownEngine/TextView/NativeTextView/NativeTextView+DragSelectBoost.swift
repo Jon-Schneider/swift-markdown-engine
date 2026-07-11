@@ -13,6 +13,9 @@ import AppKit
 
 extension NativeTextView {
     override func mouseDown(with event: NSEvent) {
+        // A mouse action can move or change the selection, so Character Viewer must no longer be
+        // allowed to replace the colon from a previous picker invocation.
+        pendingEmojiPickerTriggerRange = nil
         if let toggled = toggleTaskCheckboxIfHit(event: event), toggled {
             return
         }

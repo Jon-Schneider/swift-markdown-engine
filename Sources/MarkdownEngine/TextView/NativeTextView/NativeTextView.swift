@@ -31,6 +31,8 @@ final class NativeTextView: NSTextView {
     /// has been established. `applyInlineInsertion` uses this to choose between the
     /// current/last-known caret and the end-of-document final fallback.
     private(set) var didEstablishCaret = false
+    /// The colon that opened Character Viewer, retained only until its insertion arrives.
+    var pendingEmojiPickerTriggerRange: NSRange?
 
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()

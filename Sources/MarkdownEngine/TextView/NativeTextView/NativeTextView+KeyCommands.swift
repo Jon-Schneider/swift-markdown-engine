@@ -20,19 +20,32 @@ extension NativeTextView {
     /// or a fn/numpad bit — doesn't defeat the exact-equality match and kill every shortcut.
     private static let relevantModifiers: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
 
-    /// Open the system Emoji & Symbols panel after a literal colon is committed. This belongs in
-    /// `keyDown` rather than the text-view delegate so paste, dictation, and programmatic edits do
-    /// not unexpectedly present UI. The colon intentionally remains in the document: the system
-    /// panel owns its insertion and has no API for replacing an application-defined trigger range.
+    /// Open the system Emoji & Symbols panel after a literal colon is committed following a space
+    /// or at the beginning of a line. This belongs in `keyDown` rather than the text-view delegate
+    /// so paste, dictation, and programmatic edits do not unexpectedly present UI.
     override func keyDown(with event: NSEvent) {
+        let selectionRange = selectedRange()
+        let triggerLocation = selectionRange.location
         let isEmojiPickerTrigger = isEditable
             && window?.firstResponder === self
             && event.characters == ":"
             && event.modifierFlags.intersection([.command, .option, .control]).isEmpty
+            && Self.isEmojiPickerTriggerPosition(
+                in: string, selectionRange: selectionRange
+            )
 
+        // A local key event means the user continued editing instead of choosing an emoji. The
+        // picker inserts without routing a key event through this view, so its pending range stays.
+        pendingEmojiPickerTriggerRange = nil
         super.keyDown(with: event)
 
-        guard isEmojiPickerTrigger else { return }
+        guard isEmojiPickerTrigger,
+              let colonRange = Self.emojiPickerReplacementRange(in: string, at: triggerLocation) else {
+            return
+        }
+        // Keep the caret after the colon so cancelling Character Viewer leaves normal typing
+        // uninterrupted. Its insertion is routed through `insertText`, which replaces this range.
+        pendingEmojiPickerTriggerRange = colonRange
         // AppKit finishes text insertion synchronously, but deferring presentation keeps the
         // Character Viewer outside the active TextKit key-event cycle. That preserves this view
         // as the insertion target when the user chooses an emoji.
@@ -40,6 +53,47 @@ extension NativeTextView {
             guard let self, self.window?.firstResponder === self else { return }
             NSApp.orderFrontCharacterPalette(nil)
         }
+    }
+
+    override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        guard let triggerRange = pendingEmojiPickerTriggerRange else {
+            super.insertText(insertString, replacementRange: replacementRange)
+            return
+        }
+        pendingEmojiPickerTriggerRange = nil
+
+        guard Self.emojiPickerReplacementRange(in: string, at: triggerRange.location) != nil else {
+            super.insertText(insertString, replacementRange: replacementRange)
+            return
+        }
+        super.insertText(insertString, replacementRange: triggerRange)
+    }
+
+    /// A colon is an emoji-picker trigger at the start of a document or line, or directly after a
+    /// literal space. Using UTF-16 offsets matches `NSTextView`'s selection ranges, including text
+    /// before emoji.
+    static func isEmojiPickerTriggerPosition(in text: String, selectionRange: NSRange) -> Bool {
+        let nsText = text as NSString
+        guard selectionRange.location != NSNotFound, selectionRange.location <= nsText.length else {
+            return false
+        }
+        guard selectionRange.location > 0 else { return true }
+
+        let precedingCharacter = nsText.character(at: selectionRange.location - 1)
+        guard precedingCharacter != 0x20 else { return true }
+        return Unicode.Scalar(precedingCharacter).map { CharacterSet.newlines.contains($0) } ?? false
+    }
+
+    /// Returns the committed colon's range when it still occupies the expected insertion point.
+    /// The check prevents an unrelated post-key-event edit from being replaced.
+    static func emojiPickerReplacementRange(in text: String, at triggerLocation: Int) -> NSRange? {
+        let nsText = text as NSString
+        guard triggerLocation != NSNotFound,
+              triggerLocation < nsText.length,
+              nsText.character(at: triggerLocation) == 0x3A else {
+            return nil
+        }
+        return NSRange(location: triggerLocation, length: 1)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
