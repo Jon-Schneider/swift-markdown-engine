@@ -511,6 +511,22 @@ extension NativeTextViewCoordinator {
     }
 
     public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        // Slash menu keyboard navigation. While the menu is open, ↑/↓ move the highlight and ↵
+        // inserts the highlighted block — consume all three so the caret doesn't move and no newline
+        // is typed. Gated on `slashMenuIsActive`, so with no menu open these keys keep their normal
+        // editing behavior. (Escape is handled separately below via `cancelOperation:`.)
+        if slashMenuIsActive {
+            switch commandSelector {
+            case #selector(NSResponder.moveUp(_:)):
+                moveSlashMenuHighlight(by: -1); return true
+            case #selector(NSResponder.moveDown(_:)):
+                moveSlashMenuHighlight(by: 1); return true
+            case #selector(NSResponder.insertNewline(_:)):
+                confirmSlashMenuHighlight(); return true
+            default:
+                break
+            }
+        }
         if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
             // Shift-Tab inside a table walks to the previous cell (plan 1.1); only
             // when it isn't in a table does it fall through to list outdent.

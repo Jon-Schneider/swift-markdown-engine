@@ -96,6 +96,27 @@ public enum MarkdownSlashMenu {
         allItems.firstIndex { $0.block == item.block } ?? .max
     }
 
+    // MARK: - Keyboard navigation (highlight)
+
+    /// The item the host should insert for a `↵` confirm: the one at `index` in `items(matching:)`,
+    /// or nil when the query filters everything out (or `index` is stale/out of range). Pure so the
+    /// engine's key handlers and any test share one source of truth for "which row is highlighted".
+    public static func item(at index: Int, matching query: String) -> MarkdownSlashMenuItem? {
+        let matches = items(matching: query)
+        guard index >= 0, index < matches.count else { return nil }
+        return matches[index]
+    }
+
+    /// Move a highlighted-row index by `delta` (±1 for ↑/↓) within `count` rows, wrapping at both
+    /// ends (Notion/Slack-style) so ↓ past the last row lands on the first and ↑ past the first on
+    /// the last. Returns 0 for an empty list. Pure and total, so the arrow-key handlers can't produce
+    /// an out-of-range index regardless of `index`'s current value.
+    public static func movedHighlight(_ index: Int, by delta: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        // Euclidean modulo: keeps the result in 0..<count even for a negative (index + delta).
+        return ((index + delta) % count + count) % count
+    }
+
     // MARK: - Trigger detection
 
     /// The active slash trigger for a zero-length caret in `text`, or nil. A trigger is a `/` at

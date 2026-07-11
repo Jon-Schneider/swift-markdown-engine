@@ -30,6 +30,12 @@ public final class MarkdownEditorController: ObservableObject {
     /// `MarkdownSlashMenu.items(matching: context.query)` and apply a choice via `insertBlock`.
     @Published public private(set) var slashMenuContext: SlashMenuContext?
 
+    /// The slash menu's highlighted row, as an index into `MarkdownSlashMenu.items(matching:
+    /// slashMenuContext.query)`. Engine-owned: ↑/↓ move it and ↵ inserts it; observe this to render
+    /// the highlight. Resets to 0 when the menu opens or its query changes; ignore it when
+    /// `slashMenuContext` is nil.
+    @Published public private(set) var slashMenuHighlightedIndex = 0
+
     /// The coordinator, bound by the wrapper. Weak: the SwiftUI view tree owns it.
     private weak var coordinator: NativeTextViewCoordinator?
 
@@ -46,6 +52,9 @@ public final class MarkdownEditorController: ObservableObject {
         coordinator.onSlashMenuContextChange = { [weak self] context in
             self?.updateSlashMenuContext(context)
         }
+        coordinator.onSlashMenuHighlightChange = { [weak self] index in
+            self?.updateSlashMenuHighlight(index)
+        }
         coordinator.onSelectionStateChange = { [weak self] state in
             self?.updateSelectionState(state)
         }
@@ -56,6 +65,10 @@ public final class MarkdownEditorController: ObservableObject {
 
     private func updateSlashMenuContext(_ context: SlashMenuContext?) {
         if slashMenuContext != context { slashMenuContext = context }
+    }
+
+    private func updateSlashMenuHighlight(_ index: Int) {
+        if slashMenuHighlightedIndex != index { slashMenuHighlightedIndex = index }
     }
 
     private func updateSelectionState(_ state: MarkdownSelectionState) {

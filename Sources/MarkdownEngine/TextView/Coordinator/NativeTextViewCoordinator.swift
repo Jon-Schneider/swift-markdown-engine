@@ -77,6 +77,13 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// Last slash context handed to the host, to dedupe redundant publishes on the hot
     /// text-/selection-change paths.
     var lastPublishedSlashContext: SlashMenuContext?
+    /// Hands the host the slash menu's highlighted-row index (for ↑/↓ keyboard navigation). Set by
+    /// the bound `MarkdownEditorController` on attach; see `NativeTextViewCoordinator+SlashMenu`.
+    var onSlashMenuHighlightChange: ((Int) -> Void)?
+    /// The highlighted row within `items(matching: lastPublishedSlashContext.query)`. Engine-owned
+    /// (the arrow keys move it, ↵ inserts it) and mirrored to the host so it can render the highlight;
+    /// reset to 0 whenever the trigger opens or its query changes.
+    var slashMenuHighlightedIndex = 0
     /// Hands the host the formatting state at the caret (for a toolbar's active-button state).
     /// Set by the bound `MarkdownEditorController` on attach; see `NativeTextViewCoordinator+Formatting`.
     var onSelectionStateChange: ((MarkdownSelectionState) -> Void)?

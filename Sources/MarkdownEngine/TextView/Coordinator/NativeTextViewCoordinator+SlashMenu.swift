@@ -20,10 +20,48 @@ extension NativeTextViewCoordinator {
         let context = slashMenuContext(for: tv)
         guard context != lastPublishedSlashContext else { return }
         lastPublishedSlashContext = context
+        // The trigger opened or its query changed, so any prior highlight is stale — reset to the
+        // top row (Notion/Slack behavior: filtering re-homes the selection). Done here, guarded by
+        // the dedupe above, so it fires only on an actual context change, not every keystroke.
+        setSlashMenuHighlight(0)
         // Defer past the current AppKit edit/selection cycle (mirrors `onCaretRectChange`) so the
         // host's `@Published` mutation doesn't land inside a re-entrant text-storage callback.
         let callback = onSlashMenuContextChange
         DispatchQueue.main.async { callback?(context) }
+    }
+
+    /// Whether a slash menu is actually on screen — a consumer is wired AND a context is live. The
+    /// arrow-/return-key interception (see `+TextDelegate`) gates on this so those keys keep their
+    /// normal editing behavior whenever no menu is open.
+    var slashMenuIsActive: Bool {
+        onSlashMenuContextChange != nil && lastPublishedSlashContext != nil
+    }
+
+    /// Move the highlighted row by `delta` (±1 for ↑/↓), wrapping within the filtered items. No-op
+    /// when no menu is open.
+    func moveSlashMenuHighlight(by delta: Int) {
+        guard let context = lastPublishedSlashContext else { return }
+        let count = MarkdownSlashMenu.items(matching: context.query).count
+        setSlashMenuHighlight(MarkdownSlashMenu.movedHighlight(slashMenuHighlightedIndex, by: delta, count: count))
+    }
+
+    /// Insert the currently-highlighted block (↵), replacing the active `/query`. No-op when no menu
+    /// is open or the query now filters every row out.
+    func confirmSlashMenuHighlight() {
+        guard let context = lastPublishedSlashContext,
+              let item = MarkdownSlashMenu.item(at: slashMenuHighlightedIndex, matching: context.query)
+        else { return }
+        insertSlashBlock(item.block, replacing: context.sourceRange)
+    }
+
+    /// Update the highlighted index and mirror it to the host (deduped). Deferred to the next
+    /// main-actor tick for the same reason as the context publish — it may run inside a text-storage
+    /// callback (via `publishSlashMenuContext`).
+    private func setSlashMenuHighlight(_ index: Int) {
+        guard slashMenuHighlightedIndex != index else { return }
+        slashMenuHighlightedIndex = index
+        let callback = onSlashMenuHighlightChange
+        DispatchQueue.main.async { callback?(index) }
     }
 
     /// Clear a currently-published slash context (publishing `nil`) if one is live. Used when

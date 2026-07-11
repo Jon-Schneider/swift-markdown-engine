@@ -46,6 +46,20 @@ extension MarkdownUITextView {
             escape.wantsPriorityOverSystemBehavior = true
             commands.append(escape)
         }
+        // Slash menu keyboard navigation: bind ↑/↓/↵ ONLY while the menu is open, so they keep their
+        // normal editing behavior otherwise (UIKit re-queries `keyCommands` per press, so these
+        // appear and disappear with the menu). Priority over the system so ↵ picks the highlighted
+        // block instead of inserting a newline. Dropped mid-IME-composition for the same reason as
+        // Escape above (a priority command would otherwise swallow the key before the input system).
+        if slashMenuIsActive, markedTextRange == nil {
+            let navigation = [
+                UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(mdKeySlashHighlightUp)),
+                UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(mdKeySlashHighlightDown)),
+                UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(mdKeySlashConfirm)),
+            ]
+            for command in navigation { command.wantsPriorityOverSystemBehavior = true }
+            commands.append(contentsOf: navigation)
+        }
         return inherited + commands
     }
 
@@ -54,6 +68,10 @@ extension MarkdownUITextView {
     @objc private func mdKeyStrikethrough() { applyFormatting(.strikethrough, in: selectedRange) }
     @objc private func mdKeyInlineCode() { applyFormatting(.inlineCode, in: selectedRange) }
     @objc private func mdKeyParagraph() { clearBlockFormatting(in: selectedRange) }
+
+    @objc private func mdKeySlashHighlightUp() { moveSlashMenuHighlight(by: -1) }
+    @objc private func mdKeySlashHighlightDown() { moveSlashMenuHighlight(by: 1) }
+    @objc private func mdKeySlashConfirm() { confirmSlashMenuHighlight() }
 
     @objc private func mdKeyEscape() {
         // Belt-and-suspenders: the `keyCommands` getter already drops this command mid-composition,

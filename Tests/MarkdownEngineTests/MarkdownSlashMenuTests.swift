@@ -181,4 +181,49 @@ struct MarkdownSlashMenuTests {
         #expect(result.text == "---\na ")
         #expect(result.selection == NSRange(location: 4, length: 0))
     }
+
+    // MARK: - Keyboard navigation (highlight)
+
+    @Test("Moving the highlight down/up steps within the list")
+    func movedHighlightSteps() {
+        #expect(MarkdownSlashMenu.movedHighlight(0, by: 1, count: 10) == 1)
+        #expect(MarkdownSlashMenu.movedHighlight(3, by: 1, count: 10) == 4)
+        #expect(MarkdownSlashMenu.movedHighlight(4, by: -1, count: 10) == 3)
+    }
+
+    @Test("The highlight wraps around at both ends")
+    func movedHighlightWraps() {
+        // ↓ past the last row lands on the first; ↑ past the first lands on the last.
+        #expect(MarkdownSlashMenu.movedHighlight(9, by: 1, count: 10) == 0)
+        #expect(MarkdownSlashMenu.movedHighlight(0, by: -1, count: 10) == 9)
+    }
+
+    @Test("Moving within an empty list stays at 0 (no out-of-range index)")
+    func movedHighlightEmpty() {
+        #expect(MarkdownSlashMenu.movedHighlight(0, by: 1, count: 0) == 0)
+        #expect(MarkdownSlashMenu.movedHighlight(5, by: -1, count: 0) == 0)
+    }
+
+    @Test("A stale index larger than the list is folded back in range, never out of bounds")
+    func movedHighlightClampsStaleIndex() {
+        // e.g. highlight was 7, then the query filtered the list down to 3 rows.
+        let moved = MarkdownSlashMenu.movedHighlight(7, by: 1, count: 3)
+        #expect((0..<3).contains(moved))
+    }
+
+    @Test("item(at:matching:) returns the highlighted row, matching the filtered order")
+    func itemAtMatchesFilteredOrder() {
+        let query = "h"
+        let items = MarkdownSlashMenu.items(matching: query)
+        #expect(MarkdownSlashMenu.item(at: 0, matching: query) == items.first)
+        #expect(MarkdownSlashMenu.item(at: items.count - 1, matching: query) == items.last)
+    }
+
+    @Test("item(at:matching:) is nil for an out-of-range or filtered-out index")
+    func itemAtOutOfRangeIsNil() {
+        #expect(MarkdownSlashMenu.item(at: -1, matching: "") == nil)
+        #expect(MarkdownSlashMenu.item(at: 999, matching: "") == nil)
+        // "zzz" matches nothing, so any index is nil.
+        #expect(MarkdownSlashMenu.item(at: 0, matching: "zzz") == nil)
+    }
 }

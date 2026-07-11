@@ -70,6 +70,12 @@ public final class MarkdownUITextView: UITextView {
     /// currently open (and, if so, which). Mirrors the macOS coordinator's field of the same name;
     /// lets Escape decide between "close the open menu" and "end editing" (progressive dismissal).
     var lastPublishedSlashContext: SlashMenuContext?
+    /// Called when the slash menu's highlighted-row index changes (↑/↓ navigation), so the host can
+    /// render the highlight. Wired by `MarkdownEditorController`.
+    var onSlashMenuHighlightChange: ((Int) -> Void)?
+    /// The highlighted row within `items(matching: lastPublishedSlashContext.query)`. Engine-owned
+    /// (arrow keys move it, ↵ inserts it); reset to 0 whenever the trigger opens or its query changes.
+    var slashMenuHighlightedIndex = 0
     /// Called when an image is pasted, with the image's PNG bytes. Return an
     /// ``AttachmentDisposition``: `.insert(ref)` embeds `![](ref)`, `.consumed` takes
     /// ownership and inserts nothing (e.g. async staging — and, unlike the old `nil`, does
@@ -445,9 +451,47 @@ public final class MarkdownUITextView: UITextView {
             text: display, selection: selectedRange, tokens: tokens
         ))
         onInlineLinkContextChange?(inlineLinkContext(tokens: tokens, display: display))
+        let previousSlash = lastPublishedSlashContext
         let slash = slashMenuContext(display: display)
         lastPublishedSlashContext = slash
         onSlashMenuContextChange?(slash)
+        // The trigger opened or its query changed → re-home the highlight to the top row (matches
+        // macOS + Notion/Slack filtering). Only on an actual change, so an unrelated selection/text
+        // republish that leaves the same `/query` doesn't clobber an arrow-key selection.
+        if slash != previousSlash { setSlashMenuHighlight(0) }
+    }
+
+    /// Whether a slash menu is actually on screen — a consumer is wired AND a context is live. The
+    /// arrow-/return-key commands (see `+KeyCommands`) gate on this so those keys keep their normal
+    /// editing behavior whenever no menu is open.
+    var slashMenuIsActive: Bool {
+        onSlashMenuContextChange != nil && lastPublishedSlashContext != nil
+    }
+
+    /// Move the highlighted row by `delta` (±1 for ↑/↓), wrapping within the filtered items. No-op
+    /// when no menu is open.
+    func moveSlashMenuHighlight(by delta: Int) {
+        guard let context = lastPublishedSlashContext else { return }
+        let count = MarkdownSlashMenu.items(matching: context.query).count
+        setSlashMenuHighlight(MarkdownSlashMenu.movedHighlight(slashMenuHighlightedIndex, by: delta, count: count))
+    }
+
+    /// Insert the currently-highlighted block (↵), replacing the active `/query`. No-op when no menu
+    /// is open or the query now filters every row out.
+    func confirmSlashMenuHighlight() {
+        guard let context = lastPublishedSlashContext,
+              let item = MarkdownSlashMenu.item(at: slashMenuHighlightedIndex, matching: context.query)
+        else { return }
+        insertSlashBlock(item.block, replacing: context.sourceRange)
+    }
+
+    /// Update the highlighted index and mirror it to the host (deduped). Called from user key events
+    /// and the publish path — both on the main actor and outside a SwiftUI view update, so no defer
+    /// is needed (unlike the macOS coordinator, whose publish runs inside AppKit text-storage callbacks).
+    private func setSlashMenuHighlight(_ index: Int) {
+        guard slashMenuHighlightedIndex != index else { return }
+        slashMenuHighlightedIndex = index
+        onSlashMenuHighlightChange?(index)
     }
 
     /// Close a currently-open slash menu (publishing `nil`) if one is live, returning whether it
