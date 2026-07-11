@@ -90,6 +90,94 @@ struct MarkdownLists {
         return .replace(range: removalRange, text: "", caret: currentLineRange.location)
     }
 
+    /// Enter on an empty *trailing* line inside a fenced code block exits the block:
+    /// the empty line is consumed, a single closing ` ``` ` fence is ensured (inserted
+    /// if the fence was still open), and the caret lands on a fresh paragraph line
+    /// after the fence. Returns `nil` when the caret isn't in that state, so normal
+    /// newline handling proceeds — in particular a blank line *between* code lines is
+    /// preserved (only the trailing empty region triggers an exit). Pure / cross-platform.
+    ///
+    /// Detection uses `BlockParser`'s `.fencedCode` block, not the `.codeBlock` token:
+    /// an *unclosed* fence emits no token (it is represented only as a block that runs
+    /// to end-of-document), and that open-fence case is the primary one this targets.
+    static func codeBlockExitDecision(
+        currentText: String,
+        affectedCharRange: NSRange
+    ) -> ListInsertionDecision? {
+        // Cheap pre-filter: a fence needs three backticks somewhere in the document.
+        guard currentText.contains("```") else { return nil }
+
+        let nsText = currentText as NSString
+        let caret = max(0, min(affectedCharRange.location, nsText.length))
+
+        // Locate the fenced-code block containing the caret. A caret sitting exactly at
+        // the block's exclusive end counts only when that end is end-of-document — the
+        // open-fence-to-EOF case, whose empty trailing line has no character to occupy
+        // (`BlockParser` can't include a zero-width line past the final newline).
+        guard let block = BlockParser.parse(currentText).first(where: { candidate in
+            guard candidate.kind == .fencedCode else { return false }
+            if NSLocationInRange(caret, candidate.range) { return true }
+            return caret == NSMaxRange(candidate.range) && caret == nsText.length
+        }) else { return nil }
+
+        let blockEnd = NSMaxRange(block.range)
+        let openingLineRange = nsText.lineRange(for: NSRange(location: block.range.location, length: 0))
+        let openingLineEnd = NSMaxRange(openingLineRange)
+
+        // The caret's current line must be empty (whitespace only). This alone rejects
+        // the opening and closing fence lines (they start with ```), and any code line.
+        let currentLineRange = nsText.lineRange(for: NSRange(location: caret, length: 0))
+        guard nsText.substring(with: currentLineRange)
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+
+        // Is there already a closing fence? (The block's last line begins with ``` and
+        // is a distinct line below the opening fence.) For an unclosed fence the block
+        // runs to EOF and `contentRegionEnd` is the block end.
+        let lastLineRange = nsText.lineRange(
+            for: NSRange(location: max(block.range.location, blockEnd - 1), length: 0))
+        let closingPresent = lastLineRange.location > openingLineRange.location
+            && nsText.substring(with: lastLineRange).hasPrefix("```")
+        let contentRegionEnd = closingPresent ? lastLineRange.location : blockEnd
+
+        // The caret's line must sit strictly inside the content region — below the
+        // opening fence and not on/after the closing fence. The `<=` upper bound admits
+        // the unclosed-at-EOF line, whose start coincides with the block end; a caret on
+        // the empty line *after* an already-closed fence starts past `contentRegionEnd`
+        // and is correctly rejected here.
+        guard currentLineRange.location >= openingLineEnd,
+              currentLineRange.location <= contentRegionEnd else { return nil }
+
+        // Offset just past the last non-whitespace character of the code content (the end
+        // of the last real code line); the end of the opening-fence line if there is none.
+        var codeEnd = openingLineEnd
+        if contentRegionEnd > openingLineEnd {
+            var scan = contentRegionEnd - 1
+            while scan >= openingLineEnd {
+                let ch = nsText.substring(with: NSRange(location: scan, length: 1))
+                if !ch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    codeEnd = scan + 1
+                    break
+                }
+                scan -= 1
+            }
+        }
+
+        // Only exit from the trailing empty region: every line from the caret down to the
+        // closing fence / EOF must be blank. If code follows the blank line, preserve it.
+        guard codeEnd <= currentLineRange.location else { return nil }
+
+        // Compose the replacement tail: terminate the last code line (unless we're right
+        // after the opening fence, which already ends in a newline), emit one closing
+        // fence, then a newline so the caret has a fresh paragraph line to land on. The
+        // replaced span runs from `codeEnd` to the block end, consuming the trailing
+        // blank line(s) and any pre-existing closing fence (re-emitted identically).
+        let needsLeadingNewline = codeEnd > openingLineEnd
+        let tail = (needsLeadingNewline ? "\n" : "") + "```\n"
+        let replaceRange = NSRange(location: codeEnd, length: blockEnd - codeEnd)
+        let caretTarget = codeEnd + (tail as NSString).length
+        return .replace(range: replaceRange, text: tail, caret: caretTarget)
+    }
+
     /// Mirror Enter-key quote continuation for multi-line pastes: when `location`
     /// sits on a blockquote line, prefix every line after the first with that
     /// line's `>` marker run so the whole paste stays inside the quote. Returns
@@ -245,6 +333,14 @@ struct MarkdownLists {
                     let insertionLocation = affectedCharRange.location
                     return .replace(range: affectedCharRange, text: "\n\n```", caret: insertionLocation + 1)
                 }
+            }
+
+            // Double-Return on an empty trailing line inside a fenced block exits it.
+            // Runs BEFORE the code-block guard below because a closed fence sets
+            // `isInCodeBlock` (which would short-circuit to `.allowDefault`) and an
+            // unclosed fence emits no token at all — both are handled here instead.
+            if let exit = codeBlockExitDecision(currentText: currentText, affectedCharRange: affectedCharRange) {
+                return exit
             }
 
             // Skip list / blockquote continuation in code blocks.

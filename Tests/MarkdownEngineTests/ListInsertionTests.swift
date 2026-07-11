@@ -111,4 +111,40 @@ struct ListInsertionTests {
         let text = "```"
         #expect(decide(text, "\n", at: end(of: text)) == .replace(range: NSRange(location: 3, length: 0), text: "\n\n```", caret: 4))
     }
+
+    // MARK: - Code fence exit (double-Return)
+
+    @Test("Enter on the empty trailing line of an UNCLOSED fence closes it and exits")
+    func enterExitsUnclosedFence() {
+        // ```swift\nlet x = 1\n  (caret at EOF, no closing fence)
+        let text = "```swift\nlet x = 1\n"
+        // Replace the trailing "\n" [18,19) with "\n```\n"; caret on the new line after the fence.
+        #expect(decide(text, "\n", at: end(of: text))
+            == .replace(range: NSRange(location: 18, length: 1), text: "\n```\n", caret: 23))
+    }
+
+    @Test("Enter on the empty trailing line of a CLOSED fence consumes the line and exits")
+    func enterExitsClosedFence() {
+        // ```swift\nlet x = 1\n<empty>\n```  (caret on the empty line before the closing fence)
+        let text = "```swift\nlet x = 1\n\n```"
+        // Caret sits at location 19 (start of the empty line). Replace [18,23) — the code
+        // line's newline, the empty line, and the old closing fence — with "\n```\n".
+        #expect(decide(text, "\n", at: 19)
+            == .replace(range: NSRange(location: 18, length: 5), text: "\n```\n", caret: 23))
+    }
+
+    @Test("Enter on a blank line WITH code below is preserved (does not exit)")
+    func enterKeepsBlankLineAboveCode() {
+        // Blank line between two code lines must stay a blank line.
+        let text = "```\nfunc a()\n\nfunc b()\n```"
+        // Caret on the empty middle line (location 13). No fence-exit → normal newline.
+        #expect(decide(text, "\n", at: 13) == .allowDefault)
+    }
+
+    @Test("Enter on the empty line AFTER a closed fence does not re-trigger an exit")
+    func enterAfterClosedFenceAllowsDefault() {
+        // ```\ncode\n```\n  (caret at EOF, on the empty line past the closing fence)
+        let text = "```\ncode\n```\n"
+        #expect(decide(text, "\n", at: end(of: text)) == .allowDefault)
+    }
 }
