@@ -66,21 +66,32 @@ public final class MarkdownEditorController: ObservableObject {
         // updates". The closures are stable, so a single bind is enough.
         guard self.view !== view else { return }
         self.view = view
-        view.onSelectionStateChange = { [weak self] state in
-            self?.updateSelectionState(state)
+        view.onSelectionStateChange = { [weak self, weak view] state in
+            guard let self, let view, self.view === view else { return }
+            self.updateSelectionState(state)
         }
-        view.onInlineLinkContextChange = { [weak self] context in
-            self?.updateInlineLinkContext(context)
+        view.onInlineLinkContextChange = { [weak self, weak view] context in
+            guard let self, let view, self.view === view else { return }
+            self.updateInlineLinkContext(context)
         }
-        view.onSlashMenuContextChange = { [weak self] context in
-            self?.updateSlashMenuContext(context)
+        view.onSlashMenuContextChange = { [weak self, weak view] context in
+            guard let self, let view, self.view === view else { return }
+            self.updateSlashMenuContext(context)
         }
-        view.onSlashMenuHighlightChange = { [weak self] index in
-            self?.updateSlashMenuHighlight(index)
+        view.onSlashMenuHighlightChange = { [weak self, weak view] index in
+            guard let self, let view, self.view === view else { return }
+            self.updateSlashMenuHighlight(index)
         }
         // Publish initial state so freshly-shown host UI isn't stale — deferred to the next
         // main-actor tick so it doesn't mutate @Published from inside the view-update cycle.
-        DispatchQueue.main.async { [weak view] in view?.publishHostStateNow() }
+        DispatchQueue.main.async { [weak self, weak view] in
+            guard let self, let view, self.view === view else { return }
+            view.publishHostStateNow()
+            // Read the producer after publishing because that pass can reset the highlight for a
+            // newly-opened or changed query. This is intentionally unconditional: if the new view
+            // starts at 0, its deduped callback cannot clear an older controller index by itself.
+            self.updateSlashMenuHighlight(view.slashMenuHighlightedIndex)
+        }
     }
 
     private func updateSelectionState(_ state: MarkdownSelectionState) {

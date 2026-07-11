@@ -515,7 +515,10 @@ extension NativeTextViewCoordinator {
         // inserts the highlighted block — consume all three so the caret doesn't move and no newline
         // is typed. Gated on `slashMenuIsActive`, so with no menu open these keys keep their normal
         // editing behavior. (Escape is handled separately below via `cancelOperation:`.)
-        if slashMenuIsActive {
+        // Marked-text commands belong to the input method: arrows navigate candidates and Return
+        // confirms one. The editable check also protects against a context cached immediately before
+        // a live editable -> read-only transition.
+        if slashMenuIsActive, textView.isEditable, !textView.hasMarkedText() {
             switch commandSelector {
             case #selector(NSResponder.moveUp(_:)):
                 moveSlashMenuHighlight(by: -1); return true

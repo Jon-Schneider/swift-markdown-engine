@@ -17,13 +17,18 @@ extension NativeTextViewCoordinator {
     /// Compute the slash-command context for the current caret and hand it to the host (deduped
     /// against the last publish so the hot text-/selection-change paths don't churn `@Published`).
     func publishSlashMenuContext(_ tv: NSTextView) {
+        publishSlashMenuContext(tv, forcingDelivery: false)
+    }
+
+    private func publishSlashMenuContext(_ tv: NSTextView, forcingDelivery: Bool) {
         let context = slashMenuContext(for: tv)
-        guard context != lastPublishedSlashContext else { return }
+        let changed = context != lastPublishedSlashContext
+        guard changed || forcingDelivery else { return }
         lastPublishedSlashContext = context
         // The trigger opened or its query changed, so any prior highlight is stale — reset to the
         // top row (Notion/Slack behavior: filtering re-homes the selection). Done here, guarded by
         // the dedupe above, so it fires only on an actual context change, not every keystroke.
-        setSlashMenuHighlight(0)
+        if changed { setSlashMenuHighlight(0) }
         // Defer past the current AppKit edit/selection cycle (mirrors `onCaretRectChange`) so the
         // host's `@Published` mutation doesn't land inside a re-entrant text-storage callback.
         let callback = onSlashMenuContextChange
@@ -84,7 +89,9 @@ extension NativeTextViewCoordinator {
     /// stale relative to a caret that's already sitting in a `/command`.
     func publishSlashMenuContextNow() {
         guard let tv = textView else { return }
-        publishSlashMenuContext(tv)
+        // Attachment is a new consumer boundary, so deduplication against what a previous consumer
+        // saw is invalid. Force the current value through even when the producer's cache is equal.
+        publishSlashMenuContext(tv, forcingDelivery: true)
     }
 
     /// The `/` slash context for a zero-length caret in `tv`, or nil. The anchor rect is in the
@@ -93,7 +100,8 @@ extension NativeTextViewCoordinator {
     /// (AppKit window coords are y-flipped relative to SwiftUI's, so view-local is the clean anchor).
     private func slashMenuContext(for tv: NSTextView) -> SlashMenuContext? {
         let selection = tv.selectedRange()
-        guard selection.length == 0,
+        guard tv.isEditable,
+              selection.length == 0,
               let trigger = MarkdownSlashMenu.trigger(in: tv.string, caret: selection.location)
         else { return nil }
         // `viewRect` returns the rect in the SCROLL-VIEW BOUNDS space — i.e. the wrapper's frame,

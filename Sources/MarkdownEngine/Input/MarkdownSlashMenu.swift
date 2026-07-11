@@ -113,8 +113,17 @@ public enum MarkdownSlashMenu {
     /// an out-of-range index regardless of `index`'s current value.
     public static func movedHighlight(_ index: Int, by delta: Int, count: Int) -> Int {
         guard count > 0 else { return 0 }
-        // Euclidean modulo: keeps the result in 0..<count even for a negative (index + delta).
-        return ((index + delta) % count + count) % count
+        // Normalize before adding so even public callers passing Int.min/Int.max cannot overflow.
+        // Adding the normalized values directly could still overflow when count is near Int.max,
+        // so compare against the distance to the wrap point and subtract when wrapping instead.
+        let indexRemainder = index % count
+        let normalizedIndex = indexRemainder >= 0 ? indexRemainder : indexRemainder + count
+        let deltaRemainder = delta % count
+        let normalizedDelta = deltaRemainder >= 0 ? deltaRemainder : deltaRemainder + count
+        let distanceToWrap = count - normalizedIndex
+        return normalizedDelta >= distanceToWrap
+            ? normalizedDelta - distanceToWrap
+            : normalizedIndex + normalizedDelta
     }
 
     // MARK: - Trigger detection

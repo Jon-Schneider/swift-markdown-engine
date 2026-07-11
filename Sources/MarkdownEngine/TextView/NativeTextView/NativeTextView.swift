@@ -113,6 +113,12 @@ final class NativeTextView: NSTextView {
             if isEditable, !oldValue {
                 (delegate as? NativeTextViewCoordinator)?.flushDeferredPendingAttachments()
             }
+            // Editability can change without a text/selection event. Re-evaluate slash state here
+            // so a live edit -> read-only transition withdraws an already-visible menu instead of
+            // leaving an inert overlay behind. Publication is deduped and its host callback deferred.
+            if isEditable != oldValue {
+                (delegate as? NativeTextViewCoordinator)?.publishSlashMenuContext(self)
+            }
         }
     }
     weak var layoutBridge: LayoutBridge?

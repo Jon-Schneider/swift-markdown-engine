@@ -49,18 +49,29 @@ public final class MarkdownEditorController: ObservableObject {
     func attach(_ coordinator: NativeTextViewCoordinator) {
         guard self.coordinator !== coordinator else { return }
         self.coordinator = coordinator
-        coordinator.onSlashMenuContextChange = { [weak self] context in
-            self?.updateSlashMenuContext(context)
+        coordinator.onSlashMenuContextChange = { [weak self, weak coordinator] context in
+            guard let self, let coordinator, self.coordinator === coordinator else { return }
+            self.updateSlashMenuContext(context)
         }
-        coordinator.onSlashMenuHighlightChange = { [weak self] index in
-            self?.updateSlashMenuHighlight(index)
+        coordinator.onSlashMenuHighlightChange = { [weak self, weak coordinator] index in
+            guard let self, let coordinator, self.coordinator === coordinator else { return }
+            self.updateSlashMenuHighlight(index)
         }
-        coordinator.onSelectionStateChange = { [weak self] state in
-            self?.updateSelectionState(state)
+        coordinator.onSelectionStateChange = { [weak self, weak coordinator] state in
+            guard let self, let coordinator, self.coordinator === coordinator else { return }
+            self.updateSelectionState(state)
         }
         // Publish initial state so freshly-shown host UI isn't stale.
         coordinator.publishSlashMenuContextNow()
         coordinator.publishSelectionStateNow()
+        // A persistent controller may be attaching to a newly-created coordinator whose index is
+        // already 0. The producer's deduped change callback would emit nothing in that case, leaving
+        // an old controller index visible while Return inserts row 0. Synchronize unconditionally,
+        // deferred out of the SwiftUI update pass like the coordinator's other publications.
+        DispatchQueue.main.async { [weak self, weak coordinator] in
+            guard let self, let coordinator, self.coordinator === coordinator else { return }
+            self.updateSlashMenuHighlight(coordinator.slashMenuHighlightedIndex)
+        }
     }
 
     private func updateSlashMenuContext(_ context: SlashMenuContext?) {

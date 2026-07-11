@@ -211,6 +211,14 @@ struct MarkdownSlashMenuTests {
         #expect((0..<3).contains(moved))
     }
 
+    @Test("Moving the highlight is overflow-safe across the full Int domain")
+    func movedHighlightHandlesIntegerExtremes() {
+        #expect(MarkdownSlashMenu.movedHighlight(Int.max, by: 1, count: 10) == 8)
+        #expect(MarkdownSlashMenu.movedHighlight(Int.min, by: -1, count: 10) == 1)
+        #expect(MarkdownSlashMenu.movedHighlight(Int.max, by: Int.max, count: Int.max) == 0)
+        #expect(MarkdownSlashMenu.movedHighlight(Int.min, by: Int.min, count: Int.max) == Int.max - 2)
+    }
+
     @Test("item(at:matching:) returns the highlighted row, matching the filtered order")
     func itemAtMatchesFilteredOrder() {
         let query = "h"
