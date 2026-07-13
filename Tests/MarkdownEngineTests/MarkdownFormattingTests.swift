@@ -117,6 +117,110 @@ struct MarkdownFormattingTests {
         #expect(formattedDocument(.italic, italic, NSRange(location: 0, length: (italic as NSString).length)) == "one\ntwo")
     }
 
+    @Test("Removing inline styles changes only the selected portion of an enclosing run")
+    func emphasisRemovalPreservesUnselectedTextInRun() {
+        let bold = "**abcdef**"
+        let italic = "*abcdef*"
+        let strikethrough = "~~abcdef~~"
+
+        #expect(formattedDocument(.bold, bold, NSRange(location: 4, length: 2))
+            == "**ab**cd**ef**")
+        #expect(formattedDocument(.italic, italic, NSRange(location: 3, length: 2))
+            == "*ab*cd*ef*")
+        #expect(formattedDocument(.strikethrough, strikethrough, NSRange(location: 4, length: 2))
+            == "~~ab~~cd~~ef~~")
+    }
+
+    @Test("Partial emphasis removal keeps boundary whitespace outside surviving spans")
+    func emphasisRemovalRespectsWhitespaceBoundaries() {
+        let boldPrefix = "**a b**"
+        let boldMiddle = "**a b c**"
+        let italicMiddle = "*a b c*"
+
+        #expect(formattedDocument(.bold, boldPrefix, NSRange(location: 2, length: 1))
+            == "a **b**")
+        #expect(formattedDocument(.bold, boldMiddle, NSRange(location: 4, length: 1))
+            == "**a** b **c**")
+        #expect(formattedDocument(.italic, italicMiddle, NSRange(location: 3, length: 1))
+            == "*a* b *c*")
+    }
+
+    @Test("Partial removal normalizes underscore-authored spans into parseable surviving spans")
+    func emphasisRemovalHandlesUnderscoreDelimiters() {
+        let bold = "__abcdef__"
+        let italic = "_abcdef_"
+        let boldResult = edit(.bold, bold, NSRange(location: 4, length: 2))
+        let italicResult = edit(.italic, italic, NSRange(location: 3, length: 2))
+        let boldDocument = (bold as NSString).replacingCharacters(
+            in: boldResult.range,
+            with: boldResult.text
+        )
+        let italicDocument = (italic as NSString).replacingCharacters(
+            in: italicResult.range,
+            with: italicResult.text
+        )
+
+        #expect(boldDocument == "**ab**cd**ef**")
+        #expect(italicDocument == "*ab*cd*ef*")
+        #expect(!MarkdownFormatting.isActive(.bold, text: boldDocument, selection: boldResult.selection))
+        #expect(!MarkdownFormatting.isActive(.italic, text: italicDocument, selection: italicResult.selection))
+    }
+
+    @Test("Partial emphasis removal rebuilds surviving styles inside nested link syntax")
+    func emphasisRemovalPreservesNestedLinks() {
+        let text = "**[a b](url)**"
+        let result = edit(.bold, text, NSRange(location: 5, length: 1))
+        let formatted = (text as NSString).replacingCharacters(in: result.range, with: result.text)
+
+        #expect(formatted == "[**a** b](url)")
+        #expect(MarkdownTokenizer.parseTokensViaAST(in: formatted).contains { $0.kind == .link })
+        #expect(MarkdownFormatting.isActive(.bold, text: formatted, selection: NSRange(location: 3, length: 1)))
+        #expect(!MarkdownFormatting.isActive(.bold, text: formatted, selection: result.selection))
+    }
+
+    @Test("Partial bold removal preserves bold and italic on unselected nested emphasis")
+    func boldRemovalPreservesUnselectedNestedEmphasis() {
+        let text = "**a *abcdef* z**"
+        let result = edit(.bold, text, NSRange(location: 7, length: 2))
+        let formatted = (text as NSString).replacingCharacters(in: result.range, with: result.text)
+        let formattedNSString = formatted as NSString
+        let ab = formattedNSString.range(of: "ab")
+        let ef = formattedNSString.range(of: "ef")
+        let z = formattedNSString.range(of: "z")
+
+        #expect(!MarkdownFormatting.isActive(.bold, text: formatted, selection: result.selection))
+        #expect(MarkdownFormatting.isActive(.italic, text: formatted, selection: result.selection))
+        #expect(MarkdownFormatting.isActive(.bold, text: formatted, selection: ab))
+        #expect(MarkdownFormatting.isActive(.italic, text: formatted, selection: ab))
+        #expect(MarkdownFormatting.isActive(.bold, text: formatted, selection: ef))
+        #expect(MarkdownFormatting.isActive(.italic, text: formatted, selection: ef))
+        #expect(MarkdownFormatting.isActive(.bold, text: formatted, selection: z))
+    }
+
+    @Test("Removing bold deduplicates overlapping matching tokens inside a link")
+    func boldRemovalHandlesOverlappingLinkEmphasisTokens() {
+        let text = "***[***b***](u)***"
+        let result = edit(.bold, text, NSRange(location: 7, length: 1))
+        let formatted = (text as NSString).replacingCharacters(in: result.range, with: result.text)
+
+        #expect(formatted == "[*b*](u)")
+        #expect(MarkdownTokenizer.parseTokensViaAST(in: formatted).contains { $0.kind == .link })
+        #expect(!MarkdownFormatting.isActive(.bold, text: formatted, selection: result.selection))
+        #expect(MarkdownFormatting.isActive(.italic, text: formatted, selection: result.selection))
+    }
+
+    @Test("Removing an outer style preserves untouched intraword nested emphasis markers")
+    func boldRemovalPreservesIntrawordNestedItalic() {
+        let text = "**foo*bar*baz**"
+        let result = edit(.bold, text, NSRange(location: 0, length: (text as NSString).length))
+        let formatted = (text as NSString).replacingCharacters(in: result.range, with: result.text)
+        let bar = (formatted as NSString).range(of: "bar")
+
+        #expect(formatted == "foo*bar*baz")
+        #expect(!MarkdownFormatting.isActive(.bold, text: formatted, selection: bar))
+        #expect(MarkdownFormatting.isActive(.italic, text: formatted, selection: bar))
+    }
+
     @Test("Aggregate emphasis removal preserves the other style in bold-italic runs")
     func emphasisRemovalPreservesResidualStyle() {
         let removingBold = "***one***\n**two**"
@@ -129,11 +233,64 @@ struct MarkdownFormattingTests {
             == "**one**\ntwo")
     }
 
+    @Test("Partial bold-italic removal preserves the other style and the unselected combined style")
+    func partialBoldItalicRemovalPreservesEachRemainingStyle() {
+        let text = "***abcdef***"
+        let removingBold = edit(.bold, text, NSRange(location: 5, length: 2))
+        let removingItalic = edit(.italic, text, NSRange(location: 5, length: 2))
+        let boldRemoved = (text as NSString).replacingCharacters(
+            in: removingBold.range,
+            with: removingBold.text
+        )
+        let italicRemoved = (text as NSString).replacingCharacters(
+            in: removingItalic.range,
+            with: removingItalic.text
+        )
+
+        #expect(boldRemoved == "***ab***_cd_***ef***")
+        #expect(italicRemoved == "***ab***__cd__***ef***")
+        #expect(!MarkdownFormatting.isActive(.bold, text: boldRemoved, selection: removingBold.selection))
+        #expect(MarkdownFormatting.isActive(.italic, text: boldRemoved, selection: removingBold.selection))
+        #expect(MarkdownFormatting.isActive(.bold, text: italicRemoved, selection: removingItalic.selection))
+        #expect(!MarkdownFormatting.isActive(.italic, text: italicRemoved, selection: removingItalic.selection))
+        #expect(MarkdownFormatting.isActive(.bold, text: boldRemoved, selection: NSRange(location: 3, length: 2)))
+        #expect(MarkdownFormatting.isActive(.italic, text: italicRemoved, selection: NSRange(location: 3, length: 2)))
+    }
+
     @Test("Applying italic across bold and plain lines composes rather than discarding bold")
     func italicComposesWithBoldInMixedSelection() {
         let text = "**one**\ntwo"
         #expect(formattedDocument(.italic, text, NSRange(location: 0, length: (text as NSString).length))
             == "***one***\n*two*")
+    }
+
+    @Test("Applying one emphasis style wraps an adjacent differently styled run as nested content")
+    func emphasisComposesWithAdjacentDifferentStyles() {
+        let boldThenPlain = "**hel**lo"
+        let italicThenPlain = "*hel*lo"
+        let italicResult = edit(
+            .italic,
+            boldThenPlain,
+            NSRange(location: 0, length: (boldThenPlain as NSString).length)
+        )
+        let boldResult = edit(
+            .bold,
+            italicThenPlain,
+            NSRange(location: 0, length: (italicThenPlain as NSString).length)
+        )
+        let italicDocument = (boldThenPlain as NSString).replacingCharacters(
+            in: italicResult.range,
+            with: italicResult.text
+        )
+        let boldDocument = (italicThenPlain as NSString).replacingCharacters(
+            in: boldResult.range,
+            with: boldResult.text
+        )
+
+        #expect(italicDocument == "***hel**lo*")
+        #expect(boldDocument == "***hel*lo**")
+        #expect(MarkdownFormatting.isActive(.italic, text: italicDocument, selection: italicResult.selection))
+        #expect(MarkdownFormatting.isActive(.bold, text: boldDocument, selection: boldResult.selection))
     }
 
     @Test("Inline formatting stays inside block prefixes")
@@ -160,6 +317,85 @@ struct MarkdownFormattingTests {
         let text = "[one](https://example.com)\ntwo"
         #expect(formattedDocument(.italic, text, NSRange(location: 0, length: (text as NSString).length))
             == "[*one*](https://example.com)\n*two*")
+    }
+
+    @Test("Inline formatting wraps a backslash escape as one content unit")
+    func emphasisFormatsEscapedPunctuation() {
+        let text = "\\*"
+        #expect(formattedDocument(.bold, text, NSRange(location: 0, length: (text as NSString).length))
+            == "**\\***")
+    }
+
+    @Test("Formatting the visible escaped character includes its hidden backslash")
+    func emphasisFormatsVisibleEscapedCharacterSelection() {
+        let text = "\\*"
+        let result = edit(.bold, text, NSRange(location: 1, length: 1))
+
+        #expect((text as NSString).replacingCharacters(in: result.range, with: result.text) == "**\\***")
+        #expect(result.selection == NSRange(location: 3, length: 1))
+    }
+
+    @Test("Formatting a selected escape marker includes its escaped character")
+    func emphasisFormatsSelectedEscapeMarkerAtomically() {
+        let text = "\\*"
+        let result = edit(.bold, text, NSRange(location: 0, length: 1))
+
+        #expect((text as NSString).replacingCharacters(in: result.range, with: result.text) == "**\\***")
+        #expect(result.selection == NSRange(location: 3, length: 1))
+    }
+
+    @Test("Multiline formatting skips opaque constructs and continues around them")
+    func emphasisSkipsOpaqueConstructs() {
+        let inlineCode = "one\n`code`\ntwo"
+        let fencedCode = "one\n```\ncode\n```\ntwo"
+        let inlineLatex = "one\n$x$\ntwo"
+        let wikiLink = "one\n[[Page]]\ntwo"
+
+        #expect(formattedDocument(.bold, inlineCode,
+                                  NSRange(location: 0, length: (inlineCode as NSString).length))
+            == "**one**\n`code`\n**two**")
+        #expect(formattedDocument(.bold, fencedCode,
+                                  NSRange(location: 0, length: (fencedCode as NSString).length))
+            == "**one**\n```\ncode\n```\n**two**")
+        #expect(formattedDocument(.bold, inlineLatex,
+                                  NSRange(location: 0, length: (inlineLatex as NSString).length))
+            == "**one**\n$x$\n**two**")
+        #expect(formattedDocument(.bold, wikiLink,
+                                  NSRange(location: 0, length: (wikiLink as NSString).length))
+            == "**one**\n[[Page]]\n**two**")
+    }
+
+    @Test("Multiline formatting preserves thematic breaks")
+    func emphasisSkipsThematicBreaks() {
+        let text = "one\n---\ntwo"
+        #expect(formattedDocument(.bold, text, NSRange(location: 0, length: (text as NSString).length))
+            == "**one**\n---\n**two**")
+    }
+
+    @Test("Inline formatting preserves table pipes and the separator row")
+    func emphasisFormatsTableCellTextWithoutBreakingTheTable() {
+        let text = "| a | b |\n|---|---|\n| c | d |"
+        let formatted = formattedDocument(
+            .bold,
+            text,
+            NSRange(location: 0, length: (text as NSString).length)
+        )
+
+        #expect(formatted == "| **a** | **b** |\n|---|---|\n| **c** | **d** |")
+        #expect(MarkdownTokenizer.parseTokensViaAST(in: formatted).contains { $0.kind == .table })
+    }
+
+    @Test("Inline formatting treats an escaped table pipe as cell content")
+    func emphasisFormatsEscapedTablePipes() {
+        let text = "| \\| | x |\n|---|---|"
+        let formatted = formattedDocument(
+            .bold,
+            text,
+            NSRange(location: 0, length: (text as NSString).length)
+        )
+
+        #expect(formatted == "| **\\|** | **x** |\n|---|---|")
+        #expect(MarkdownTokenizer.parseTokensViaAST(in: formatted).contains { $0.kind == .table })
     }
 
     @Test("Empty lines do not prevent multiline emphasis from toggling as one selection")

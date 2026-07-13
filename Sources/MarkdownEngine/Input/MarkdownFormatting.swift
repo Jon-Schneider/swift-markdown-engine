@@ -90,6 +90,10 @@ public struct MarkdownSelectionState: Equatable {
 
 enum MarkdownFormatting {
 
+    private static let composableInlineKinds: Set<MarkdownTokenKind> = [
+        .bold, .italic, .boldItalic, .strikethrough,
+    ]
+
     /// The edit that applying `command` to `selection` in `text` should produce.
     static func edit(for command: MarkdownFormattingCommand, text: String, selection: NSRange) -> FormattingEdit {
         switch command {
@@ -234,7 +238,8 @@ enum MarkdownFormatting {
         single: MarkdownTokenKind, boldItalicResidual: String
     ) -> FormattingEdit {
         let ns = text as NSString
-        if let token = enclosingToken(text: text, selection: selection, kinds: [single, .boldItalic]) {
+        if selection.length == 0,
+           let token = enclosingToken(text: text, selection: selection, kinds: [single, .boldItalic]) {
             let residual = token.kind == .boldItalic ? boldItalicResidual : ""
             return toggleOffEdit(ns: ns, token: token, residual: residual)
         }
@@ -255,7 +260,8 @@ enum MarkdownFormatting {
     /// empty-insert are unaffected.
     private static func strikethroughEdit(text: String, selection: NSRange) -> FormattingEdit {
         let ns = text as NSString
-        if let token = enclosingToken(text: text, selection: selection, kinds: [.strikethrough]) {
+        if selection.length == 0,
+           let token = enclosingToken(text: text, selection: selection, kinds: [.strikethrough]) {
             return toggleOffEdit(ns: ns, token: token, residual: "")
         }
         guard selection.length > 0 else {
@@ -385,13 +391,26 @@ enum MarkdownFormatting {
     ) -> FormattingEdit {
         let ns = text as NSString
         let tokens = MarkdownTokenizer.parseTokensViaAST(in: text)
-        let segments = inlineSelectionSegments(selection, in: ns)
-        let syntaxRanges = mergedRanges(
-            inlineSyntaxRanges(selection: selection, in: ns, tokens: tokens)
+        let segments = inlineSelectionSegments(selection, in: ns, tokens: tokens)
+        let rawSyntaxRanges = inlineSyntaxRanges(selection: selection, in: ns, tokens: tokens)
+        let syntaxRanges = mergedRanges(rawSyntaxRanges)
+        let visibilityRanges = mergedRanges(
+            syntaxRanges + tokens
+                .filter { $0.kind == .backslashEscape }
+                .flatMap { nonContentRuns(of: $0) }
         )
         guard let visibleBounds = visibleSelectionBounds(
-            segments: segments, in: ns, syntaxRanges: syntaxRanges
+            segments: segments, in: ns, syntaxRanges: visibilityRanges
         ) else {
+            if segments.contains(where: { segment in
+                syntaxRanges.contains { NSIntersectionRange(segment, $0).length > 0 }
+            }) {
+                return FormattingEdit(
+                    range: selection,
+                    text: ns.substring(with: selection),
+                    selection: selection
+                )
+            }
             // Preserve the established empty/all-whitespace behavior (insert a marker pair after
             // the whitespace) rather than treating a selection with no visible glyphs as "all on".
             return wrapOrInsertEdit(ns: ns, selection: selection, marker: marker)
@@ -401,27 +420,50 @@ enum MarkdownFormatting {
         if inlineFormattingIsActive(
             text: text, selection: selection, tokens: tokens, kinds: kinds
         ) {
-            let affectedTokens = matchingTokens.filter {
-                tokenCoversSelectedVisibleContent(
-                    $0, segments: segments, in: ns, syntaxRanges: syntaxRanges
-                )
-            }
             var mutations: [(range: NSRange, text: String)] = []
-            for token in affectedTokens {
+            for token in matchingTokens {
                 let residual = token.kind == .boldItalic ? boldItalicResidual : ""
-                for markerRange in nonContentRuns(of: token) {
-                    mutations.append((range: markerRange, text: residual))
-                }
+                mutations.append(contentsOf: inlineRemovalMutations(
+                    token: token,
+                    segments: segments,
+                    syntaxRanges: syntaxRanges,
+                    tokens: tokens,
+                    kinds: kinds,
+                    ns: ns,
+                    marker: marker,
+                    residual: residual
+                ))
             }
-            return inlineMutationEdit(
+            let edit = inlineMutationEdit(
                 in: ns, selection: selection, visibleBounds: visibleBounds, mutations: mutations
             )
+            let applied = ns.replacingCharacters(in: edit.range, with: edit.text)
+            let appliedTokens = MarkdownTokenizer.parseTokensViaAST(in: applied)
+            guard !inlineFormattingIsActive(
+                text: applied, selection: edit.selection, tokens: appliedTokens, kinds: kinds
+            ) else {
+                return FormattingEdit(
+                    range: selection,
+                    text: ns.substring(with: selection),
+                    selection: selection
+                )
+            }
+            return edit
         }
 
         // Matching tokens are already styled and therefore block their whole source ranges. Every
         // token's non-content syntax is also blocked so a heading/list/link/emphasis marker stays
         // outside the new marker pair; the selected visible text inside it is formatted instead.
-        let blockedRanges = matchingTokens.map(\.range) + syntaxRanges
+        // A different emphasis style is valid nested content for this command. Let the new marker
+        // wrap its source delimiters as part of one contiguous run; treating those delimiters as
+        // blockers creates adjacent star runs such as `***hel****lo*` that cannot be parsed reliably.
+        let composableMarkerRanges = tokens
+            .filter { composableInlineKinds.contains($0.kind) && !kinds.contains($0.kind) }
+            .flatMap { nonContentRuns(of: $0) }
+        let applicationSyntaxRanges = mergedRanges(rawSyntaxRanges.filter { syntaxRange in
+            !composableMarkerRanges.contains(where: { $0 == syntaxRange })
+        })
+        let blockedRanges = matchingTokens.map(\.range) + applicationSyntaxRanges
         let uncovered = uncoveredInlineRanges(segments: segments, blockedRanges: blockedRanges, in: ns)
         let mutations = inlineApplicationMutations(
             uncoveredRanges: uncovered,
@@ -448,16 +490,26 @@ enum MarkdownFormatting {
     }
 
     /// Selected non-terminator portions of each physical line, with edge whitespace excluded so
-    /// formatting keeps it outside the inserted delimiters just like the established single-line path.
-    private static func inlineSelectionSegments(_ selection: NSRange, in ns: NSString) -> [NSRange] {
+    /// formatting keeps it outside the inserted delimiters just like the established single-line
+    /// path. A selection of an escaped character expands backward over its hidden backslash so new
+    /// delimiters wrap the escape pair instead of splitting it.
+    private static func inlineSelectionSegments(
+        _ selection: NSRange,
+        in ns: NSString,
+        tokens: [MarkdownToken]
+    ) -> [NSRange] {
         guard selection.length > 0 else { return [] }
         return linesTouched(by: selection, in: ns).compactMap { line in
             let contentRange = NSRange(
                 location: line.range.location,
                 length: (line.content as NSString).length
             )
-            let intersection = NSIntersectionRange(selection, contentRange)
+            var intersection = NSIntersectionRange(selection, contentRange)
             guard intersection.length > 0 else { return nil }
+            for escape in tokens where escape.kind == .backslashEscape
+                && NSIntersectionRange(intersection, escape.range).length > 0 {
+                intersection = NSIntersectionRange(NSUnionRange(intersection, escape.range), contentRange)
+            }
             let selectedText = ns.substring(with: intersection)
             let (leading, core, _) = splitEdgeWhitespace(selectedText)
             let coreLength = (core as NSString).length
@@ -480,18 +532,23 @@ enum MarkdownFormatting {
         }
 
         let ns = text as NSString
-        let segments = inlineSelectionSegments(selection, in: ns)
+        let segments = inlineSelectionSegments(selection, in: ns, tokens: tokens)
         let syntaxRanges = mergedRanges(
             inlineSyntaxRanges(selection: selection, in: ns, tokens: tokens)
         )
-        guard visibleSelectionBounds(segments: segments, in: ns, syntaxRanges: syntaxRanges) != nil else {
+        let visibilityRanges = mergedRanges(
+            syntaxRanges + tokens
+                .filter { $0.kind == .backslashEscape }
+                .flatMap { nonContentRuns(of: $0) }
+        )
+        guard visibleSelectionBounds(segments: segments, in: ns, syntaxRanges: visibilityRanges) != nil else {
             return false
         }
         let styledRanges = mergedRanges(tokens.filter { kinds.contains($0.kind) }.map(\.range))
         for segment in segments {
             for location in segment.location..<NSMaxRange(segment) {
                 if isInvisibleInlineSource(
-                    at: location, in: ns, syntaxRanges: syntaxRanges
+                    at: location, in: ns, syntaxRanges: visibilityRanges
                 ) {
                     continue
                 }
@@ -511,7 +568,15 @@ enum MarkdownFormatting {
         in ns: NSString,
         tokens: [MarkdownToken]
     ) -> [NSRange] {
-        var ranges = tokens.flatMap { nonContentRuns(of: $0) }
+        // An escape's backslash and escaped character are one visible source unit for formatting:
+        // wrapping the pair yields `**\***`-style markup, while treating the slash as syntax would
+        // insert the opening delimiter between them and create an invalid escape. Other token markers
+        // remain protected from inline delimiters.
+        var ranges = tokens
+            .filter { $0.kind != .backslashEscape }
+            .flatMap { nonContentRuns(of: $0) }
+        ranges.append(contentsOf: opaqueInlineRanges(in: ns, tokens: tokens))
+        ranges.append(contentsOf: tableSyntaxRanges(in: ns, tokens: tokens))
         for line in linesTouched(by: selection, in: ns) {
             var remaining = line.content
             var consumed = 0
@@ -546,6 +611,30 @@ enum MarkdownFormatting {
         return ranges
     }
 
+    /// Constructs whose source cannot contain emphasis without changing meaning or becoming invalid.
+    /// Their complete ranges are invisible to aggregate state and unavailable for mutations, so a
+    /// multiline command still formats eligible prose before and after them.
+    private static func opaqueInlineRanges(
+        in ns: NSString,
+        tokens: [MarkdownToken]
+    ) -> [NSRange] {
+        let opaqueTokenKinds: Set<MarkdownTokenKind> = [
+            .inlineCode, .inlineLatex, .wikiLink, .imageEmbed, .imageLink,
+        ]
+        var ranges = tokens.compactMap { token in
+            opaqueTokenKinds.contains(token.kind) ? token.range : nil
+        }
+        ranges.append(contentsOf: BlockParser.parse(ns as String).compactMap { block in
+            switch block.kind {
+            case .fencedCode, .blockLatex, .thematicBreak:
+                return block.range
+            default:
+                return nil
+            }
+        })
+        return ranges
+    }
+
     /// First and one-past-last visible UTF-16 positions in the selected line segments. Syntax
     /// markers and whitespace do not carry a visible text style, so they do not influence aggregate
     /// state or the restored native selection.
@@ -577,21 +666,138 @@ enum MarkdownFormatting {
         return CharacterSet.whitespacesAndNewlines.contains(scalar)
     }
 
-    private static func tokenCoversSelectedVisibleContent(
-        _ token: MarkdownToken,
+    /// Remove the requested style only from the selected portion of a matching token. The original
+    /// outer markers are removed, then the style is rebuilt around each unselected visible run. This
+    /// keeps whitespace outside delimiters and places new markers inside nested link/emphasis syntax
+    /// instead of splitting those constructs. Bold-italic selections get the residual style rebuilt
+    /// around their selected runs as well.
+    private static func inlineRemovalMutations(
+        token: MarkdownToken,
         segments: [NSRange],
-        in ns: NSString,
-        syntaxRanges: [NSRange]
-    ) -> Bool {
-        for segment in segments {
-            let intersection = NSIntersectionRange(segment, token.range)
-            guard intersection.length > 0 else { continue }
-            for location in intersection.location..<NSMaxRange(intersection) where
-                !isInvisibleInlineSource(at: location, in: ns, syntaxRanges: syntaxRanges) {
-                return true
+        syntaxRanges: [NSRange],
+        tokens: [MarkdownToken],
+        kinds: Set<MarkdownTokenKind>,
+        ns: NSString,
+        marker: String,
+        residual: String
+    ) -> [(range: NSRange, text: String)] {
+        let selectedSegments = segments.compactMap { segment -> NSRange? in
+            let intersection = NSIntersectionRange(segment, token.contentRange)
+            return intersection.length > 0 ? intersection : nil
+        }
+        let selectedRanges = uncoveredInlineRanges(
+            segments: selectedSegments,
+            blockedRanges: syntaxRanges,
+            in: ns
+        )
+        guard !selectedRanges.isEmpty else { return [] }
+
+        let markerRuns = nonContentRuns(of: token)
+        guard let openingMarker = markerRuns.first,
+              let closingMarker = markerRuns.last,
+              openingMarker != closingMarker else { return [] }
+
+        let remainingRanges = uncoveredInlineRanges(
+            segments: [token.contentRange],
+            blockedRanges: syntaxRanges + selectedSegments,
+            in: ns
+        )
+        let outerMarker = token.kind == .boldItalic ? marker + residual : marker
+        let selectedMarker = token.kind == .boldItalic && !remainingRanges.isEmpty
+            ? String(repeating: "_", count: (residual as NSString).length)
+            : residual
+
+        var openings: [Int: [String]] = [:]
+        var closings: [Int: [String]] = [:]
+        func rebuild(_ ranges: [NSRange], with marker: String) {
+            guard !marker.isEmpty else { return }
+            for range in ranges {
+                openings[range.location, default: []].append(marker)
+                closings[NSMaxRange(range), default: []].append(marker)
             }
         }
-        return false
+        rebuild(remainingRanges, with: outerMarker)
+        rebuild(selectedRanges, with: selectedMarker)
+
+        var mutations: [(range: NSRange, text: String)] = [
+            (range: openingMarker, text: ""),
+            (range: closingMarker, text: ""),
+        ]
+        // If rebuilding this style next to a nested `*`/`**` marker, the runs merge and change
+        // delimiter matching. Normalize only nonmatching nested emphasis markers to equivalent
+        // underscores when a new asterisk run actually touches that marker. Untouched intraword
+        // `*bar*` must remain asterisks because `_bar_` would not parse between alphanumeric peers.
+        func insertedAsteriskTouches(_ marker: NSRange) -> Bool {
+            let boundaryTexts = openings[marker.location, default: []]
+                + closings[marker.location, default: []]
+                + openings[NSMaxRange(marker), default: []]
+                + closings[NSMaxRange(marker), default: []]
+            return boundaryTexts.contains { $0.contains("*") }
+        }
+        for nested in tokens where nested.range != token.range
+            && enclosesSelection(token.contentRange, nested.range)
+            && composableInlineKinds.contains(nested.kind)
+            && !kinds.contains(nested.kind) {
+            for nestedMarker in nonContentRuns(of: nested) {
+                let source = ns.substring(with: nestedMarker)
+                guard !source.isEmpty,
+                      source.allSatisfy({ $0 == "*" }),
+                      insertedAsteriskTouches(nestedMarker) else { continue }
+                mutations.append((
+                    range: nestedMarker,
+                    text: String(repeating: "_", count: (source as NSString).length)
+                ))
+            }
+        }
+        for location in Set(openings.keys).union(closings.keys) {
+            let text = closings[location, default: []].joined()
+                + openings[location, default: []].joined()
+            mutations.append((range: NSRange(location: location, length: 0), text: text))
+        }
+        return mutations
+    }
+
+    /// Table blocks are inline-bearing only inside their header/body cells. Pipes delimit cells and
+    /// the second row defines column alignment, so inserting emphasis around either would turn the
+    /// table into ordinary paragraphs. Protect those structural ranges while leaving cell text
+    /// available to the aggregate inline formatter.
+    private static func tableSyntaxRanges(
+        in ns: NSString,
+        tokens: [MarkdownToken]
+    ) -> [NSRange] {
+        var ranges: [NSRange] = []
+        let escapedPipeLocations = Set(tokens.compactMap { token -> Int? in
+            guard token.kind == .backslashEscape,
+                  token.contentRange.length == 1,
+                  ns.character(at: token.contentRange.location) == 0x7C else { return nil }
+            return token.contentRange.location
+        })
+        for table in tokens where table.kind == .table {
+            var lineIndex = 0
+            var location = table.range.location
+            let tableEnd = NSMaxRange(table.range)
+            while location < tableEnd {
+                let physicalLine = ns.lineRange(for: NSRange(location: location, length: 0))
+                let tableLine = NSIntersectionRange(physicalLine, table.range)
+                guard tableLine.length > 0 else { break }
+
+                if lineIndex == 1 {
+                    ranges.append(tableLine)
+                } else {
+                    for pipeLocation in tableLine.location..<NSMaxRange(tableLine)
+                    where ns.character(at: pipeLocation) == 0x7C
+                        && !escapedPipeLocations.contains(pipeLocation) {
+                        ranges.append(NSRange(location: pipeLocation, length: 1))
+                    }
+                }
+
+                let nextLocation = NSMaxRange(physicalLine)
+                guard nextLocation > location else { break }
+                location = nextLocation
+                lineIndex += 1
+            }
+        }
+        return ranges
     }
 
     /// Source ranges that still need the requested style. Existing matching tokens and all syntax
