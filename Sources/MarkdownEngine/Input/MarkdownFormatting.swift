@@ -127,28 +127,40 @@ enum MarkdownFormatting {
         let ns = text as NSString
         switch command {
         case .bold:
-            return enclosingToken(text: text, selection: selection, kinds: [.bold, .boldItalic]) != nil
+            return inlineFormattingIsActive(
+                text: text, selection: selection,
+                tokens: MarkdownTokenizer.parseTokensViaAST(in: text),
+                kinds: [.bold, .boldItalic]
+            )
         case .italic:
-            return enclosingToken(text: text, selection: selection, kinds: [.italic, .boldItalic]) != nil
+            return inlineFormattingIsActive(
+                text: text, selection: selection,
+                tokens: MarkdownTokenizer.parseTokensViaAST(in: text),
+                kinds: [.italic, .boldItalic]
+            )
         case .strikethrough:
-            return enclosingToken(text: text, selection: selection, kinds: [.strikethrough]) != nil
+            return inlineFormattingIsActive(
+                text: text, selection: selection,
+                tokens: MarkdownTokenizer.parseTokensViaAST(in: text),
+                kinds: [.strikethrough]
+            )
         case .inlineCode:
             return enclosingToken(text: text, selection: selection, kinds: [.inlineCode]) != nil
         case .clearFormatting:
             // An action, never an "on" state; enabled iff there's inline emphasis to clear.
             return false
         case .heading(let level):
-            let line = ns.substring(with: ns.lineRange(for: selection)).trimmingCharacters(in: .whitespacesAndNewlines)
-            return line.hasPrefix(String(repeating: "#", count: level) + " ")
+            return linesTouched(by: selection, in: ns).allSatisfy { headingLevel(in: $0.content) == level }
         case .bulletList:
-            let line = ns.substring(with: ns.lineRange(for: selection))
-            return line.range(of: bulletLinePattern, options: .regularExpression) != nil
+            return linesTouched(by: selection, in: ns).allSatisfy {
+                $0.content.range(of: bulletLinePattern, options: .regularExpression) != nil
+            }
         case .numberedList:
-            let line = ns.substring(with: ns.lineRange(for: selection))
-            return line.range(of: orderedLinePattern, options: .regularExpression) != nil
+            return linesTouched(by: selection, in: ns).allSatisfy {
+                $0.content.range(of: orderedLinePattern, options: .regularExpression) != nil
+            }
         case .blockquote:
-            let line = ns.substring(with: ns.lineRange(for: selection))
-            return isBlockquoteLine(line)
+            return linesTouched(by: selection, in: ns).allSatisfy { isBlockquoteLine($0.content) }
         case .codeBlock:
             return enclosingFencedCodeRange(text: text, selection: selection) != nil
         case .toggleCheckbox:
@@ -165,24 +177,37 @@ enum MarkdownFormatting {
     /// caret move; heading/list are cheap line-prefix checks.
     static func selectionState(text: String, selection: NSRange, tokens: [MarkdownToken]) -> MarkdownSelectionState {
         let ns = text as NSString
-        let isBold = tokens.contains { ($0.kind == .bold || $0.kind == .boldItalic) && enclosesSelection($0.range, selection) }
-        let isItalic = tokens.contains { ($0.kind == .italic || $0.kind == .boldItalic) && enclosesSelection($0.range, selection) }
-        let isStrikethrough = tokens.contains { $0.kind == .strikethrough && enclosesSelection($0.range, selection) }
+        let isBold = inlineFormattingIsActive(
+            text: text, selection: selection, tokens: tokens, kinds: [.bold, .boldItalic]
+        )
+        let isItalic = inlineFormattingIsActive(
+            text: text, selection: selection, tokens: tokens, kinds: [.italic, .boldItalic]
+        )
+        let isStrikethrough = inlineFormattingIsActive(
+            text: text, selection: selection, tokens: tokens, kinds: [.strikethrough]
+        )
         let isInlineCode = tokens.contains { $0.kind == .inlineCode && enclosesSelection($0.range, selection) }
 
-        let line = ns.substring(with: ns.lineRange(for: selection))
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        let headingLevel = (1...6).first { trimmed.hasPrefix(String(repeating: "#", count: $0) + " ") }
-        let isBulletList = line.range(of: bulletLinePattern, options: .regularExpression) != nil
-        let isNumberedList = line.range(of: orderedLinePattern, options: .regularExpression) != nil
-        let isBlockquote = isBlockquoteLine(line)
+        let lines = linesTouched(by: selection, in: ns)
+        let firstHeadingLevel = lines.first.flatMap { headingLevel(in: $0.content) }
+        let selectedHeadingLevel = firstHeadingLevel.flatMap { level in
+            lines.allSatisfy { headingLevel(in: $0.content) == level } ? level : nil
+        }
+        let isBulletList = lines.allSatisfy {
+            $0.content.range(of: bulletLinePattern, options: .regularExpression) != nil
+        }
+        let isNumberedList = lines.allSatisfy {
+            $0.content.range(of: orderedLinePattern, options: .regularExpression) != nil
+        }
+        let isBlockquote = lines.allSatisfy { isBlockquoteLine($0.content) }
         let isCodeBlock = tokens.contains { $0.kind == .codeBlock && enclosesSelection($0.range, selection) }
-        let isChecked = isCheckedTaskLine(trimmed)
+        let firstLine = lines[0].content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isChecked = isCheckedTaskLine(firstLine)
 
         return MarkdownSelectionState(
             isBold: isBold, isItalic: isItalic,
             isStrikethrough: isStrikethrough, isInlineCode: isInlineCode,
-            headingLevel: headingLevel,
+            headingLevel: selectedHeadingLevel,
             isBulletList: isBulletList, isNumberedList: isNumberedList,
             isBlockquote: isBlockquote, isCodeBlock: isCodeBlock,
             isChecked: isChecked
@@ -213,7 +238,13 @@ enum MarkdownFormatting {
             let residual = token.kind == .boldItalic ? boldItalicResidual : ""
             return toggleOffEdit(ns: ns, token: token, residual: residual)
         }
-        return wrapOrInsertEdit(ns: ns, selection: selection, marker: marker)
+        guard selection.length > 0 else {
+            return wrapOrInsertEdit(ns: ns, selection: selection, marker: marker)
+        }
+        return aggregateInlineFormattingEdit(
+            text: text, selection: selection, marker: marker,
+            kinds: [single, .boldItalic], boldItalicResidual: boldItalicResidual
+        )
     }
 
     /// Strikethrough is a symmetric `~~` wrap. The GFM scanner won't form a span when the content
@@ -227,11 +258,13 @@ enum MarkdownFormatting {
         if let token = enclosingToken(text: text, selection: selection, kinds: [.strikethrough]) {
             return toggleOffEdit(ns: ns, token: token, residual: "")
         }
-        let edit = wrapOrInsertEdit(ns: ns, selection: selection, marker: "~~")
-        // An empty-selection insert (`~~~~` with the caret between) intentionally has no content to
-        // parse — skip verification, which would otherwise reject it.
-        guard selection.length > 0 else { return edit }
-        return verifiedWrap(edit, formsKind: .strikethrough, in: text, selection: selection)
+        guard selection.length > 0 else {
+            return wrapOrInsertEdit(ns: ns, selection: selection, marker: "~~")
+        }
+        return aggregateInlineFormattingEdit(
+            text: text, selection: selection, marker: "~~",
+            kinds: [.strikethrough], boldItalicResidual: ""
+        )
     }
 
     /// Inline code differs from a plain symmetric wrap: per CommonMark a code span's delimiter must
@@ -338,6 +371,424 @@ enum MarkdownFormatting {
         return (leading, core, trailing)
     }
 
+    /// Apply one inline style across a ranged selection using aggregate toggle semantics. Inline
+    /// emphasis cannot cross a physical newline in this engine, so each selected line segment gets
+    /// its own marker pair. Existing matching tokens cover their visible content; only uncovered
+    /// runs gain markers unless every visible selected character is already covered, in which case
+    /// all matching tokens touched by the selection lose that style together.
+    private static func aggregateInlineFormattingEdit(
+        text: String,
+        selection: NSRange,
+        marker: String,
+        kinds: Set<MarkdownTokenKind>,
+        boldItalicResidual: String
+    ) -> FormattingEdit {
+        let ns = text as NSString
+        let tokens = MarkdownTokenizer.parseTokensViaAST(in: text)
+        let segments = inlineSelectionSegments(selection, in: ns)
+        let syntaxRanges = mergedRanges(
+            inlineSyntaxRanges(selection: selection, in: ns, tokens: tokens)
+        )
+        guard let visibleBounds = visibleSelectionBounds(
+            segments: segments, in: ns, syntaxRanges: syntaxRanges
+        ) else {
+            // Preserve the established empty/all-whitespace behavior (insert a marker pair after
+            // the whitespace) rather than treating a selection with no visible glyphs as "all on".
+            return wrapOrInsertEdit(ns: ns, selection: selection, marker: marker)
+        }
+
+        let matchingTokens = tokens.filter { kinds.contains($0.kind) }
+        if inlineFormattingIsActive(
+            text: text, selection: selection, tokens: tokens, kinds: kinds
+        ) {
+            let affectedTokens = matchingTokens.filter {
+                tokenCoversSelectedVisibleContent(
+                    $0, segments: segments, in: ns, syntaxRanges: syntaxRanges
+                )
+            }
+            var mutations: [(range: NSRange, text: String)] = []
+            for token in affectedTokens {
+                let residual = token.kind == .boldItalic ? boldItalicResidual : ""
+                for markerRange in nonContentRuns(of: token) {
+                    mutations.append((range: markerRange, text: residual))
+                }
+            }
+            return inlineMutationEdit(
+                in: ns, selection: selection, visibleBounds: visibleBounds, mutations: mutations
+            )
+        }
+
+        // Matching tokens are already styled and therefore block their whole source ranges. Every
+        // token's non-content syntax is also blocked so a heading/list/link/emphasis marker stays
+        // outside the new marker pair; the selected visible text inside it is formatted instead.
+        let blockedRanges = matchingTokens.map(\.range) + syntaxRanges
+        let uncovered = uncoveredInlineRanges(segments: segments, blockedRanges: blockedRanges, in: ns)
+        let mutations = inlineApplicationMutations(
+            uncoveredRanges: uncovered,
+            matchingTokens: matchingTokens,
+            marker: marker
+        )
+        guard !mutations.isEmpty else {
+            return FormattingEdit(range: selection, text: ns.substring(with: selection), selection: selection)
+        }
+
+        let edit = inlineMutationEdit(
+            in: ns, selection: selection, visibleBounds: visibleBounds, mutations: mutations
+        )
+        let applied = ns.replacingCharacters(in: edit.range, with: edit.text)
+        let appliedTokens = MarkdownTokenizer.parseTokensViaAST(in: applied)
+        guard inlineFormattingIsActive(
+            text: applied, selection: edit.selection, tokens: appliedTokens, kinds: kinds
+        ) else {
+            // Refuse any delimiter combination the parser cannot represent rather than persist raw,
+            // visible Markdown markers (for example a strike containing a literal tilde).
+            return FormattingEdit(range: selection, text: ns.substring(with: selection), selection: selection)
+        }
+        return edit
+    }
+
+    /// Selected non-terminator portions of each physical line, with edge whitespace excluded so
+    /// formatting keeps it outside the inserted delimiters just like the established single-line path.
+    private static func inlineSelectionSegments(_ selection: NSRange, in ns: NSString) -> [NSRange] {
+        guard selection.length > 0 else { return [] }
+        return linesTouched(by: selection, in: ns).compactMap { line in
+            let contentRange = NSRange(
+                location: line.range.location,
+                length: (line.content as NSString).length
+            )
+            let intersection = NSIntersectionRange(selection, contentRange)
+            guard intersection.length > 0 else { return nil }
+            let selectedText = ns.substring(with: intersection)
+            let (leading, core, _) = splitEdgeWhitespace(selectedText)
+            let coreLength = (core as NSString).length
+            guard coreLength > 0 else { return nil }
+            return NSRange(
+                location: intersection.location + (leading as NSString).length,
+                length: coreLength
+            )
+        }
+    }
+
+    private static func inlineFormattingIsActive(
+        text: String,
+        selection: NSRange,
+        tokens: [MarkdownToken],
+        kinds: Set<MarkdownTokenKind>
+    ) -> Bool {
+        if selection.length == 0 {
+            return tokens.contains { kinds.contains($0.kind) && enclosesSelection($0.range, selection) }
+        }
+
+        let ns = text as NSString
+        let segments = inlineSelectionSegments(selection, in: ns)
+        let syntaxRanges = mergedRanges(
+            inlineSyntaxRanges(selection: selection, in: ns, tokens: tokens)
+        )
+        guard visibleSelectionBounds(segments: segments, in: ns, syntaxRanges: syntaxRanges) != nil else {
+            return false
+        }
+        let styledRanges = mergedRanges(tokens.filter { kinds.contains($0.kind) }.map(\.range))
+        for segment in segments {
+            for location in segment.location..<NSMaxRange(segment) {
+                if isInvisibleInlineSource(
+                    at: location, in: ns, syntaxRanges: syntaxRanges
+                ) {
+                    continue
+                }
+                guard ranges(styledRanges, contain: location) else {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    /// Syntax that should stay outside newly inserted inline delimiters. Token marker ranges cover
+    /// parsed inline/heading/quote constructs; list markers are added explicitly because the list
+    /// block token represents the whole item rather than exposing its source prefix as a token marker.
+    private static func inlineSyntaxRanges(
+        selection: NSRange,
+        in ns: NSString,
+        tokens: [MarkdownToken]
+    ) -> [NSRange] {
+        var ranges = tokens.flatMap { nonContentRuns(of: $0) }
+        for line in linesTouched(by: selection, in: ns) {
+            var remaining = line.content
+            var consumed = 0
+            var foundMarker = true
+            while foundMarker {
+                foundMarker = false
+                for pattern in blockMarkerPatterns {
+                    guard let marker = remaining.range(of: pattern, options: .regularExpression) else { continue }
+                    let markerLength = (String(remaining[..<marker.upperBound]) as NSString).length
+                    ranges.append(NSRange(
+                        location: line.range.location + consumed,
+                        length: markerLength
+                    ))
+                    consumed += markerLength
+                    remaining = String(remaining[marker.upperBound...])
+
+                    if pattern == bulletLinePattern || pattern == orderedLinePattern,
+                       let taskBox = remaining.range(of: leadingTaskBoxPattern, options: .regularExpression) {
+                        let taskBoxLength = (String(remaining[..<taskBox.upperBound]) as NSString).length
+                        ranges.append(NSRange(
+                            location: line.range.location + consumed,
+                            length: taskBoxLength
+                        ))
+                        consumed += taskBoxLength
+                        remaining = String(remaining[taskBox.upperBound...])
+                    }
+                    foundMarker = true
+                    break
+                }
+            }
+        }
+        return ranges
+    }
+
+    /// First and one-past-last visible UTF-16 positions in the selected line segments. Syntax
+    /// markers and whitespace do not carry a visible text style, so they do not influence aggregate
+    /// state or the restored native selection.
+    private static func visibleSelectionBounds(
+        segments: [NSRange],
+        in ns: NSString,
+        syntaxRanges: [NSRange]
+    ) -> (start: Int, end: Int)? {
+        var start: Int?
+        var end: Int?
+        for segment in segments {
+            for location in segment.location..<NSMaxRange(segment) where
+                !isInvisibleInlineSource(at: location, in: ns, syntaxRanges: syntaxRanges) {
+                if start == nil { start = location }
+                end = location + 1
+            }
+        }
+        guard let start, let end else { return nil }
+        return (start: start, end: end)
+    }
+
+    private static func isInvisibleInlineSource(
+        at location: Int,
+        in ns: NSString,
+        syntaxRanges: [NSRange]
+    ) -> Bool {
+        if ranges(syntaxRanges, contain: location) { return true }
+        guard let scalar = UnicodeScalar(ns.character(at: location)) else { return false }
+        return CharacterSet.whitespacesAndNewlines.contains(scalar)
+    }
+
+    private static func tokenCoversSelectedVisibleContent(
+        _ token: MarkdownToken,
+        segments: [NSRange],
+        in ns: NSString,
+        syntaxRanges: [NSRange]
+    ) -> Bool {
+        for segment in segments {
+            let intersection = NSIntersectionRange(segment, token.range)
+            guard intersection.length > 0 else { continue }
+            for location in intersection.location..<NSMaxRange(intersection) where
+                !isInvisibleInlineSource(at: location, in: ns, syntaxRanges: syntaxRanges) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Source ranges that still need the requested style. Existing matching tokens and all syntax
+    /// marker ranges partition each selected line; whitespace-only gaps are deliberately skipped.
+    private static func uncoveredInlineRanges(
+        segments: [NSRange],
+        blockedRanges: [NSRange],
+        in ns: NSString
+    ) -> [NSRange] {
+        var result: [NSRange] = []
+        for segment in segments {
+            let blockers = mergedRanges(blockedRanges.compactMap { blocked -> NSRange? in
+                let intersection = NSIntersectionRange(segment, blocked)
+                return intersection.length > 0 ? intersection : nil
+            })
+            var cursor = segment.location
+            for blocker in blockers {
+                appendVisibleInlineRange(
+                    NSRange(location: cursor, length: blocker.location - cursor),
+                    in: ns,
+                    to: &result
+                )
+                cursor = max(cursor, NSMaxRange(blocker))
+            }
+            appendVisibleInlineRange(
+                NSRange(location: cursor, length: NSMaxRange(segment) - cursor),
+                in: ns,
+                to: &result
+            )
+        }
+        return result
+    }
+
+    /// Marker mutations for uncovered source runs. When a plain run directly touches an existing
+    /// token of the exact requested style, move that token's boundary instead of emitting adjacent
+    /// close/open runs (`**hel****lo**`); this keeps the stored Markdown compact as `**hello**`.
+    /// Bold-italic tokens are not merged this way because their residual style must retain its own
+    /// boundary when only bold or italic is being extended.
+    private static func inlineApplicationMutations(
+        uncoveredRanges: [NSRange],
+        matchingTokens: [MarkdownToken],
+        marker: String
+    ) -> [(range: NSRange, text: String)] {
+        var mutations: [(range: NSRange, text: String)] = []
+        for range in uncoveredRanges {
+            let leftToken = matchingTokens.first {
+                $0.kind != .boldItalic && NSMaxRange($0.range) == range.location
+            }
+            let rightToken = matchingTokens.first {
+                $0.kind != .boldItalic && $0.range.location == NSMaxRange(range)
+            }
+
+            if let closingMarker = leftToken.flatMap({ nonContentRuns(of: $0).last }) {
+                mutations.append((range: closingMarker, text: ""))
+            } else {
+                mutations.append((
+                    range: NSRange(location: range.location, length: 0),
+                    text: marker
+                ))
+            }
+
+            if let openingMarker = rightToken.flatMap({ nonContentRuns(of: $0).first }) {
+                mutations.append((range: openingMarker, text: ""))
+            } else {
+                mutations.append((
+                    range: NSRange(location: NSMaxRange(range), length: 0),
+                    text: marker
+                ))
+            }
+        }
+        return mutations
+    }
+
+    private static func appendVisibleInlineRange(
+        _ range: NSRange,
+        in ns: NSString,
+        to ranges: inout [NSRange]
+    ) {
+        guard range.length > 0 else { return }
+        let text = ns.substring(with: range)
+        let (leading, core, _) = splitEdgeWhitespace(text)
+        let coreLength = (core as NSString).length
+        guard coreLength > 0 else { return }
+        ranges.append(NSRange(
+            location: range.location + (leading as NSString).length,
+            length: coreLength
+        ))
+    }
+
+    private static func mergedRanges(_ ranges: [NSRange]) -> [NSRange] {
+        let sorted = ranges.sorted {
+            $0.location == $1.location ? $0.length < $1.length : $0.location < $1.location
+        }
+        var merged: [NSRange] = []
+        for range in sorted {
+            guard let last = merged.last, range.location <= NSMaxRange(last) else {
+                merged.append(range)
+                continue
+            }
+            merged[merged.count - 1] = NSRange(
+                location: last.location,
+                length: max(NSMaxRange(last), NSMaxRange(range)) - last.location
+            )
+        }
+        return merged
+    }
+
+    /// Membership in sorted, disjoint ranges. Selection state is published while the user drags,
+    /// so avoid scanning every token range for every UTF-16 code unit in a large selection.
+    private static func ranges(_ ranges: [NSRange], contain location: Int) -> Bool {
+        var lower = 0
+        var upper = ranges.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            let range = ranges[middle]
+            if location < range.location {
+                upper = middle
+            } else if location >= NSMaxRange(range) {
+                lower = middle + 1
+            } else {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Compose disjoint marker insertions/replacements into the one contiguous edit required by the
+    /// platform text views, then map the selected visible bounds through those UTF-16 mutations.
+    private static func inlineMutationEdit(
+        in ns: NSString,
+        selection: NSRange,
+        visibleBounds: (start: Int, end: Int),
+        mutations: [(range: NSRange, text: String)]
+    ) -> FormattingEdit {
+        var seen = Set<String>()
+        let unique = mutations.filter {
+            seen.insert("\($0.range.location):\($0.range.length):\($0.text)").inserted
+        }
+        guard !unique.isEmpty else {
+            return FormattingEdit(range: selection, text: ns.substring(with: selection), selection: selection)
+        }
+
+        let editStart = min(selection.location, unique.map(\.range.location).min()!)
+        let editEnd = max(NSMaxRange(selection), unique.map { NSMaxRange($0.range) }.max()!)
+        let editRange = NSRange(location: editStart, length: editEnd - editStart)
+        let mutable = NSMutableString(string: ns.substring(with: editRange))
+        for mutation in unique.sorted(by: {
+            $0.range.location == $1.range.location
+                ? $0.range.length > $1.range.length
+                : $0.range.location > $1.range.location
+        }) {
+            let relative = NSRange(
+                location: mutation.range.location - editRange.location,
+                length: mutation.range.length
+            )
+            mutable.replaceCharacters(in: relative, with: mutation.text)
+        }
+
+        let mappedStart = mappedInlinePosition(
+            visibleBounds.start, through: unique, includingInsertionAtPosition: true
+        )
+        let mappedEnd = mappedInlinePosition(
+            visibleBounds.end, through: unique, includingInsertionAtPosition: false
+        )
+        return FormattingEdit(
+            range: editRange,
+            text: mutable as String,
+            selection: NSRange(location: mappedStart, length: max(0, mappedEnd - mappedStart))
+        )
+    }
+
+    private static func mappedInlinePosition(
+        _ position: Int,
+        through mutations: [(range: NSRange, text: String)],
+        includingInsertionAtPosition: Bool
+    ) -> Int {
+        var delta = 0
+        for mutation in mutations.sorted(by: { $0.range.location < $1.range.location }) {
+            let replacementLength = (mutation.text as NSString).length
+            if mutation.range.length == 0 {
+                if mutation.range.location < position
+                    || (includingInsertionAtPosition && mutation.range.location == position) {
+                    delta += replacementLength
+                }
+                continue
+            }
+
+            if NSMaxRange(mutation.range) <= position {
+                delta += replacementLength - mutation.range.length
+            } else if mutation.range.location <= position {
+                return mutation.range.location + delta
+                    + (includingInsertionAtPosition ? replacementLength : 0)
+            }
+        }
+        return position + delta
+    }
+
     // MARK: - Clear formatting
 
     /// Inline-emphasis kinds whose markers `clearFormatting` strips.
@@ -437,74 +888,147 @@ enum MarkdownFormatting {
         return enclosesSelection(tokenRange, selection)
     }
 
+    /// The complete source lines touched by `selection`, split into content and their exact line
+    /// terminators. A caret on an empty document or after a trailing newline still represents one
+    /// empty line, so block commands can insert a marker there.
+    private static func linesTouched(
+        by selection: NSRange,
+        in ns: NSString
+    ) -> [(range: NSRange, content: String, terminator: String)] {
+        let affectedRange = ns.lineRange(for: selection)
+        guard affectedRange.length > 0 else {
+            return [(range: affectedRange, content: "", terminator: "")]
+        }
+
+        var lines: [(range: NSRange, content: String, terminator: String)] = []
+        var location = affectedRange.location
+        let affectedEnd = NSMaxRange(affectedRange)
+        while location < affectedEnd {
+            let range = ns.lineRange(for: NSRange(location: location, length: 0))
+            let (content, terminator) = splitLineTerminator(range, in: ns)
+            lines.append((range: range, content: content, terminator: terminator))
+            location = NSMaxRange(range)
+        }
+        return lines
+    }
+
+    /// Rebuild a touched line range from independently transformed block lines. The resulting native
+    /// selection runs from the first line's visible content through the last line's visible content;
+    /// intermediate Markdown markers necessarily remain inside that continuous selection.
+    private static func blockLineEdit(
+        lines: [(range: NSRange, content: String, terminator: String)],
+        transform: (String) -> (text: String, contentRange: NSRange)
+    ) -> FormattingEdit {
+        var replacement = ""
+        var replacementLength = 0
+        var selectionStart = 0
+        var selectionEnd = 0
+
+        for (index, line) in lines.enumerated() {
+            let transformed = transform(line.content)
+            if index == 0 {
+                selectionStart = transformed.contentRange.location
+            }
+            if index == lines.count - 1 {
+                selectionEnd = replacementLength + NSMaxRange(transformed.contentRange)
+            }
+            replacement += transformed.text + line.terminator
+            replacementLength += (transformed.text as NSString).length + (line.terminator as NSString).length
+        }
+
+        let firstLocation = lines[0].range.location
+        let lastEnd = NSMaxRange(lines[lines.count - 1].range)
+        return FormattingEdit(
+            range: NSRange(location: firstLocation, length: lastEnd - firstLocation),
+            text: replacement,
+            selection: NSRange(
+                location: firstLocation + selectionStart,
+                length: selectionEnd - selectionStart
+            )
+        )
+    }
+
     // MARK: - Heading
+
+    private static func headingLevel(in line: String) -> Int? {
+        let leadingWhitespace = (line as NSString).range(of: #"^[ \t]*"#, options: .regularExpression)
+        let withoutIndent = (line as NSString).substring(from: NSMaxRange(leadingWhitespace))
+        return (1...6).first { withoutIndent.hasPrefix(String(repeating: "#", count: $0) + " ") }
+    }
 
     private static func headingEdit(text: String, selection: NSRange, level: Int) -> FormattingEdit {
         let ns = text as NSString
-        let lineRange = ns.lineRange(for: selection)
-        // `splitLineTerminator` preserves the exact terminator (LF / CR / CRLF) instead of
-        // rewriting it to `\n` — so a CRLF line keeps its CRLF and a CR line isn't merged
-        // into the next.
-        let (lineText, suffix) = splitLineTerminator(lineRange, in: ns)
-        let trimmed = lineText.trimmingCharacters(in: .whitespaces)
-        // Toggle OFF: re-applying the SAME level to a line that is already that heading clears
-        // it back to a plain paragraph (matches `isActive(.heading(level))`). A DIFFERENT level
-        // still just changes the level (below).
-        let alreadyAtLevel = trimmed.hasPrefix(String(repeating: "#", count: level) + " ")
-        var content = trimmed
-        while content.hasPrefix("#") { content.removeFirst() }
-        content = content.trimmingCharacters(in: .whitespaces)
-        if alreadyAtLevel {
-            let newLine = content + suffix
-            return FormattingEdit(
-                range: lineRange, text: newLine,
-                selection: NSRange(location: lineRange.location, length: (content as NSString).length)
+        let lines = linesTouched(by: selection, in: ns)
+        // Aggregate toggle: a mixed selection is normalized to the requested level. Only when every
+        // touched line is already at that level does the command turn all of them back into paragraphs.
+        let removesHeading = lines.allSatisfy { headingLevel(in: $0.content) == level }
+        let prefix = String(repeating: "#", count: level) + " "
+        let prefixLength = (prefix as NSString).length
+        return blockLineEdit(lines: lines) { line in
+            var content = line.trimmingCharacters(in: .whitespaces)
+            while content.hasPrefix("#") { content.removeFirst() }
+            content = content.trimmingCharacters(in: .whitespaces)
+            let contentLength = (content as NSString).length
+            if removesHeading {
+                return (text: content, contentRange: NSRange(location: 0, length: contentLength))
+            }
+            return (
+                text: prefix + content,
+                contentRange: NSRange(location: prefixLength, length: contentLength)
             )
         }
-        let prefix = String(repeating: "#", count: level) + " "
-        let newLine = prefix + content + suffix
-        let location = lineRange.location + (prefix as NSString).length
-        return FormattingEdit(
-            range: lineRange, text: newLine,
-            selection: NSRange(location: location, length: (content as NSString).length)
-        )
     }
 
     // MARK: - List
 
     private static func listEdit(text: String, selection: NSRange, prefix: String, ownPattern: String) -> FormattingEdit {
         let ns = text as NSString
-        let startLine = ns.lineRange(for: selection)
-        // Terminator-preserving split (CRLF / CR safe) instead of `hasSuffix("\n")`.
-        let (lineText, suffix) = splitLineTerminator(startLine, in: ns)
+        let lines = linesTouched(by: selection, in: ns)
+        let removesList = lines.allSatisfy {
+            $0.content.range(of: ownPattern, options: .regularExpression) != nil
+        }
+        let prefixLength = (prefix as NSString).length
 
-        // Toggle OFF: the line is already THIS list type → strip its marker back to a plain
-        // paragraph (matches `isActive`). Uses the same regex as detection, so any indented /
-        // imported marker (`*`, `+`, `2)` …) is removed, not just a literal `- ` / `1. `. A task
-        // line (`- [ ] x`) also sheds its `[ ] ` box, so it lands as clean paragraph text.
-        if let marker = lineText.range(of: ownPattern, options: .regularExpression) {
-            let content = strippingLeadingTaskBox(String(lineText[marker.upperBound...]))
-            return FormattingEdit(
-                range: startLine, text: content + suffix,
-                selection: NSRange(location: startLine.location, length: (content as NSString).length)
+        return blockLineEdit(lines: lines) { line in
+            let lineNSString = line as NSString
+            let ownMarker = lineNSString.range(of: ownPattern, options: .regularExpression)
+
+            // Toggle off only when every line has this list style. Task items shed their checkbox
+            // too, matching the established single-line behavior.
+            if removesList, ownMarker.location != NSNotFound {
+                let content = strippingLeadingTaskBox(lineNSString.substring(from: NSMaxRange(ownMarker)))
+                return (
+                    text: content,
+                    contentRange: NSRange(location: 0, length: (content as NSString).length)
+                )
+            }
+
+            // A line that already has the requested style remains untouched while the command fills
+            // that style into the rest of a mixed selection.
+            if ownMarker.location != NSNotFound {
+                return (
+                    text: line,
+                    contentRange: NSRange(
+                        location: NSMaxRange(ownMarker),
+                        length: lineNSString.length - NSMaxRange(ownMarker)
+                    )
+                )
+            }
+
+            // Convert an existing other list marker rather than stacking the requested marker on it.
+            var content = line
+            for pattern in [bulletLinePattern, orderedLinePattern] {
+                let marker = (content as NSString).range(of: pattern, options: .regularExpression)
+                if marker.location != NSNotFound {
+                    content = (content as NSString).substring(from: NSMaxRange(marker))
+                    break
+                }
+            }
+            return (
+                text: prefix + content,
+                contentRange: NSRange(location: prefixLength, length: (content as NSString).length)
             )
         }
-
-        // Otherwise ADD the marker. First strip an existing OTHER list marker so we CONVERT
-        // (bullet ↔ numbered) rather than stack markers (`- 1. x`).
-        var content = lineText
-        for pattern in [bulletLinePattern, orderedLinePattern] {
-            if let marker = content.range(of: pattern, options: .regularExpression) {
-                content = String(content[marker.upperBound...])
-                break
-            }
-        }
-        let newLine = prefix + content + suffix
-        let location = startLine.location + (prefix as NSString).length
-        return FormattingEdit(
-            range: startLine, text: newLine,
-            selection: NSRange(location: location, length: (content as NSString).length)
-        )
     }
 
     // MARK: - Clear block (⌥⌘0 "paragraph")
@@ -518,10 +1042,12 @@ enum MarkdownFormatting {
         blockquoteMarkerPattern, headingMarkerPattern, bulletLinePattern, orderedLinePattern,
     ]
 
+    private static let leadingTaskBoxPattern = #"^\[[ xX]\][ \t]?"#
+
     /// Strip a leading task-checkbox box (`[ ]` / `[x]` / `[X]`) plus one trailing space — used
     /// after a list marker is removed so `- [ ] x` clears to `x`, not `[ ] x`.
     private static func strippingLeadingTaskBox(_ line: String) -> String {
-        guard let box = line.range(of: #"^\[[ xX]\][ \t]?"#, options: .regularExpression) else { return line }
+        guard let box = line.range(of: leadingTaskBoxPattern, options: .regularExpression) else { return line }
         return String(line[box.upperBound...])
     }
 
@@ -533,25 +1059,26 @@ enum MarkdownFormatting {
     /// already-plain line is an identity edit, skipped by the callers' identity guard.
     static func clearBlockEdit(text: String, selection: NSRange) -> FormattingEdit {
         let ns = text as NSString
-        let lineRange = ns.lineRange(for: selection)
-        let (lineText, suffix) = splitLineTerminator(lineRange, in: ns)
-        var content = lineText
-        var strippedAny = true
-        while strippedAny {
-            strippedAny = false
-            for pattern in blockMarkerPatterns {
-                if let marker = content.range(of: pattern, options: .regularExpression) {
-                    content = String(content[marker.upperBound...])
-                    strippedAny = true
-                    break   // re-scan from the first pattern (markers can nest in any order)
+        let lines = linesTouched(by: selection, in: ns)
+        return blockLineEdit(lines: lines) { line in
+            var content = line
+            var strippedAny = true
+            while strippedAny {
+                strippedAny = false
+                for pattern in blockMarkerPatterns {
+                    if let marker = content.range(of: pattern, options: .regularExpression) {
+                        content = String(content[marker.upperBound...])
+                        strippedAny = true
+                        break   // re-scan from the first pattern (markers can nest in any order)
+                    }
                 }
             }
+            content = strippingLeadingTaskBox(content)
+            return (
+                text: content,
+                contentRange: NSRange(location: 0, length: (content as NSString).length)
+            )
         }
-        content = strippingLeadingTaskBox(content)
-        return FormattingEdit(
-            range: lineRange, text: content + suffix,
-            selection: NSRange(location: lineRange.location, length: (content as NSString).length)
-        )
     }
 
     // MARK: - Blockquote
@@ -566,30 +1093,38 @@ enum MarkdownFormatting {
         line.range(of: blockquoteMarkerPattern, options: .regularExpression) != nil
     }
 
-    /// Toggle a `> ` prefix on the caret's line (single-line, matching the list/heading
-    /// convention). Toggling off removes ONE level of quoting (`>> x` → `> x`, `> x` → `x`,
-    /// `   > x` → `x`).
+    /// Toggle a `> ` prefix on every touched line. A mixed selection gains quoting on its plain
+    /// lines; when every line is quoted, the command removes ONE level from each (`>> x` → `> x`,
+    /// `> x` → `x`, `   > x` → `x`).
     private static func blockquoteEdit(text: String, selection: NSRange) -> FormattingEdit {
         let ns = text as NSString
-        let lineRange = ns.lineRange(for: selection)
-        let (lineText, suffix) = splitLineTerminator(lineRange, in: ns)
+        let lines = linesTouched(by: selection, in: ns)
+        let removesQuote = lines.allSatisfy { isBlockquoteLine($0.content) }
 
-        let newLine: String         // full replacement line (sans the preserved newline)
-        let visibleStart: Int       // where the non-marker text begins, to select like list/heading
-        let visibleText: String
-        if let marker = lineText.range(of: blockquoteMarkerPattern, options: .regularExpression) {
-            visibleText = String(lineText[marker.upperBound...])   // toggle off one level
-            newLine = visibleText
-            visibleStart = lineRange.location
-        } else {
-            visibleText = lineText                                 // apply
-            newLine = "> " + lineText
-            visibleStart = lineRange.location + 2
+        return blockLineEdit(lines: lines) { line in
+            let lineNSString = line as NSString
+            let marker = lineNSString.range(of: blockquoteMarkerPattern, options: .regularExpression)
+            if marker.location != NSNotFound {
+                if removesQuote {
+                    let content = lineNSString.substring(from: NSMaxRange(marker))
+                    return (
+                        text: content,
+                        contentRange: NSRange(location: 0, length: (content as NSString).length)
+                    )
+                }
+                return (
+                    text: line,
+                    contentRange: NSRange(
+                        location: NSMaxRange(marker),
+                        length: lineNSString.length - NSMaxRange(marker)
+                    )
+                )
+            }
+            return (
+                text: "> " + line,
+                contentRange: NSRange(location: 2, length: lineNSString.length)
+            )
         }
-        return FormattingEdit(
-            range: lineRange, text: newLine + suffix,
-            selection: NSRange(location: visibleStart, length: (visibleText as NSString).length)
-        )
     }
 
     // MARK: - Code block (fenced)

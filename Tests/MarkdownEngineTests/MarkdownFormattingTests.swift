@@ -21,6 +21,15 @@ struct MarkdownFormattingTests {
         MarkdownFormatting.edit(for: command, text: text, selection: selection)
     }
 
+    private func formattedDocument(
+        _ command: MarkdownFormattingCommand,
+        _ text: String,
+        _ selection: NSRange
+    ) -> String {
+        let transformation = edit(command, text, selection)
+        return (text as NSString).replacingCharacters(in: transformation.range, with: transformation.text)
+    }
+
     // MARK: - Bold / italic wrap
 
     @Test("Bold wraps a selection in ** and selects the inner text")
@@ -53,6 +62,119 @@ struct MarkdownFormattingTests {
         // keeps the result "   ****" (whitespace once, then empty markers), not "   ****   ".
         #expect(edit(.bold, "   ", NSRange(location: 0, length: 3))
             == FormattingEdit(range: NSRange(location: 0, length: 3), text: "   ****", selection: NSRange(location: 5, length: 0)))
+    }
+
+    @Test("Bold formats each selected physical line independently")
+    func boldFormatsEverySelectedLine() {
+        let text = "one\ntwo"
+        let result = edit(.bold, text, NSRange(location: 0, length: (text as NSString).length))
+        #expect((text as NSString).replacingCharacters(in: result.range, with: result.text)
+            == "**one**\n**two**")
+        #expect(result.selection == NSRange(location: 2, length: 11))
+    }
+
+    @Test("Italic formats only the selected portions of the first and last lines")
+    func italicFormatsPartialBoundaryLines() {
+        let text = "before\none\ntwo\nafter"
+        let result = edit(.italic, text, NSRange(location: 8, length: 5))
+        #expect((text as NSString).replacingCharacters(in: result.range, with: result.text)
+            == "before\no*ne*\n*tw*o\nafter")
+        #expect(result.selection == NSRange(location: 9, length: 7))
+    }
+
+    @Test("Mixed bold selections fill unformatted runs without nesting the already-bold runs")
+    func boldFillsMixedSelection() {
+        let sameLine = "**one** two"
+        let multipleLines = "**one**\ntwo"
+        #expect(formattedDocument(.bold, sameLine, NSRange(location: 0, length: (sameLine as NSString).length))
+            == "**one** **two**")
+        #expect(formattedDocument(.bold, multipleLines,
+                                  NSRange(location: 0, length: (multipleLines as NSString).length))
+            == "**one**\n**two**")
+    }
+
+    @Test("Applying bold merges an adjacent formatted and plain fragment")
+    func boldMergesAdjacentMixedFragments() {
+        let trailingPlain = "**hel**lo"
+        let leadingPlain = "hel**lo**"
+        let betweenBoldRuns = "**one**two**three**"
+        #expect(formattedDocument(.bold, trailingPlain,
+                                  NSRange(location: 0, length: (trailingPlain as NSString).length))
+            == "**hello**")
+        #expect(formattedDocument(.bold, leadingPlain,
+                                  NSRange(location: 0, length: (leadingPlain as NSString).length))
+            == "**hello**")
+        #expect(formattedDocument(.bold, betweenBoldRuns,
+                                  NSRange(location: 0, length: (betweenBoldRuns as NSString).length))
+            == "**onetwothree**")
+    }
+
+    @Test("Bold and italic remove separate formatted runs only when the whole selection has the style")
+    func emphasisRemovesUniformSelection() {
+        let bold = "**one** **two**"
+        let italic = "*one*\n*two*"
+        #expect(formattedDocument(.bold, bold, NSRange(location: 0, length: (bold as NSString).length)) == "one two")
+        #expect(formattedDocument(.italic, italic, NSRange(location: 0, length: (italic as NSString).length)) == "one\ntwo")
+    }
+
+    @Test("Aggregate emphasis removal preserves the other style in bold-italic runs")
+    func emphasisRemovalPreservesResidualStyle() {
+        let removingBold = "***one***\n**two**"
+        let removingItalic = "***one***\n*two*"
+        #expect(formattedDocument(.bold, removingBold,
+                                  NSRange(location: 0, length: (removingBold as NSString).length))
+            == "*one*\ntwo")
+        #expect(formattedDocument(.italic, removingItalic,
+                                  NSRange(location: 0, length: (removingItalic as NSString).length))
+            == "**one**\ntwo")
+    }
+
+    @Test("Applying italic across bold and plain lines composes rather than discarding bold")
+    func italicComposesWithBoldInMixedSelection() {
+        let text = "**one**\ntwo"
+        #expect(formattedDocument(.italic, text, NSRange(location: 0, length: (text as NSString).length))
+            == "***one***\n*two*")
+    }
+
+    @Test("Inline formatting stays inside block prefixes")
+    func emphasisPreservesBlockPrefixes() {
+        let heading = "# heading"
+        let list = "- item"
+        let quote = "> quote"
+        let task = "- [ ] task"
+        let nested = "> 1. item"
+        #expect(formattedDocument(.bold, heading, NSRange(location: 0, length: (heading as NSString).length))
+            == "# **heading**")
+        #expect(formattedDocument(.bold, list, NSRange(location: 0, length: (list as NSString).length))
+            == "- **item**")
+        #expect(formattedDocument(.bold, quote, NSRange(location: 0, length: (quote as NSString).length))
+            == "> **quote**")
+        #expect(formattedDocument(.bold, task, NSRange(location: 0, length: (task as NSString).length))
+            == "- [ ] **task**")
+        #expect(formattedDocument(.bold, nested, NSRange(location: 0, length: (nested as NSString).length))
+            == "> 1. **item**")
+    }
+
+    @Test("Inline formatting composes inside link text without changing its destination")
+    func emphasisPreservesLinkSyntax() {
+        let text = "[one](https://example.com)\ntwo"
+        #expect(formattedDocument(.italic, text, NSRange(location: 0, length: (text as NSString).length))
+            == "[*one*](https://example.com)\n*two*")
+    }
+
+    @Test("Empty lines do not prevent multiline emphasis from toggling as one selection")
+    func emphasisIgnoresEmptySelectedLines() {
+        let plain = "one\n\ntwo"
+        let bold = "**one**\n\n**two**"
+        #expect(formattedDocument(.bold, plain, NSRange(location: 0, length: (plain as NSString).length)) == bold)
+        #expect(formattedDocument(.bold, bold, NSRange(location: 0, length: (bold as NSString).length)) == plain)
+    }
+
+    @Test("Multiline emphasis preserves CRLF line terminators")
+    func emphasisPreservesCRLF() {
+        let text = "one\r\ntwo"
+        #expect(formattedDocument(.italic, text, NSRange(location: 0, length: (text as NSString).length))
+            == "*one*\r\n*two*")
     }
 
     // MARK: - Bold / italic toggle off
@@ -93,6 +215,22 @@ struct MarkdownFormattingTests {
     func strikethroughTogglesOff() {
         #expect(edit(.strikethrough, "~~foo~~", NSRange(location: 2, length: 3))
             == FormattingEdit(range: NSRange(location: 0, length: 7), text: "foo", selection: NSRange(location: 0, length: 3)))
+    }
+
+    @Test("Strikethrough formats each selected line and follows aggregate toggle behavior")
+    func strikethroughUsesAggregateMultilineToggle() {
+        let plain = "one\ntwo"
+        let mixed = "~~one~~\ntwo"
+        let uniform = "~~one~~\n~~two~~"
+        #expect(formattedDocument(.strikethrough, plain,
+                                  NSRange(location: 0, length: (plain as NSString).length))
+            == uniform)
+        #expect(formattedDocument(.strikethrough, mixed,
+                                  NSRange(location: 0, length: (mixed as NSString).length))
+            == uniform)
+        #expect(formattedDocument(.strikethrough, uniform,
+                                  NSRange(location: 0, length: (uniform as NSString).length))
+            == plain)
     }
 
     @Test("Inline code on a selection containing a backtick uses a longer fence")
@@ -271,6 +409,42 @@ struct MarkdownFormattingTests {
         #expect(result.text == "foo\n")
     }
 
+    @Test("Heading applies to every line touched by a partial multiline selection")
+    func headingAppliesToEverySelectedLine() {
+        let result = edit(
+            .heading(2),
+            "before\nfirst\nsecond\nafter",
+            NSRange(location: 8, length: 9)
+        )
+        #expect(result == FormattingEdit(
+            range: NSRange(location: 7, length: 13),
+            text: "## first\n## second\n",
+            selection: NSRange(location: 10, length: 15)
+        ))
+    }
+
+    @Test("Heading normalizes a mixed multiline selection and only toggles off a uniform selection")
+    func headingUsesAggregateToggleState() {
+        let mixed = "## first\nsecond\n# third"
+        let applied = edit(.heading(2), mixed, NSRange(location: 0, length: (mixed as NSString).length))
+        #expect(applied.text == "## first\n## second\n## third")
+
+        let uniform = applied.text
+        let removed = edit(.heading(2), uniform, NSRange(location: 0, length: (uniform as NSString).length))
+        #expect(removed.text == "first\nsecond\nthird")
+    }
+
+    @Test("An empty selected paragraph participates in the aggregate heading toggle")
+    func headingFormatsAndClearsEmptySelectedParagraph() {
+        let plain = "first\n\nthird"
+        let applied = edit(.heading(2), plain, NSRange(location: 0, length: (plain as NSString).length))
+        #expect(applied.text == "## first\n## \n## third")
+
+        let uniform = applied.text
+        let removed = edit(.heading(2), uniform, NSRange(location: 0, length: (uniform as NSString).length))
+        #expect(removed.text == plain)
+    }
+
     // MARK: - Lists
 
     @Test("Bullet list adds the marker")
@@ -307,6 +481,28 @@ struct MarkdownFormattingTests {
     func numberedConvertsToBullet() {
         #expect(edit(.bulletList, "2) foo", NSRange(location: 3, length: 0))
             == FormattingEdit(range: NSRange(location: 0, length: 6), text: "- foo", selection: NSRange(location: 2, length: 3)))
+    }
+
+    @Test("List formatting normalizes a mixed multiline selection and only toggles off a uniform selection")
+    func listUsesAggregateToggleState() {
+        let mixed = "- first\nsecond\n2) third"
+        let applied = edit(.bulletList, mixed, NSRange(location: 0, length: (mixed as NSString).length))
+        #expect(applied.text == "- first\n- second\n- third")
+
+        let uniform = applied.text
+        let removed = edit(.bulletList, uniform, NSRange(location: 0, length: (uniform as NSString).length))
+        #expect(removed.text == "first\nsecond\nthird")
+    }
+
+    @Test("Numbered list formatting uses the same aggregate toggle behavior")
+    func numberedListUsesAggregateToggleState() {
+        let mixed = "1. first\nsecond\n- third"
+        let applied = edit(.numberedList, mixed, NSRange(location: 0, length: (mixed as NSString).length))
+        #expect(applied.text == "1. first\n1. second\n1. third")
+
+        let uniform = applied.text
+        let removed = edit(.numberedList, uniform, NSRange(location: 0, length: (uniform as NSString).length))
+        #expect(removed.text == "first\nsecond\nthird")
     }
 
     // MARK: - Clear block (⌥⌘0 paragraph)
@@ -368,6 +564,13 @@ struct MarkdownFormattingTests {
         #expect(clearBlock("> - [x] done", NSRange(location: 0, length: 0)).text == "done")
     }
 
+    @Test("Clear block turns every selected block into a paragraph")
+    func clearBlockAppliesToEverySelectedLine() {
+        let text = "## heading\n> quote\n- [ ] task"
+        let result = clearBlock(text, NSRange(location: 0, length: (text as NSString).length))
+        #expect(result.text == "heading\nquote\ntask")
+    }
+
     // MARK: - CRLF / line-terminator preservation
 
     @Test("Heading toggle-off preserves a CRLF terminator (doesn't merge the next line)")
@@ -421,11 +624,29 @@ struct MarkdownFormattingTests {
         #expect(result.text == "> a\n")
     }
 
+    @Test("Blockquote normalizes a mixed multiline selection and only toggles off a uniform selection")
+    func blockquoteUsesAggregateToggleState() {
+        let mixed = "> first\nsecond\n>> third"
+        let applied = edit(.blockquote, mixed, NSRange(location: 0, length: (mixed as NSString).length))
+        #expect(applied.text == "> first\n> second\n>> third")
+
+        let uniform = applied.text
+        let removed = edit(.blockquote, uniform, NSRange(location: 0, length: (uniform as NSString).length))
+        #expect(removed.text == "first\nsecond\n> third")
+    }
+
     @Test("Line-prefix commands preserve the original terminator (CRLF), not normalize to LF")
     func linePrefixPreservesCRLF() {
         #expect(edit(.blockquote, "a\r\nb", NSRange(location: 0, length: 0)).text == "> a\r\n")
         #expect(edit(.toggleCheckbox, "a\r\nb", NSRange(location: 0, length: 0)).text == "- [ ] a\r\n")
         #expect(edit(.indent, "- a\r\nb", NSRange(location: 0, length: 0)).text == "\t- a\r\n")
+    }
+
+    @Test("Multiline block formatting preserves each original line terminator")
+    func multilineBlockFormattingPreservesTerminators() {
+        let text = "first\r\nsecond\rthird\nfourth"
+        let result = edit(.bulletList, text, NSRange(location: 0, length: (text as NSString).length))
+        #expect(result.text == "- first\r\n- second\r- third\n- fourth")
     }
 
     // MARK: - Code block (fenced)
@@ -616,12 +837,46 @@ struct MarkdownFormattingTests {
         #expect(!MarkdownFormatting.isActive(.clearFormatting, text: "**foo**", selection: NSRange(location: 2, length: 3)))
     }
 
+    @Test("Inline formatting is active only when every visible selected character has the style")
+    func multilineInlineActiveStateIsAggregate() {
+        let bold = "**one** **two**"
+        let mixedBold = "**one** two"
+        let italic = "*one*\n*two*"
+        let mixedItalic = "*one*\ntwo"
+        let strike = "~~one~~\n~~two~~"
+        let mixedStrike = "~~one~~\ntwo"
+        let selection: (String) -> NSRange = { NSRange(location: 0, length: ($0 as NSString).length) }
+
+        #expect(MarkdownFormatting.isActive(.bold, text: bold, selection: selection(bold)))
+        #expect(!MarkdownFormatting.isActive(.bold, text: mixedBold, selection: selection(mixedBold)))
+        #expect(MarkdownFormatting.isActive(.italic, text: italic, selection: selection(italic)))
+        #expect(!MarkdownFormatting.isActive(.italic, text: mixedItalic, selection: selection(mixedItalic)))
+        #expect(MarkdownFormatting.isActive(.strikethrough, text: strike, selection: selection(strike)))
+        #expect(!MarkdownFormatting.isActive(.strikethrough, text: mixedStrike, selection: selection(mixedStrike)))
+    }
+
     @Test("isActive reflects blockquote and code block")
     func isActiveBlockquoteAndCodeBlock() {
         #expect(MarkdownFormatting.isActive(.blockquote, text: "> q", selection: NSRange(location: 2, length: 0)))
         #expect(!MarkdownFormatting.isActive(.blockquote, text: "q", selection: NSRange(location: 0, length: 0)))
         #expect(MarkdownFormatting.isActive(.codeBlock, text: "```\nc\n```", selection: NSRange(location: 5, length: 0)))
         #expect(!MarkdownFormatting.isActive(.codeBlock, text: "c", selection: NSRange(location: 0, length: 0)))
+    }
+
+    @Test("Block formatting is active only when every selected line has that style")
+    func multilineBlockActiveStateIsAggregate() {
+        let headings = "## first\n## second"
+        let mixedHeadings = "## first\nsecond"
+        let quotes = "> first\n> second"
+        let mixedQuotes = "> first\nsecond"
+        let bullets = "- first\n* second"
+        let selection: (String) -> NSRange = { NSRange(location: 0, length: ($0 as NSString).length) }
+
+        #expect(MarkdownFormatting.isActive(.heading(2), text: headings, selection: selection(headings)))
+        #expect(!MarkdownFormatting.isActive(.heading(2), text: mixedHeadings, selection: selection(mixedHeadings)))
+        #expect(MarkdownFormatting.isActive(.blockquote, text: quotes, selection: selection(quotes)))
+        #expect(!MarkdownFormatting.isActive(.blockquote, text: mixedQuotes, selection: selection(mixedQuotes)))
+        #expect(MarkdownFormatting.isActive(.bulletList, text: bullets, selection: selection(bullets)))
     }
 
     @Test("Indented list lines are still recognized as lists (post-indent state)")
@@ -682,6 +937,19 @@ struct MarkdownFormattingTests {
         #expect(!plain.isStrikethrough && !plain.isInlineCode)
     }
 
+    @Test("Selection state aggregates multiline inline formatting")
+    func selectionStateUsesAggregateInlineState() {
+        let bold = "**one**\n**two**"
+        let mixedBold = "**one**\ntwo"
+        let italic = "*one*\n*two*"
+        let strike = "~~one~~\n~~two~~"
+
+        #expect(state(bold, NSRange(location: 0, length: (bold as NSString).length)).isBold)
+        #expect(!state(mixedBold, NSRange(location: 0, length: (mixedBold as NSString).length)).isBold)
+        #expect(state(italic, NSRange(location: 0, length: (italic as NSString).length)).isItalic)
+        #expect(state(strike, NSRange(location: 0, length: (strike as NSString).length)).isStrikethrough)
+    }
+
     @Test("Selection state reports the caret line's heading level")
     func selectionStateHeading() {
         #expect(state("# Title", NSRange(location: 3, length: 0)).headingLevel == 1)
@@ -705,6 +973,23 @@ struct MarkdownFormattingTests {
         #expect(!state("code", NSRange(location: 2, length: 0)).isCodeBlock)
     }
 
+    @Test("Selection state reports block formatting only when it covers every selected line")
+    func selectionStateUsesAggregateBlockState() {
+        let headings = "## first\n## second"
+        let mixedHeadings = "## first\nsecond"
+        let quotes = "> first\n> second"
+        let mixedQuotes = "> first\nsecond"
+        let bullets = "- first\n* second"
+        let mixedBullets = "- first\nsecond"
+
+        #expect(state(headings, NSRange(location: 0, length: (headings as NSString).length)).headingLevel == 2)
+        #expect(state(mixedHeadings, NSRange(location: 0, length: (mixedHeadings as NSString).length)).headingLevel == nil)
+        #expect(state(quotes, NSRange(location: 0, length: (quotes as NSString).length)).isBlockquote)
+        #expect(!state(mixedQuotes, NSRange(location: 0, length: (mixedQuotes as NSString).length)).isBlockquote)
+        #expect(state(bullets, NSRange(location: 0, length: (bullets as NSString).length)).isBulletList)
+        #expect(!state(mixedBullets, NSRange(location: 0, length: (mixedBullets as NSString).length)).isBulletList)
+    }
+
     @Test("Selection state flags a checked task line")
     func selectionStateChecked() {
         #expect(state("- [x] done", NSRange(location: 7, length: 0)).isChecked)
@@ -712,4 +997,3 @@ struct MarkdownFormattingTests {
         #expect(!state("- plain", NSRange(location: 3, length: 0)).isChecked)
     }
 }
-
