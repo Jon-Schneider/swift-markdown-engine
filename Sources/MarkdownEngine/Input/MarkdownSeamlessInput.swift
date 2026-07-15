@@ -34,7 +34,7 @@ enum SeamlessEditDecision: Equatable {
 
 /// The two representations written for a seamless selection. `plainText` is
 /// suitable for every paste destination; `markdownText` lets another
-/// MarkdownEngine editor preserve formatting and link destinations.
+/// MarkdownEngine editor preserve complete link destinations.
 struct MarkdownClipboardContent: Equatable {
     let plainText: String
     let markdownText: String
@@ -941,9 +941,9 @@ enum MarkdownSeamlessInput {
 
     /// Clipboard representations for `selection`. The standard representation
     /// remains exactly what is visible on screen. The private representation
-    /// retains Markdown source so a paste into another MarkdownEngine editor can
-    /// reconstruct links and formatting rather than re-interpreting the label as
-    /// newly typed plain text.
+    /// retains source for complete Markdown links so a paste into another
+    /// MarkdownEngine editor can reconstruct the destination rather than
+    /// re-interpreting the label as newly typed plain text.
     ///
     /// A seamless selection can contain a link's whole visible label without
     /// containing its zero-width `[` / `](destination)` markers. In that case the
@@ -961,10 +961,14 @@ enum MarkdownSeamlessInput {
             )
         }
 
-        let markdownRange = markdownSelectionIncludingCompleteLinks(clamped, in: text)
         return MarkdownClipboardContent(
             plainText: plainText,
-            markdownText: ns.substring(with: markdownRange)
+            markdownText: markdownTextPreservingCompleteLinks(
+                in: clamped,
+                text: text,
+                configuration: configuration,
+                fallback: plainText
+            )
         )
     }
 
@@ -1010,27 +1014,30 @@ enum MarkdownSeamlessInput {
         )
     }
 
-    /// Expand around links whose complete visible labels are selected. Link
-    /// syntax is zero-width in seamless mode, so native selection can stop at
-    /// the label boundary even though the user selected the whole rendered pill.
-    private static func markdownSelectionIncludingCompleteLinks(
-        _ selection: NSRange, in text: String
-    ) -> NSRange {
-        var start = selection.location
-        var end = NSMaxRange(selection)
+    /// Preserve source only for links whose complete visible labels are selected.
+    /// A partial selection can still include a link's zero-width `](destination)`
+    /// tail in its native range; returning that raw substring would put malformed
+    /// Markdown such as `title](url)` on the private pasteboard flavor.
+    private static func markdownTextPreservingCompleteLinks(
+        in selection: NSRange,
+        text: String,
+        configuration: MarkdownEditorConfiguration,
+        fallback: String
+    ) -> String {
+        var completeLinkRanges: [NSRange] = []
 
-        func includeCompleteLinks(_ nodes: [InlineNode]) {
+        func collectCompleteLinks(_ nodes: [InlineNode]) {
             for node in nodes {
                 switch node {
                 case .link(let range, let textRange, _, _, let children):
-                    if selection.location <= textRange.location,
+                    if textRange.length > 0,
+                       selection.location <= textRange.location,
                        NSMaxRange(selection) >= NSMaxRange(textRange) {
-                        start = min(start, range.location)
-                        end = max(end, NSMaxRange(range))
+                        completeLinkRanges.append(range)
                     }
-                    includeCompleteLinks(children)
+                    collectCompleteLinks(children)
                 case .emphasis(_, _, _, let children), .strikethrough(_, _, let children):
-                    includeCompleteLinks(children)
+                    collectCompleteLinks(children)
                 default:
                     break
                 }
@@ -1038,9 +1045,38 @@ enum MarkdownSeamlessInput {
         }
 
         for block in DocumentAST.parse(text) {
-            includeCompleteLinks(blockInlines(block))
+            collectCompleteLinks(blockInlines(block))
         }
-        return NSRange(location: start, length: end - start)
+        guard !completeLinkRanges.isEmpty else { return fallback }
+
+        let start = completeLinkRanges.reduce(selection.location) { min($0, $1.location) }
+        let end = completeLinkRanges.reduce(NSMaxRange(selection)) { max($0, NSMaxRange($1)) }
+        let expandedSelection = NSRange(location: start, length: end - start)
+        let removableMarkers = hiddenMarkerRanges(in: text, configuration: configuration).filter { marker in
+            !completeLinkRanges.contains { NSIntersectionRange($0, marker).length > 0 }
+        }
+        return textExcludingRanges(
+            in: expandedSelection,
+            excluding: removableMarkers,
+            source: text as NSString
+        )
+    }
+
+    private static func textExcludingRanges(
+        in range: NSRange, excluding excludedRanges: [NSRange], source: NSString
+    ) -> String {
+        let end = NSMaxRange(range)
+        var kept: [NSRange] = []
+        var cursor = range.location
+        for excluded in excludedRanges where NSMaxRange(excluded) > range.location && excluded.location < end {
+            let cutStart = max(excluded.location, range.location)
+            if cutStart > cursor {
+                kept.append(NSRange(location: cursor, length: cutStart - cursor))
+            }
+            cursor = max(cursor, min(NSMaxRange(excluded), end))
+        }
+        if cursor < end { kept.append(NSRange(location: cursor, length: end - cursor)) }
+        return kept.map { source.substring(with: $0) }.joined()
     }
 
     private static func blockInlines(_ block: BlockNode) -> [InlineNode] {

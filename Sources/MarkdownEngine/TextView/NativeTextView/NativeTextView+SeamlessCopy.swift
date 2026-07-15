@@ -5,7 +5,7 @@
 //  Copy/Cut in seamless mode place the *visible* text on the standard pasteboard
 //  flavor — the hidden Markdown markers are stripped — matching what the user
 //  sees on screen. A private Markdown flavor is written alongside it so another
-//  MarkdownEngine editor can preserve link destinations and formatting. Outside
+//  MarkdownEngine editor can preserve complete link destinations. Outside
 //  seamless mode the system copy/cut is used unchanged, so the macOS editor's
 //  historical behavior (which copies the raw Markdown source) is preserved.
 //

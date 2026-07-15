@@ -586,6 +586,23 @@ struct SeamlessCopyTests {
         #expect(content.markdownText == "SHP-395")
     }
 
+    @Test("A partial label selection that reaches past the hidden URL copies only visible text")
+    func clipboardStripsTrailingSourceFromPartialLink() {
+        let source = "[JON-123 · Accident](shipyard://issue/jira-issue:JON-123)"
+        let nsSource = source as NSString
+        let visiblePart = nsSource.range(of: "· Accident")
+        // Native seamless selection can end after the zero-width link tail even
+        // though the user dragged only through the visible end of the title.
+        let nativeSelection = NSRange(
+            location: visiblePart.location,
+            length: nsSource.length - visiblePart.location
+        )
+        let content = clipboard(source, nativeSelection)
+
+        #expect(content.plainText == "· Accident")
+        #expect(content.markdownText == "· Accident")
+    }
+
     @Test("Ordered list number is preserved (it's visible)")
     func orderedPreserved() {
         #expect(visible("1. item", whole("1. item")) == "1. item")
@@ -627,8 +644,8 @@ struct SeamlessCopyTests {
     //
     // Seamless copy yields *visible* text — markers are dropped, so the result is
     // deliberately NOT round-trippable Markdown. These cases pin the lossy mapping
-    // explicitly (not a round-trip). Seamless copy now writes a private Markdown
-    // representation alongside this visible text for same-engine round trips.
+    // explicitly (not a round-trip). Seamless copy writes a private Markdown
+    // representation alongside this visible text for complete-link round trips.
 
     @Test("Link copy drops the URL — only the visible text survives")
     func linkDropsURL() {
