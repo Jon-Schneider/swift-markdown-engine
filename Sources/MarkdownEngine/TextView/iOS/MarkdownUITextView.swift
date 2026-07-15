@@ -905,6 +905,25 @@ public final class MarkdownUITextView: UITextView {
             // which would double-insert when the source carries both bytes and a URL string.
             return
         }
+        // Prefer the private Markdown flavor produced by seamless copy. The
+        // standard UTF-8 flavor is still what non-MarkdownEngine apps receive.
+        if let data = UIPasteboard.general.data(
+            forPasteboardType: MarkdownClipboard.typeIdentifier
+        ), let markdown = String(data: data, encoding: .utf8), !markdown.isEmpty {
+            let transformed = MarkdownLists.blockquoteContinuedPaste(
+                markdown, at: selectedRange.location, in: text
+            )
+            let insertLocation = selectedRange.location
+            applyUndoableEdit(
+                replacing: selectedRange,
+                with: transformed,
+                finalSelection: NSRange(
+                    location: insertLocation + (transformed as NSString).length,
+                    length: 0
+                )
+            )
+            return
+        }
         // Multi-line text paste inside a blockquote → keep the quote markers.
         guard let pasted = UIPasteboard.general.string, pasted.contains("\n") else {
             super.paste(sender)
@@ -922,21 +941,22 @@ public final class MarkdownUITextView: UITextView {
         )
     }
 
-    // Seamless copy/cut place the *visible* text on the pasteboard (hidden markers
-    // stripped); outside seamless the system default copies the raw source.
+    // Seamless copy/cut place the *visible* text on the standard pasteboard flavor
+    // (hidden markers stripped) and a Markdown representation on a private flavor;
+    // outside seamless the system default copies the raw source.
     //
     // KNOWN RAW-SOURCE LEAK PATHS (intentionally NOT intercepted): only `copy`/`cut`
     // are overridden, so other UIKit text-export paths still emit the raw buffer —
     // drag-and-drop (`UITextDraggable` / `itemsForBeginning`), the Share sheet, and
     // any host-driven `text`/`attributedText` read. Accepted scope boundary for the
     // "copy visible text" item (drag/Share aren't "copy"); route them through
-    // `MarkdownSeamlessInput.visibleText` if a future requirement needs them covered.
+    // `MarkdownSeamlessInput.clipboardContent` if a future requirement needs them covered.
     public override func copy(_ sender: Any?) {
         guard configuration.markers.visibility == .seamless, selectedRange.length > 0 else {
             super.copy(sender)
             return
         }
-        UIPasteboard.general.string = MarkdownSeamlessInput.visibleText(
+        writeSelectionToPasteboard(
             of: selectedRange, in: text, configuration: configuration
         )
     }
@@ -947,11 +967,23 @@ public final class MarkdownUITextView: UITextView {
             super.cut(sender)
             return
         }
-        UIPasteboard.general.string = MarkdownSeamlessInput.visibleText(
+        writeSelectionToPasteboard(
             of: range, in: text, configuration: configuration
         )
         applyUndoableEdit(replacing: range, with: "",
                           finalSelection: NSRange(location: range.location, length: 0))
+    }
+
+    private func writeSelectionToPasteboard(
+        of range: NSRange, in text: String, configuration: MarkdownEditorConfiguration
+    ) {
+        let content = MarkdownSeamlessInput.clipboardContent(
+            of: range, in: text, configuration: configuration
+        )
+        UIPasteboard.general.setItems([[
+            "public.utf8-plain-text": content.plainText,
+            MarkdownClipboard.typeIdentifier: Data(content.markdownText.utf8)
+        ]])
     }
 
     /// Hand `imageData` to the host's `onPasteImage` and act on its disposition. Returns

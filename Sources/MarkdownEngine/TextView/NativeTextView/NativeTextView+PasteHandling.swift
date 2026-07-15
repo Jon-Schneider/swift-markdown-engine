@@ -26,6 +26,15 @@ extension NativeTextView {
         // stop here; only `.declined` continues to the normal text paste below.
         if handleImagePaste(from: pasteboard) { return }
 
+        // Prefer the private Markdown flavor produced by seamless copy. The
+        // accompanying plain-text flavor remains available to every other app,
+        // while MarkdownEngine-to-MarkdownEngine paste retains link semantics.
+        let markdownType = NSPasteboard.PasteboardType(MarkdownClipboard.typeIdentifier)
+        if let markdown = pasteboard.string(forType: markdownType), !markdown.isEmpty {
+            insertPreservingBlockquote(markdown)
+            return
+        }
+
         // Recover HTML tables only when plain text lacks table delimiters —
         // otherwise the source already provided a usable text representation.
         let plain = pasteboard.string(forType: .string)

@@ -2,11 +2,12 @@
 //  NativeTextView+SeamlessCopy.swift
 //  MarkdownEngine
 //
-//  Copy/Cut in seamless mode place the *visible* text on the pasteboard — the
-//  hidden Markdown markers are stripped — matching what the user sees on screen
-//  (the locked "copy visible text" semantic). Outside seamless mode the system
-//  copy/cut is used unchanged, so the macOS editor's historical behavior (which
-//  copies the raw Markdown source) is preserved.
+//  Copy/Cut in seamless mode place the *visible* text on the standard pasteboard
+//  flavor — the hidden Markdown markers are stripped — matching what the user
+//  sees on screen. A private Markdown flavor is written alongside it so another
+//  MarkdownEngine editor can preserve link destinations and formatting. Outside
+//  seamless mode the system copy/cut is used unchanged, so the macOS editor's
+//  historical behavior (which copies the raw Markdown source) is preserved.
 //
 //  KNOWN RAW-SOURCE LEAK PATHS (intentionally NOT intercepted). Only `copy(_:)`
 //  and `cut(_:)` are overridden, so the visible-text contract applies to ⌘C/⌘X
@@ -18,7 +19,7 @@
 //  This is an accepted scope boundary for the "copy visible text" item, not an
 //  oversight: drag/Services are not "copy". If a future requirement needs them
 //  covered, override the drag-source / services write path to route through
-//  `MarkdownSeamlessInput.visibleText` the same way `copy`/`cut` do.
+//  `MarkdownSeamlessInput.clipboardContent` the same way `copy`/`cut` do.
 //
 #if os(macOS)
 import AppKit
@@ -31,7 +32,7 @@ extension NativeTextView {
             super.copy(sender)
             return
         }
-        writeVisibleSelectionToPasteboard()
+        writeSelectionToPasteboard()
     }
 
     override func cut(_ sender: Any?) {
@@ -40,7 +41,7 @@ extension NativeTextView {
             super.cut(sender)
             return
         }
-        writeVisibleSelectionToPasteboard()
+        writeSelectionToPasteboard()
         // Delete the selection through the normal text path so undo + restyle fire.
         guard shouldChangeText(in: range, replacementString: "") else { return }
         textStorage?.replaceCharacters(in: range, with: "")
@@ -48,13 +49,19 @@ extension NativeTextView {
         setSelectedRange(NSRange(location: range.location, length: 0))
     }
 
-    private func writeVisibleSelectionToPasteboard() {
-        let visible = MarkdownSeamlessInput.visibleText(
+    private func writeSelectionToPasteboard() {
+        let content = MarkdownSeamlessInput.clipboardContent(
             of: selectedRange(), in: string, configuration: configuration
         )
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(visible, forType: .string)
+        let item = NSPasteboardItem()
+        item.setString(content.plainText, forType: .string)
+        item.setString(
+            content.markdownText,
+            forType: NSPasteboard.PasteboardType(MarkdownClipboard.typeIdentifier)
+        )
+        pasteboard.writeObjects([item])
     }
 }
 #endif

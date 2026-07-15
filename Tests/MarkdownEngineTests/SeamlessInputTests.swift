@@ -523,6 +523,14 @@ struct SeamlessCopyTests {
 
     private func whole(_ text: String) -> NSRange { NSRange(location: 0, length: (text as NSString).length) }
 
+    private func clipboard(
+        _ text: String, _ range: NSRange, config: MarkdownEditorConfiguration? = nil
+    ) -> MarkdownClipboardContent {
+        MarkdownSeamlessInput.clipboardContent(
+            of: range, in: text, configuration: config ?? seamless
+        )
+    }
+
     @Test("Reveal-on-edit copies the raw substring unchanged")
     func revealOnEditRaw() {
         #expect(visible("**b**", whole("**b**"), config: revealOnEdit) == "**b**")
@@ -546,6 +554,36 @@ struct SeamlessCopyTests {
     @Test("Link copies just its visible text")
     func linkVisible() {
         #expect(visible("see [docs](http://x) ok", whole("see [docs](http://x) ok")) == "see docs ok")
+    }
+
+    @Test("Clipboard keeps visible link text and private Markdown source")
+    func clipboardKeepsTwoLinkRepresentations() {
+        let source = "[SHP-395 · Render issue links](shipyard://issue/395)"
+        let content = clipboard(source, whole(source))
+
+        #expect(content.plainText == "SHP-395 · Render issue links")
+        #expect(content.markdownText == source)
+    }
+
+    @Test("Selecting a seamless link label includes its hidden destination in Markdown")
+    func clipboardExpandsCompleteLinkLabel() {
+        let source = "before [SHP-395 · Render issue links](shipyard://issue/395) after"
+        let label = "SHP-395 · Render issue links"
+        let labelRange = (source as NSString).range(of: label)
+        let content = clipboard(source, labelRange)
+
+        #expect(content.plainText == label)
+        #expect(content.markdownText == "[\(label)](shipyard://issue/395)")
+    }
+
+    @Test("Selecting only part of a link label does not copy the destination")
+    func clipboardDoesNotExpandPartialLinkLabel() {
+        let source = "[SHP-395 · Render issue links](shipyard://issue/395)"
+        let partialRange = (source as NSString).range(of: "SHP-395")
+        let content = clipboard(source, partialRange)
+
+        #expect(content.plainText == "SHP-395")
+        #expect(content.markdownText == "SHP-395")
     }
 
     @Test("Ordered list number is preserved (it's visible)")
@@ -585,12 +623,12 @@ struct SeamlessCopyTests {
         #expect(visible(text, whole(text)) == "# heading\n- item\n")
     }
 
-    // MARK: - 1.5: the copy contract is intentionally LOSSY
+    // MARK: - 1.5: the standard plain-text representation is intentionally LOSSY
     //
     // Seamless copy yields *visible* text — markers are dropped, so the result is
     // deliberately NOT round-trippable Markdown. These cases pin the lossy mapping
-    // explicitly (not a round-trip). Anyone needing fidelity copies from
-    // `.revealAll`, which yields the full source (see `revealAllCopiesFullSource`).
+    // explicitly (not a round-trip). Seamless copy now writes a private Markdown
+    // representation alongside this visible text for same-engine round trips.
 
     @Test("Link copy drops the URL — only the visible text survives")
     func linkDropsURL() {
