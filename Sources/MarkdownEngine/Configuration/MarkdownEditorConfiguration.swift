@@ -665,18 +665,50 @@ public struct LinkStyle: Sendable {
     /// `true` (historical). Set `false` for a color-only link, as Apple Notes
     /// shows for detected links.
     public var underlinesResolvedLinks: Bool
+    /// URL schemes whose resolved links draw a rounded background behind their visible label. Empty by
+    /// default, so existing links keep their historical appearance. Scheme matching is case-insensitive.
+    public var pillURLSchemes: Set<String>
+    /// Corner radius (points) of an opted-in link's pill background.
+    public var pillCornerRadius: CGFloat
+    /// Horizontal visual padding (points) added to each side of an opted-in link pill. This widens the
+    /// painted background without changing text layout, matching ``InlineCodeStyle/horizontalPadding``.
+    public var pillHorizontalPadding: CGFloat
+    /// Opacity of the theme link color used to fill an opted-in link pill. Values are clamped to `0...1`.
+    public var pillBackgroundAlpha: CGFloat
 
     public init(
         activeLinkAlpha: CGFloat = 0.55,
         incompleteLinkAlpha: CGFloat = 0.7,
-        underlinesResolvedLinks: Bool = true
+        underlinesResolvedLinks: Bool = true,
+        pillURLSchemes: Set<String> = [],
+        pillCornerRadius: CGFloat = 0,
+        pillHorizontalPadding: CGFloat = 0,
+        pillBackgroundAlpha: CGFloat = 0.12
     ) {
         self.activeLinkAlpha = activeLinkAlpha
         self.incompleteLinkAlpha = incompleteLinkAlpha
         self.underlinesResolvedLinks = underlinesResolvedLinks
+        self.pillURLSchemes = pillURLSchemes
+        self.pillCornerRadius = pillCornerRadius
+        self.pillHorizontalPadding = pillHorizontalPadding
+        self.pillBackgroundAlpha = pillBackgroundAlpha
     }
 
     public static let `default` = LinkStyle()
+
+    func usesPill(for url: URL) -> Bool {
+        guard let scheme = url.scheme,
+              pillURLSchemes.contains(where: { $0.caseInsensitiveCompare(scheme) == .orderedSame })
+        else { return false }
+        let hasRadius = pillCornerRadius.isFinite && pillCornerRadius > 0
+        let hasPadding = pillHorizontalPadding.isFinite && pillHorizontalPadding > 0
+        return hasRadius || hasPadding
+    }
+
+    var resolvedPillBackgroundAlpha: CGFloat {
+        guard pillBackgroundAlpha.isFinite else { return 0 }
+        return min(max(pillBackgroundAlpha, 0), 1)
+    }
 }
 
 // MARK: - Paragraphs

@@ -628,6 +628,11 @@ enum MarkdownASTStyler {
                 if ctx.config.link.underlinesResolvedLinks {
                     linkAttrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
                 }
+                if ctx.config.link.usesPill(for: url) {
+                    linkAttrs[.linkPill] = ctx.theme.link.withAlphaComponent(
+                        ctx.config.link.resolvedPillBackgroundAlpha
+                    )
+                }
                 attrs.append((textRange, linkAttrs))
             }
         }

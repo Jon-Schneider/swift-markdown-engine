@@ -38,6 +38,8 @@ extension NSAttributedString.Key {
     /// PlatformColor — inline-code background drawn as a rounded pill (instead
     /// of the flat `.backgroundColor` run). Value is the fill color.
     static let inlineCodePill = NSAttributedString.Key("InlineCodePill")
+    /// PlatformColor — background drawn behind a resolved link whose URL scheme opted into pill styling.
+    static let linkPill = NSAttributedString.Key("LinkPill")
     /// Bool — marks a `.latexImage` anchor as a genuine image embed (`![](…)`
     /// or `![[…]]`) rather than a rendered LaTeX formula or table image. Only
     /// these anchors honor `ImageEmbedStyle.cornerRadius`, so rounding an image
@@ -95,13 +97,19 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         for rect in blockImageRects(at: .zero) {
             bounds = bounds.union(rect)
         }
-        // Inline-code pills widen each run by `horizontalPadding` beyond the glyph
-        // advances the base surface covers; inflate horizontally so an edge pill
-        // isn't clipped on a partial invalidation.
-        if let padding = renderingContext?.configuration.inlineCode.horizontalPadding,
-           padding.isFinite, padding > 0, hasInlineCodePill {
-            bounds = bounds.insetBy(dx: -padding, dy: 0)
-        }
+        // Pills widen each run beyond the glyph advances the base surface covers; inflate by the largest
+        // active padding so an edge pill isn't clipped on a partial invalidation.
+        let inlinePadding = hasPill(.inlineCodePill)
+            ? renderingContext?.configuration.inlineCode.horizontalPadding ?? 0
+            : 0
+        let linkPadding = hasPill(.linkPill)
+            ? renderingContext?.configuration.link.pillHorizontalPadding ?? 0
+            : 0
+        let padding = max(
+            inlinePadding.isFinite ? inlinePadding : 0,
+            linkPadding.isFinite ? linkPadding : 0
+        )
+        if padding > 0 { bounds = bounds.insetBy(dx: -padding, dy: 0) }
         return bounds
     }
 
@@ -116,6 +124,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
         // 2b. Inline-code pills (rounded background behind inline code text)
         drawInlineCodePills(at: point, in: context)
+
+        // 2c. Scheme-selective link pills (rounded background behind resolved link labels)
+        drawLinkPills(at: point, in: context)
 
         // 3. Normal text
         super.draw(at: point, in: context)
@@ -223,10 +234,10 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         return found
     }
 
-    private var hasInlineCodePill: Bool {
+    private func hasPill(_ attribute: NSAttributedString.Key) -> Bool {
         guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return false }
         var found = false
-        ts.enumerateAttribute(.inlineCodePill, in: range, options: []) { value, _, stop in
+        ts.enumerateAttribute(attribute, in: range, options: []) { value, _, stop in
             if value is PlatformColor {
                 found = true
                 stop.pointee = true
@@ -453,14 +464,43 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     /// consumer opted into a pill (radius/padding > 0); otherwise inline code
     /// keeps the flat `.backgroundColor` run and this is a no-op.
     private func drawInlineCodePills(at point: CGPoint, in context: CGContext) {
+        let style = renderingContext?.configuration.inlineCode ?? .default
+        drawPills(
+            attribute: .inlineCodePill,
+            radius: style.cornerRadius,
+            padding: style.horizontalPadding,
+            at: point,
+            in: context
+        )
+    }
+
+    /// Paints the rounded background for scheme-selective resolved links. Link labels retain their normal
+    /// `.link` attribute, so the pill remains fully clickable and accessible; this is presentation only.
+    private func drawLinkPills(at point: CGPoint, in context: CGContext) {
+        let style = renderingContext?.configuration.link ?? .default
+        drawPills(
+            attribute: .linkPill,
+            radius: style.pillCornerRadius,
+            padding: style.pillHorizontalPadding,
+            at: point,
+            in: context
+        )
+    }
+
+    private func drawPills(
+        attribute: NSAttributedString.Key,
+        radius rawRadius: CGFloat,
+        padding rawPadding: CGFloat,
+        at point: CGPoint,
+        in context: CGContext
+    ) {
         guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return }
         guard let ltm = textLayoutManager,
               let contentStorage = ltm.textContentManager as? NSTextContentStorage else { return }
-        let style = renderingContext?.configuration.inlineCode ?? .default
-        // Sanitize: a non-finite (`.infinity`/NaN) padding would inflate the pill
-        // and the rendering surface to invalid/unbounded geometry.
-        let radius = max(0, style.cornerRadius.isFinite ? style.cornerRadius : 0)
-        let padding = max(0, style.horizontalPadding.isFinite ? style.horizontalPadding : 0)
+        // Sanitize: non-finite (`.infinity`/NaN) geometry would inflate the pill and rendering surface to
+        // invalid or unbounded rectangles.
+        let radius = max(0, rawRadius.isFinite ? rawRadius : 0)
+        let padding = max(0, rawPadding.isFinite ? rawPadding : 0)
         guard radius > 0 || padding > 0 else { return }
 
         // Segment frames share the container coordinate space with
@@ -475,7 +515,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         let selectionRects = activeSelectionSegmentRects(dx: dx, dy: dy)
 
         withFlippedDrawingContext(context) {
-            ts.enumerateAttribute(.inlineCodePill, in: range, options: []) { value, attrRange, _ in
+            ts.enumerateAttribute(attribute, in: range, options: []) { value, attrRange, _ in
                 guard let color = value as? PlatformColor,
                       let textRange = TextStylingService.textRange(from: attrRange, in: contentStorage) else { return }
                 color.setFill()
