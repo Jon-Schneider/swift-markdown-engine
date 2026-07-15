@@ -932,6 +932,99 @@ struct SeamlessCaretTests {
     }
 }
 
+private struct IssueLinkBackspacePolicy: MarkdownLinkEditingPolicy {
+    func trailingBackspaceAction(for link: MarkdownEditableLink) -> MarkdownLinkBackspaceAction {
+        guard link.destination.hasPrefix("shipyard://issue/") else { return .editLabel }
+        let key = link.label.split(separator: " · ", maxSplits: 1).first.map(String.init) ?? link.label
+        return .unwrap(replacement: key)
+    }
+}
+
+@Suite("Seamless Markdown link Backspace")
+struct SeamlessLinkBackspaceTests {
+    private let seamless = MarkdownEditorConfiguration(markers: .seamless)
+    private let issueAware: MarkdownEditorConfiguration = {
+        let services = MarkdownEditorServices(linkEditing: IssueLinkBackspacePolicy())
+        return MarkdownEditorConfiguration(services: services, markers: .seamless)
+    }()
+
+    private func backspace(
+        _ text: String,
+        at caret: Int? = nil,
+        configuration: MarkdownEditorConfiguration? = nil
+    ) -> SeamlessEditDecision {
+        MarkdownSeamlessInput.backspace(
+            currentText: text,
+            selection: NSRange(location: caret ?? (text as NSString).length, length: 0),
+            configuration: configuration ?? seamless
+        )
+    }
+
+    @Test("ordinary link deletes from its visible label and preserves its destination")
+    func ordinaryLinkEditsLabel() {
+        let text = "[Example](https://example.com)"
+        let ns = text as NSString
+        let label = ns.range(of: "Example")
+        let finalCharacter = ns.rangeOfComposedCharacterSequence(at: NSMaxRange(label) - 1)
+
+        #expect(backspace(text) == .replace(
+            range: finalCharacter,
+            text: "",
+            caret: finalCharacter.location
+        ))
+    }
+
+    @Test("deleting a link's final visible character removes the empty link")
+    func finalLabelCharacterRemovesLink() {
+        let text = "[x](https://example.com)"
+
+        #expect(backspace(text) == .replace(
+            range: NSRange(location: 0, length: (text as NSString).length),
+            text: "",
+            caret: 0
+        ))
+    }
+
+    @Test("final label character removes the link after earlier label edits")
+    func finalCharacterAtLabelEdgeRemovesLink() {
+        let text = "[x](https://example.com)"
+        let labelEnd = NSMaxRange((text as NSString).range(of: "x"))
+
+        #expect(backspace(text, at: labelEnd) == .replace(
+            range: NSRange(location: 0, length: (text as NSString).length),
+            text: "",
+            caret: 0
+        ))
+    }
+
+    @Test("ordinary link label deletion is grapheme-safe")
+    func ordinaryLinkDeletesWholeGrapheme() {
+        let text = "[Go😀](https://example.com)"
+        let ns = text as NSString
+        let emoji = ns.range(of: "😀")
+
+        #expect(backspace(text) == .replace(range: emoji, text: "", caret: emoji.location))
+    }
+
+    @Test("host policy unwraps an issue link to its canonical key without deleting text")
+    func issueLinkUnwrapsToKey() {
+        let text = "[JON-10428 · Automatic issue linking](shipyard://issue/issue-10428)"
+
+        #expect(backspace(text, configuration: issueAware) == .replace(
+            range: NSRange(location: 0, length: (text as NSString).length),
+            text: "JON-10428",
+            caret: 9
+        ))
+    }
+
+    @Test("non-seamless mode retains native Backspace behavior")
+    func revealOnEditLeavesBackspaceNative() {
+        let text = "[Example](https://example.com)"
+
+        #expect(backspace(text, configuration: .default) == .allowDefault)
+    }
+}
+
 @Suite("Seamless hidden-marker collection")
 struct SeamlessHiddenRangesTests {
 

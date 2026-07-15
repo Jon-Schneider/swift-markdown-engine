@@ -197,6 +197,42 @@ public struct NoOpLatexRenderer: LatexRenderer {
     public func render(latex: String, fontSize: CGFloat, theme: MarkdownEditorTheme, colorScheme: MarkdownColorScheme) -> LatexRenderResult? { nil }
 }
 
+// MARK: - Link Editing
+
+/// The visible and destination text of a Markdown link being edited in seamless mode.
+public struct MarkdownEditableLink: Sendable, Equatable {
+    public let label: String
+    public let destination: String
+
+    public init(label: String, destination: String) {
+        self.label = label
+        self.destination = destination
+    }
+}
+
+/// What Backspace at the trailing edge of a seamless Markdown link should do.
+public enum MarkdownLinkBackspaceAction: Sendable, Equatable {
+    /// Delete from the visible label while retaining the hidden destination. When the last visible
+    /// character is deleted, the engine removes the now-empty link as well.
+    case editLabel
+    /// Replace the whole Markdown link with plain text supplied by the host.
+    case unwrap(replacement: String)
+}
+
+/// Lets an embedder give selected link destinations domain-specific trailing-Backspace behavior without
+/// teaching MarkdownEngine about application URL schemes or storage models.
+public protocol MarkdownLinkEditingPolicy: Sendable {
+    func trailingBackspaceAction(for link: MarkdownEditableLink) -> MarkdownLinkBackspaceAction
+}
+
+/// Standard seamless behavior: Backspace edits only the visible label and preserves the destination.
+public struct DefaultMarkdownLinkEditingPolicy: MarkdownLinkEditingPolicy {
+    public init() {}
+    public func trailingBackspaceAction(for link: MarkdownEditableLink) -> MarkdownLinkBackspaceAction {
+        .editLabel
+    }
+}
+
 // MARK: - Event Bus
 
 /// Optional notification-name bridge that lets the editor communicate with
@@ -271,6 +307,7 @@ public struct MarkdownEditorServices: Sendable {
     public var images: any EmbeddedImageProvider
     public var syntaxHighlighter: any SyntaxHighlighter
     public var latex: any LatexRenderer
+    public var linkEditing: any MarkdownLinkEditingPolicy
     public var bus: MarkdownEditorBus
 
     public init(
@@ -278,12 +315,14 @@ public struct MarkdownEditorServices: Sendable {
         images: any EmbeddedImageProvider = NoOpEmbeddedImageProvider(),
         syntaxHighlighter: any SyntaxHighlighter = PlainTextSyntaxHighlighter(),
         latex: any LatexRenderer = NoOpLatexRenderer(),
+        linkEditing: any MarkdownLinkEditingPolicy = DefaultMarkdownLinkEditingPolicy(),
         bus: MarkdownEditorBus = .default
     ) {
         self.wikiLinks = wikiLinks
         self.images = images
         self.syntaxHighlighter = syntaxHighlighter
         self.latex = latex
+        self.linkEditing = linkEditing
         self.bus = bus
     }
 

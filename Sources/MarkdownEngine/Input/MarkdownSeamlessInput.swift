@@ -127,6 +127,13 @@ enum MarkdownSeamlessInput {
             return unwrap(from: lineStart, toContentStart: contentStart)
         }
 
+        // A link's `](destination)` tail is hidden in seamless mode. Backspace at the token's trailing
+        // edge must therefore operate on what the user can see: ordinary links delete from their label
+        // while retaining the destination, and an embedder may opt selected links into a semantic unwrap.
+        if let link = linkTrailingBackspace(ns: ns, caret: caret, configuration: configuration) {
+            return link
+        }
+
         // Inline: caret at the start of a span's content (`**|bold**`, `` `|code` ``,
         // `[|text](url)`, …). The hidden opening marker is zero-width, so Backspace
         // deletes the visible character *before* it (seamless) rather than stripping
@@ -283,6 +290,134 @@ enum MarkdownSeamlessInput {
     }
 
     // MARK: - Inline detection
+
+    private typealias TrailingLink = (
+        full: NSRange,
+        label: NSRange,
+        destination: NSRange,
+        children: [InlineNode]
+    )
+
+    /// Backspace at a seamless link's trailing edge. The default policy deletes the final visible label
+    /// grapheme without touching the hidden URL; a host policy can instead unwrap the whole link to a
+    /// canonical plain-text replacement. Returns `nil` away from a parsed link edge so native deletion wins.
+    private static func linkTrailingBackspace(
+        ns: NSString,
+        caret: Int,
+        configuration: MarkdownEditorConfiguration
+    ) -> SeamlessEditDecision? {
+        guard caret > 0 else { return nil }
+        let atTokenEnd = ns.character(at: caret - 1) == 0x29 // `)`
+        let atLabelEnd = caret < ns.length && ns.character(at: caret) == 0x5D // `]`
+        guard atTokenEnd || atLabelEnd else { return nil }
+        let paragraph = ns.paragraphRange(for: NSRange(location: caret, length: 0))
+        guard let link = trailingLink(in: InlineParser.parse(ns, range: paragraph), endingAt: caret),
+              !isInLatexOrTable(ns: ns, location: link.full.location)
+        else { return nil }
+
+        let editableLink = MarkdownEditableLink(
+            label: ns.substring(with: link.label),
+            destination: ns.substring(with: link.destination)
+        )
+        switch configuration.services.linkEditing.trailingBackspaceAction(for: editableLink) {
+        case .unwrap(let replacement):
+            return .replace(
+                range: link.full,
+                text: replacement,
+                caret: link.full.location + (replacement as NSString).length
+            )
+        case .editLabel:
+            let visibleLabel = visibleText(
+                of: link.label,
+                in: ns as String,
+                configuration: configuration
+            )
+            // Deleting the final visible grapheme also removes the destination; an empty invisible link
+            // has no useful editing state and would otherwise trap the caret beside hidden syntax.
+            guard visibleLabel.count > 1 else {
+                return .replace(range: link.full, text: "", caret: link.full.location)
+            }
+            guard let deletion = trailingVisibleLabelRange(
+                ns: ns,
+                labelRange: link.label,
+                children: link.children
+            ) else {
+                return .replace(range: link.full, text: "", caret: link.full.location)
+            }
+            return .replace(range: deletion, text: "", caret: deletion.location)
+        }
+    }
+
+    private static func trailingLink(in nodes: [InlineNode], endingAt caret: Int) -> TrailingLink? {
+        var result: TrailingLink?
+        func walk(_ nodes: [InlineNode]) {
+            for node in nodes {
+                switch node {
+                case .link(let range, let textRange, let url, _, let children):
+                    if NSMaxRange(range) == caret || NSMaxRange(textRange) == caret,
+                       result == nil || range.length < result!.full.length {
+                        result = (range, textRange, url, children)
+                    }
+                    walk(children)
+                case .emphasis(_, _, _, let children), .strikethrough(_, _, let children):
+                    walk(children)
+                default:
+                    break
+                }
+            }
+        }
+        walk(nodes)
+        return result
+    }
+
+    /// Maps the last visible label grapheme back to its raw Markdown range. Closing nested markers are
+    /// skipped, while a backslash escape is deleted atomically with its visible character.
+    private static func trailingVisibleLabelRange(
+        ns: NSString,
+        labelRange: NSRange,
+        children: [InlineNode]
+    ) -> NSRange? {
+        var hiddenMarkers: [NSRange] = []
+        collectInlineMarkers(children, into: &hiddenMarkers)
+        var escapedCharacters: [(range: NSRange, character: NSRange)] = []
+        collectEscapedCharacters(children, into: &escapedCharacters)
+
+        var scan = NSMaxRange(labelRange)
+        while scan > labelRange.location {
+            if let escape = escapedCharacters.first(where: { NSMaxRange($0.range) == scan }) {
+                return escape.range
+            }
+            if let marker = hiddenMarkers.first(where: { $0.length > 0 && NSMaxRange($0) == scan }) {
+                scan = marker.location
+                continue
+            }
+            let previous = ns.rangeOfComposedCharacterSequence(at: scan - 1)
+            if let marker = hiddenMarkers.first(where: { NSIntersectionRange($0, previous).length > 0 }) {
+                scan = marker.location
+                continue
+            }
+            return previous
+        }
+        return nil
+    }
+
+    private static func collectEscapedCharacters(
+        _ nodes: [InlineNode],
+        into ranges: inout [(range: NSRange, character: NSRange)]
+    ) {
+        for node in nodes {
+            switch node {
+            case .escape(let range, let character, _):
+                ranges.append((range, character))
+            case .emphasis(_, _, _, let children),
+                 .strikethrough(_, _, let children),
+                 .link(_, _, _, _, let children):
+                collectEscapedCharacters(children, into: &ranges)
+            default:
+                break
+            }
+        }
+    }
 
     /// Backspace at the start of an inline span's visible content. Because the
     /// span's opening marker is hidden (zero-width) in seamless mode, a *seamless*
