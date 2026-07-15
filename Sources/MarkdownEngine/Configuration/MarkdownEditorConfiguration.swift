@@ -673,6 +673,12 @@ public struct LinkStyle: Sendable {
     /// Horizontal visual padding (points) added to each side of an opted-in link pill. This widens the
     /// painted background without changing text layout, matching ``InlineCodeStyle/horizontalPadding``.
     public var pillHorizontalPadding: CGFloat
+    /// Visual padding (points) above an opted-in link pill's text. This expands only the painted
+    /// background and does not change line height or glyph layout.
+    public var pillTopPadding: CGFloat
+    /// Visual padding (points) below an opted-in link pill's text. Kept separate from the top padding so
+    /// consumers can optically center text whose font metrics leave less room below the baseline.
+    public var pillBottomPadding: CGFloat
     /// Opacity of the theme link color used to fill an opted-in link pill. Values are clamped to `0...1`.
     public var pillBackgroundAlpha: CGFloat
 
@@ -683,6 +689,8 @@ public struct LinkStyle: Sendable {
         pillURLSchemes: Set<String> = [],
         pillCornerRadius: CGFloat = 0,
         pillHorizontalPadding: CGFloat = 0,
+        pillTopPadding: CGFloat = 0,
+        pillBottomPadding: CGFloat = 0,
         pillBackgroundAlpha: CGFloat = 0.12
     ) {
         self.activeLinkAlpha = activeLinkAlpha
@@ -691,6 +699,8 @@ public struct LinkStyle: Sendable {
         self.pillURLSchemes = pillURLSchemes
         self.pillCornerRadius = pillCornerRadius
         self.pillHorizontalPadding = pillHorizontalPadding
+        self.pillTopPadding = pillTopPadding
+        self.pillBottomPadding = pillBottomPadding
         self.pillBackgroundAlpha = pillBackgroundAlpha
     }
 
@@ -701,7 +711,8 @@ public struct LinkStyle: Sendable {
               pillURLSchemes.contains(where: { $0.caseInsensitiveCompare(scheme) == .orderedSame })
         else { return false }
         let hasRadius = pillCornerRadius.isFinite && pillCornerRadius > 0
-        let hasPadding = pillHorizontalPadding.isFinite && pillHorizontalPadding > 0
+        let padding = [pillHorizontalPadding, pillTopPadding, pillBottomPadding]
+        let hasPadding = padding.contains { $0.isFinite && $0 > 0 }
         return hasRadius || hasPadding
     }
 

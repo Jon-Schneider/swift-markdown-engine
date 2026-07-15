@@ -43,6 +43,8 @@ struct LinkPillStylingTests {
         configuration.link.pillURLSchemes = ["SHIPYARD"]
         configuration.link.pillCornerRadius = 6
         configuration.link.pillHorizontalPadding = 4
+        configuration.link.pillTopPadding = 1
+        configuration.link.pillBottomPadding = 3
         configuration.link.pillBackgroundAlpha = 0.2
 
         let attrs = attributes(
@@ -54,6 +56,8 @@ struct LinkPillStylingTests {
         #expect(attrs[.link] as? URL == URL(string: "shipyard://issue/123"))
         let pillColor = attrs[.linkPill] as? NSColor
         #expect(pillColor?.alphaComponent == 0.2)
+        #expect(configuration.link.pillTopPadding == 1)
+        #expect(configuration.link.pillBottomPadding == 3)
     }
 
     @Test("non-matching schemes keep the normal link appearance")
@@ -84,6 +88,21 @@ struct LinkPillStylingTests {
         )
 
         #expect(attrs[.linkPill] == nil)
+    }
+
+    @Test("vertical padding alone opts a configured scheme into pill drawing")
+    func verticalPaddingEnablesPill() {
+        var configuration = MarkdownEditorConfiguration.default
+        configuration.link.pillURLSchemes = ["shipyard"]
+        configuration.link.pillBottomPadding = 2
+
+        let attrs = attributes(
+            in: "[Issue](shipyard://issue/123)",
+            at: 2,
+            configuration: configuration
+        )
+
+        #expect(attrs[.linkPill] is NSColor)
     }
 }
 #endif

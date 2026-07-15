@@ -105,11 +105,22 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         let linkPadding = hasPill(.linkPill)
             ? renderingContext?.configuration.link.pillHorizontalPadding ?? 0
             : 0
-        let padding = max(
+        let horizontalPadding = max(
             inlinePadding.isFinite ? inlinePadding : 0,
             linkPadding.isFinite ? linkPadding : 0
         )
-        if padding > 0 { bounds = bounds.insetBy(dx: -padding, dy: 0) }
+        let linkTopPadding = renderingContext?.configuration.link.pillTopPadding ?? 0
+        let linkBottomPadding = renderingContext?.configuration.link.pillBottomPadding ?? 0
+        let topPadding = linkTopPadding.isFinite ? max(0, linkTopPadding) : 0
+        let bottomPadding = linkBottomPadding.isFinite ? max(0, linkBottomPadding) : 0
+        if horizontalPadding > 0 || topPadding > 0 || bottomPadding > 0 {
+            bounds = CGRect(
+                x: bounds.minX - horizontalPadding,
+                y: bounds.minY - topPadding,
+                width: bounds.width + horizontalPadding * 2,
+                height: bounds.height + topPadding + bottomPadding
+            )
+        }
         return bounds
     }
 
@@ -468,7 +479,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         drawPills(
             attribute: .inlineCodePill,
             radius: style.cornerRadius,
-            padding: style.horizontalPadding,
+            horizontalPadding: style.horizontalPadding,
+            topPadding: 0,
+            bottomPadding: 0,
             at: point,
             in: context
         )
@@ -481,7 +494,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         drawPills(
             attribute: .linkPill,
             radius: style.pillCornerRadius,
-            padding: style.pillHorizontalPadding,
+            horizontalPadding: style.pillHorizontalPadding,
+            topPadding: style.pillTopPadding,
+            bottomPadding: style.pillBottomPadding,
             at: point,
             in: context
         )
@@ -490,7 +505,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     private func drawPills(
         attribute: NSAttributedString.Key,
         radius rawRadius: CGFloat,
-        padding rawPadding: CGFloat,
+        horizontalPadding rawHorizontalPadding: CGFloat,
+        topPadding rawTopPadding: CGFloat,
+        bottomPadding rawBottomPadding: CGFloat,
         at point: CGPoint,
         in context: CGContext
     ) {
@@ -500,8 +517,10 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         // Sanitize: non-finite (`.infinity`/NaN) geometry would inflate the pill and rendering surface to
         // invalid or unbounded rectangles.
         let radius = max(0, rawRadius.isFinite ? rawRadius : 0)
-        let padding = max(0, rawPadding.isFinite ? rawPadding : 0)
-        guard radius > 0 || padding > 0 else { return }
+        let horizontalPadding = max(0, rawHorizontalPadding.isFinite ? rawHorizontalPadding : 0)
+        let topPadding = max(0, rawTopPadding.isFinite ? rawTopPadding : 0)
+        let bottomPadding = max(0, rawBottomPadding.isFinite ? rawBottomPadding : 0)
+        guard radius > 0 || horizontalPadding > 0 || topPadding > 0 || bottomPadding > 0 else { return }
 
         // Segment frames share the container coordinate space with
         // `layoutFragmentFrame`; shift into this fragment's draw space.
@@ -520,7 +539,13 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                       let textRange = TextStylingService.textRange(from: attrRange, in: contentStorage) else { return }
                 color.setFill()
                 ltm.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segmentFrame, _, _ in
-                    let rect = segmentFrame.offsetBy(dx: dx, dy: dy).insetBy(dx: -padding, dy: 0)
+                    let segmentRect = segmentFrame.offsetBy(dx: dx, dy: dy)
+                    let rect = CGRect(
+                        x: segmentRect.minX - horizontalPadding,
+                        y: segmentRect.minY - topPadding,
+                        width: segmentRect.width + horizontalPadding * 2,
+                        height: segmentRect.height + topPadding + bottomPadding
+                    )
                     guard !rect.isNull, !rect.isEmpty else { return true }
                     let cutouts = selectionRects.compactMap { sel -> CGRect? in
                         let hit = sel.intersection(rect)
