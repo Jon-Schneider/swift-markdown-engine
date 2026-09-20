@@ -401,14 +401,22 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
                 // Deferred off the SwiftUI update pass (first-responder mutation mid-update
                 // re-enters `updateNSView`), which also lets a just-mounted view attach to its
                 // window before we focus it — so a request arriving before mount lands next pass.
+                // The binding is re-read inside the deferred closure: this very pass can be the
+                // re-entrant one fired mid-resign (before `resignFirstResponder`'s focus=false
+                // write lands), so a stale `true` here would otherwise re-focus a field that
+                // just ended editing (Escape / endsEditingOnEscape).
                 DispatchQueue.main.async { [weak textView] in
-                    guard let textView, textView.isEditable,
+                    guard let textView, textView.isEditable, focus.wrappedValue,
                           textView.window?.firstResponder !== textView else { return }
                     textView.window?.makeFirstResponder(textView)
                 }
             } else if !wantsFocus, isFirstResponder {
+                // Symmetric re-check: a binding that flipped back to `true` after this pass
+                // queued the resign must win — otherwise the deferred resign would steal
+                // first responder back from the field the host just refocused.
                 DispatchQueue.main.async { [weak textView] in
-                    guard let textView, textView.window?.firstResponder === textView else { return }
+                    guard let textView, !focus.wrappedValue,
+                          textView.window?.firstResponder === textView else { return }
                     textView.window?.makeFirstResponder(nil)
                 }
             }
